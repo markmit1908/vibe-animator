@@ -345,7 +345,8 @@ function applyGroupChanges(changes: { action: string; name: string; ids: string[
     const covered = (o: THREE.Object3D) => { for (let p = o.parent; p; p = p.parent) if (objs.includes(p)) return true; return false; };
     store.groups[c.name] = objs.filter((o) => !covered(o)).map(idOfObj);
   }
-  markDirty(); tree.rebuild(); buildTimeline();
+  io.edit({ groups: JSON.parse(JSON.stringify(store.groups)) });
+  tree.rebuild(); buildTimeline();
 }
 /** Apply accepted lock/hide changes like the tree's toggles (explicit flag, descendants inherit). */
 async function applyStateChanges(changes: { ids: string[]; lock?: boolean; hide?: boolean }[]) {
@@ -497,7 +498,7 @@ const tree = new TreePanel(built, scene3, {
     if (what === 'locked') { buildTimeline(); gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs); }
   },
   onSelect: (o, spec, objs) => gizmoFor(o, spec, objs),
-  onGroups: () => buildTimeline(),
+  onGroups: () => { buildTimeline(); io.edit({ groups: JSON.parse(JSON.stringify(store.groups)) }); }, // groups are part of the animation: saved at once
   stats: () => {
     const c = cad.stats(), r = renderer.info;
     return `GPU geometries ${r.memory.geometries} · drawn ${(r.render.triangles / 1e6).toFixed(2)}M tris · ${r.render.calls} calls` +
