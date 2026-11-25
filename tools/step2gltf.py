@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.10,<3.13"
-# dependencies = ["cadquery-ocp>=7.7"]
+# dependencies = ["cadquery-ocp>=7.7", "numpy", "scipy"]
 # ///
 """
 STEP -> glTF (.glb) converter for the refuelling viewer, using OpenCASCADE (OCP).
@@ -150,6 +150,8 @@ def cmd_convert(doc, st, a):
     for r in roots(st):
         prune(r, name_of(r), False)
     st.UpdateAssemblies()
+    if a.reinstance:
+        reinstance(st, a.match_tol)
     # parts whose every instance was removed become free shapes; drop them so they aren't exported
     while True:
         orphans = [r for r in roots(st) if r.Tag() not in orig_roots]
@@ -297,6 +299,142 @@ def cmd_audit(st, tol):
             print(f"- {d['name']}: {', '.join(probs)} — {fmt(d)}")
 
 
+
+# ---------------------------------------------------------------- re-instancing
+# Some exporters (Shapr3D) write every copy of a part as its own shape with the
+# placement baked into the geometry. We find identical shapes, solve the rigid
+# transform canonical -> copy from principal axes of inertia, verify it on the
+# B-rep vertices, and re-point each component at the canonical shape.
+
+def _frame(shp):
+    import numpy as np
+    from OCP.TopAbs import TopAbs_VERTEX
+    from OCP.BRep import BRep_Tool
+    from OCP.TopoDS import TopoDS
+    g = GProp_GProps(); BRepGProp.VolumeProperties_s(shp, g)
+    ga = GProp_GProps(); BRepGProp.SurfaceProperties_s(shp, ga)
+    c = g.CentreOfMass(); pm = g.PrincipalProperties()
+    mom = np.array(pm.Moments())
+    axes = np.array([[v.X(), v.Y(), v.Z()] for v in
+                     (pm.FirstAxisOfInertia(), pm.SecondAxisOfInertia(), pm.ThirdAxisOfInertia())]).T
+    order = np.argsort(mom)
+    pts = []
+    e = TopExp_Explorer(shp, TopAbs_VERTEX)
+    while e.More():
+        p = BRep_Tool.Pnt_s(TopoDS.Vertex_s(e.Current())); pts.append((p.X(), p.Y(), p.Z())); e.Next()
+    pts = np.unique(np.round(np.array(pts).reshape(-1, 3), 6), axis=0)
+    nf = 0
+    e = TopExp_Explorer(shp, TopAbs_FACE)
+    while e.More(): nf += 1; e.Next()
+    return dict(c=np.array([c.X(), c.Y(), c.Z()]), mom=mom[order], axes=axes[:, order],
+                pts=pts, vol=g.Mass(), area=ga.Mass(), faces=nf)
+
+
+def _candidates(f0, f1, tol):
+    """Rotation candidates R with f1 ~= R f0 (det +1)."""
+    import numpy as np
+    A0, A1, m = f0["axes"], f1["axes"], f0["mom"]
+    rel = lambda a, b: abs(a - b) <= 1e-4 * max(abs(a), abs(b), 1e-9)
+    out = []
+    import itertools
+    for s in itertools.product((1, -1), repeat=3):  # OCCT axes may be left-handed
+        R = A1 @ np.diag(s) @ A0.T
+        if np.linalg.det(R) > 0:
+            out.append(R)
+    # axisymmetric part: principal axes in the degenerate plane are arbitrary.
+    deg = [i for i in range(2) if rel(m[i], m[i + 1])]
+    if deg and len(f0["pts"]):
+        u_i = 2 if deg[0] == 0 else 0
+        p0 = f0["pts"] - f0["c"]; p1 = f1["pts"] - f1["c"]
+        for su in (1, -1):
+            u0 = A0[:, u_i]; u1 = A1[:, u_i] * su
+            r0 = None
+            # reference vertex: farthest from the axis
+            r0 = p0 - np.outer(p0 @ u0, u0); k = np.argmax(np.linalg.norm(r0, axis=1))
+            h0, d0 = p0[k] @ u0, np.linalg.norm(r0[k])
+            if d0 < tol:
+                continue
+            r1 = p1 - np.outer(p1 @ u1, u1)
+            match = np.where((np.abs(p1 @ u1 - h0) < tol * 4) & (np.abs(np.linalg.norm(r1, axis=1) - d0) < tol * 4))[0]
+            for j in match[:24]:
+                a0 = r0[k] / d0; b0 = np.cross(u0, a0)
+                a1 = r1[j] / np.linalg.norm(r1[j]); b1 = np.cross(u1, a1)
+                out.append(np.column_stack([a1, b1, u1]) @ np.column_stack([a0, b0, u0]).T)
+    return out
+
+
+def _solve(f0, f1, tol):
+    import numpy as np
+    from scipy.spatial import cKDTree
+    if len(f0["pts"]) != len(f1["pts"]):
+        return None
+    tree = cKDTree(f1["pts"]) if len(f1["pts"]) else None
+    for R in _candidates(f0, f1, tol):
+        t = f1["c"] - R @ f0["c"]
+        if tree is not None:
+            d, _ = tree.query(f0["pts"] @ R.T + t)
+            if d.max() > tol:
+                continue
+        return R, t
+    return None
+
+
+def _trsf(R, t):
+    from OCP.gp import gp_Trsf
+    T = gp_Trsf()
+    T.SetValues(R[0, 0], R[0, 1], R[0, 2], t[0], R[1, 0], R[1, 1], R[1, 2], t[1], R[2, 0], R[2, 1], R[2, 2], t[2])
+    return T
+
+
+def reinstance(st, tol):
+    from OCP.TopLoc import TopLoc_Location
+    # components referencing each simple prototype
+    seq = TDF_LabelSequence(); st.GetShapes(seq)
+    labels = [seq.Value(i) for i in range(1, seq.Length() + 1)]
+    users = {}
+    for l in labels:
+        for k in children(l):
+            users.setdefault(referred(k).Tag(), []).append((l, k))
+    simple = [l for l in labels if ST.IsSimpleShape_s(l) and l.Tag() in users]
+    log(f"re-instancing: fingerprinting {len(simple)} parts…")
+    frames, groups = {}, {}
+    q = lambda v: round(v / tol) if tol else v
+    for i, l in enumerate(simple):
+        f = frames[l.Tag()] = _frame(ST.GetShape_s(l))
+        key = (f["faces"], len(f["pts"]), round(f["vol"] ** (1 / 3) * 1000) if f["vol"] > 0 else 0,
+               round(f["area"] ** 0.5 * 100))
+        groups.setdefault(key, []).append(l)
+        if (i + 1) % 1000 == 0:
+            log(f"  {i + 1}/{len(simple)}")
+    merged = failed = 0
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        canon_list = []  # several canonicals if the group holds genuinely different shapes
+        for l in members:
+            f1 = frames[l.Tag()]
+            hit = None
+            for c in canon_list:
+                sol = _solve(frames[c.Tag()], f1, tol)
+                if sol:
+                    hit = (c, sol); break
+            if not hit:
+                if canon_list:
+                    failed += 1
+                canon_list.append(l)
+                continue
+            c, (R, t) = hit
+            T = TopLoc_Location(_trsf(R, t))
+            for parent, comp in users[l.Tag()]:
+                loc = ST.GetLocation_s(comp).Multiplied(T)
+                st.RemoveComponent(comp)
+                st.AddComponent(parent, c, loc)
+            merged += 1
+    st.UpdateAssemblies()
+    log(f"re-instancing: {merged} copies now instance a shared part"
+        + (f"; {failed} look alike but did not verify (kept separate)" if failed else ""))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -309,6 +447,9 @@ def main():
     c.add_argument("--deflection", type=float, default=1.0, help="mesh chord tolerance, mm")
     c.add_argument("--angle", type=float, default=20, help="mesh angular tolerance, degrees")
     c.add_argument("--up", choices=["z", "y"], default="z", help="up axis of the STEP model")
+    c.add_argument("--no-reinstance", dest="reinstance", action="store_false",
+                   help="don't rebuild instancing for copies baked in place")
+    c.add_argument("--match-tol", type=float, default=0.05, help="vertex match tolerance for re-instancing, mm")
     c.add_argument("--no-optimize", dest="optimize", action="store_false",
                    help="skip the gltf-transform dedup + GPU-instancing pass")
     a = ap.parse_args()
