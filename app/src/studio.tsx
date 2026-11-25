@@ -8,8 +8,23 @@ import type { Context } from "./module";
 import type { Model } from "./run";
 
 const fileUrl = (path: string) => `/api/files/${path.split("/").map(encodeURIComponent).join("/")}`;
-/** What the studio shows (chat and view state left out: they don't need a remount). */
-const content = (m: Partial<Model>) => JSON.stringify([joinLines(m.script?.text), m.snapshots, m.groups, m.scene]);
+/** Stable JSON: sorted keys, empty objects/arrays and undefined dropped (a save may come back reordered or trimmed). */
+const stable = (v: unknown): unknown => {
+  if (Array.isArray(v)) return v.map(stable);
+  if (v && typeof v === "object") {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(v).sort()) {
+      const x = stable((v as Record<string, unknown>)[k]);
+      if (x === undefined || (typeof x === "object" && x !== null && Object.keys(x).length === 0)) continue;
+      out[k] = x;
+    }
+    return out;
+  }
+  return v;
+};
+/** What the studio shows (chat and view state left out: they don't need a remount), normalised. */
+const content = (m: Partial<Model>) =>
+  JSON.stringify(stable([joinLines(m.script?.text).replace(/\s+$/, ""), m.snapshots, m.groups, m.scene]));
 
 export function StudioView({ c }: { c: Context }) {
   const host = useRef<HTMLDivElement>(null);

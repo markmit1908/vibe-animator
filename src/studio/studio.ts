@@ -40,6 +40,9 @@ export interface StudioIO {
  */
 export async function mountStudio(root: HTMLElement, model: AnimModel, io: StudioIO): Promise<{ dispose(): void }> {
 const ac = new AbortController();
+let disposed = false;
+/** Writes to the model; a disposed studio (replaced by a remount) must never write its older state. */
+const edit = (patch: Partial<AnimModel>) => { if (!disposed) io.edit(patch); };
 const on = (t: string, f: any) => window.addEventListener(t, f, { signal: ac.signal });
 root.replaceChildren();
 if (getComputedStyle(root).position === 'static') root.style.position = 'relative'; // keep a host's own positioning
@@ -83,7 +86,7 @@ const clockEl = root.querySelector<HTMLElement>('#clock')!;
 
 // ---------- CAD models (glTF in public/) – loaded before compiling so scripts can target them ----------
 setStore({ active: model.snapshots?.active ?? 'default', snapshots: model.snapshots?.items ?? {}, groups: model.groups ?? {} });
-setStoreWriter((st) => io.edit({ snapshots: { active: st.active, items: st.snapshots }, groups: st.groups }));
+setStoreWriter((st) => edit({ snapshots: { active: st.active, items: st.snapshots }, groups: st.groups }));
 const cad = new CadManager(built, io.fileUrl);
 try {
   if (cfg.cad_models?.length) {
@@ -234,14 +237,14 @@ if (isAnim) {
   scriptPanel = new ScriptPanel(right, scriptName, animText, {
     change: (text) => {
       const doc = parseAnim(text);
-      if (doc.errors.length) io.edit({ script: { language: 'anim', text } }); // keep the text even while it has errors
+      if (doc.errors.length) edit({ script: { language: 'anim', text } }); // keep the text even while it has errors
       scriptErrors = doc.errors;
       if (doc.errors.length) { scriptPanel!.setErrors(doc.errors); return; } // keep the last good timeline
       script = toActions(doc.steps);
       buildTimeline();
-      io.edit({ script: { language: 'anim', text } });
+      edit({ script: { language: 'anim', text } });
     },
-    save: async (text) => { io.edit({ script: { language: 'anim', text } }); },
+    save: async (text) => { edit({ script: { language: 'anim', text } }); },
     seek: (t) => { player.playing = false; player.seek(t); gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs); },
     ids: () => [...Object.keys(store.groups).map((g) => `@${g}`), ...built.registry.keys()],
     cameraLine: () => cameraLine(probe),
@@ -350,7 +353,7 @@ function applyGroupChanges(changes: { action: string; name: string; ids: string[
     const covered = (o: THREE.Object3D) => { for (let p = o.parent; p; p = p.parent) if (objs.includes(p)) return true; return false; };
     store.groups[c.name] = objs.filter((o) => !covered(o)).map(idOfObj);
   }
-  io.edit({ groups: JSON.parse(JSON.stringify(store.groups)) });
+  edit({ groups: JSON.parse(JSON.stringify(store.groups)) });
   tree.rebuild(); buildTimeline();
 }
 /** Apply accepted lock/hide changes like the tree's toggles (explicit flag, descendants inherit). */
@@ -359,7 +362,7 @@ function applyGroupChanges(changes: { action: string; name: string; ids: string[
 function persistWorking() {
   const cur = store.snapshots[store.active] ?? { locked: {}, hidden: {} };
   store.snapshots[store.active] = { ...cur, locked: { ...state.locked }, hidden: { ...state.hidden }, placements: JSON.parse(JSON.stringify(state.placements)) };
-  io.edit({ snapshots: { active: store.active, items: JSON.parse(JSON.stringify(store.snapshots)) } });
+  edit({ snapshots: { active: store.active, items: JSON.parse(JSON.stringify(store.snapshots)) } });
   markDirty(false);
 }
 async function applyStateChanges(changes: { ids: string[]; lock?: boolean; hide?: boolean }[]) {
@@ -401,7 +404,7 @@ let chatTimer: number | undefined;
 const assist = new AssistPanel(right, {
   saveHistory: (h) => {
     clearTimeout(chatTimer);
-    chatTimer = window.setTimeout(() => io.edit({ chat: JSON.parse(JSON.stringify(h)) }), 300);
+    chatTimer = window.setTimeout(() => edit({ chat: JSON.parse(JSON.stringify(h)) }), 300);
   },
   endpoints: io.assist,
   system: () => ASSIST_SYSTEM,
@@ -512,7 +515,7 @@ const tree = new TreePanel(built, scene3, {
     if (what === 'locked') { buildTimeline(); gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs); }
   },
   onSelect: (o, spec, objs) => gizmoFor(o, spec, objs),
-  onGroups: () => { buildTimeline(); io.edit({ groups: JSON.parse(JSON.stringify(store.groups)) }); }, // groups are part of the animation: saved at once
+  onGroups: () => { buildTimeline(); edit({ groups: JSON.parse(JSON.stringify(store.groups)) }); }, // groups are part of the animation: saved at once
   stats: () => {
     const c = cad.stats(), r = renderer.info;
     return `GPU geometries ${r.memory.geometries} · drawn ${(r.render.triangles / 1e6).toFixed(2)}M tris · ${r.render.calls} calls` +
@@ -558,7 +561,7 @@ async function loadSnapshot(name: string) {
   renderSnapBar();
 }
 async function saveSnapshot(name: string) {
-  io.edit({ view: { camera: camView(), time: player.time, mode: drawing.enabled ? 'hidden' : 'shaded' } });
+  edit({ view: { camera: camView(), time: player.time, mode: drawing.enabled ? 'hidden' : 'shaded' } });
   store.snapshots[name] = captureSnapshot(camView());
   store.active = name;
   await writeStore();
@@ -922,8 +925,14 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
   pre.textContent = JSON.stringify(out, null, 1); host().appendChild(pre);
 }
 
+// read-only handle for tests and debugging
+(window as any).__studio = { built, state, store, cad, tree };
+
 return {
   dispose() {
+    disposed = true;
+    scriptPanel?.destroy();
+    clearTimeout(chatTimer);
     renderer.setAnimationLoop(null);
     ac.abort(); ro.disconnect();
     gizmo.dispose?.(); controls.dispose();

@@ -207,6 +207,9 @@ export class ScriptPanel {
     this.updateDirty();
   }
 
+  /** Shut down: no pending autosave may fire after the studio is replaced. */
+  destroy() { clearTimeout(this.timer); this.timer = undefined; this.view.destroy(); }
+
   get text() { return this.view.state.doc.toString(); }
   get dirty() { return this.text !== this.saved; }
 

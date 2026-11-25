@@ -140,3 +140,33 @@ test("the studio fills the editor area: nothing under the header or status bar",
   expect(input.y + input.height).toBeLessThanOrEqual(footer.y + 0.5);
   await expect(page.getByRole("button", { name: "Send", exact: true })).toBeInViewport();
 });
+
+test("typing across autosaves and an outside change never garbles the script", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Typing", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "Plant overview"\nwait 2s' },
+    snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: { head: ["head"] } };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Typing");
+  const editor = page.locator("#script .cm-content");
+  await expect(editor).toBeVisible({ timeout: 15_000 });
+  const typeLines = async (lines: string[]) => {
+    await editor.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Meta+ArrowDown");
+    for (const l of lines) { await page.keyboard.type("\n" + l, { delay: 30 }); await page.waitForTimeout(400); }
+  };
+  await typeLines(["move @head by [0,3,0] 5s", "fade @head to 0 2s"]);
+  await expect.poll(async () => scriptOf(await model(page, a.id)), { timeout: 10_000 }).toContain("fade @head to 0 2s");
+  // an outside change through the editor (Replace from file; a version restore works the same way): the studio remounts
+  const cur = await model(page, a.id);
+  const replaced = { ...cur, groups: { head: ["head"], lid: ["head", "bolts"] } };
+  await page.locator('input[aria-label="Replace from a model file"]').setInputFiles({ name: "Typing.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(replaced)) });
+  await expect(page.locator("#tree .row", { hasText: "lid" }).first()).toBeVisible({ timeout: 10_000 });
+  await typeLines(["label \"Remove lid\"", "wait 2s"]);
+  await page.waitForTimeout(2500);
+  const shown = (await editor.innerText()).replace(/\n+$/, "");
+  const saved = await model(page, a.id);
+  expect(scriptOf(saved).replace(/\n+$/, "")).toBe(shown);
+  expect(shown).toContain('fade @head to 0 2s\nlabel "Remove lid"\nwait 2s');
+  expect(shown).not.toMatch(/\ds\w/);           // no "5sfade"-style joins
+  expect(saved.groups.lid).toEqual(["head", "bolts"]);
+});
