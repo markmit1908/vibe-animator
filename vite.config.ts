@@ -2,30 +2,36 @@ import { defineConfig, type Plugin } from 'vite';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { parse, stringify } from 'yaml';
 
-const STATE = 'scenes/state.yaml';
+const SNAP = 'scenes/snapshots.yaml';
+const LEGACY = 'scenes/state.yaml';
 
-/** GET/POST /__state – persists part lock/hide flags from the assembly tree to scenes/state.yaml. */
-function partState(): Plugin {
+/**
+ * GET/POST /__snapshots – named model snapshots (part flags, camera, placements)
+ * stored in scenes/snapshots.yaml. On first use, scenes/state.yaml becomes snapshot "default".
+ */
+function snapshots(): Plugin {
   return {
-    name: 'part-state',
+    name: 'snapshots',
     configureServer(server) {
-      server.watcher.unwatch(STATE); // saving must not trigger a reload
-      server.middlewares.use('/__state', (req, res) => {
+      server.watcher.unwatch([SNAP, LEGACY]); // saving must not trigger a reload
+      server.middlewares.use('/__snapshots', (req, res) => {
         if (req.method === 'POST') {
           let body = '';
           req.on('data', (c) => (body += c));
           req.on('end', () => {
-            const s = JSON.parse(body);
-            const sorted = (o: Record<string, boolean>) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => a.localeCompare(b)));
-            writeFileSync(STATE, '# Written by the assembly tree (lock / hide). Safe to edit by hand.\n' +
-              stringify({ locked: sorted(s.locked ?? {}), hidden: sorted(s.hidden ?? {}) }));
+            writeFileSync(SNAP, '# Model snapshots – written by the viewer (Save). Safe to edit by hand.\n' + stringify(JSON.parse(body)));
             res.end('ok');
           });
           return;
         }
-        const s = existsSync(STATE) ? parse(readFileSync(STATE, 'utf8')) ?? {} : {};
+        let data: any;
+        if (existsSync(SNAP)) data = parse(readFileSync(SNAP, 'utf8'));
+        else {
+          const legacy = existsSync(LEGACY) ? parse(readFileSync(LEGACY, 'utf8')) ?? {} : {};
+          data = { active: 'default', snapshots: { default: { locked: legacy.locked ?? {}, hidden: legacy.hidden ?? {} } } };
+        }
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ locked: s.locked ?? {}, hidden: s.hidden ?? {} }));
+        res.end(JSON.stringify(data ?? {}));
       });
     },
   };
@@ -33,7 +39,7 @@ function partState(): Plugin {
 
 // es2022 for top-level await (CAD is loaded before the script compiles)
 export default defineConfig({
-  plugins: [partState()],
+  plugins: [snapshots()],
   build: { target: 'es2022' },
   esbuild: { target: 'es2022' },
   optimizeDeps: { esbuildOptions: { target: 'es2022' } },

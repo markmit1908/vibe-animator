@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { BuiltScene } from '../scene/build';
-import { state, saveState, isLocked, isHidden, isCad } from '../scene/state';
+import { state, markDirty, isLocked, isHidden, isCad } from '../scene/state';
 
 /**
  * Left-hand assembly tree.
@@ -29,6 +29,9 @@ const CSS = `
 #tree.collapsed { transform: translateX(-340px); }
 #tree header { display: flex; gap: 6px; align-items: center; padding: 8px; border-bottom: 1px solid #222a33; }
 #tree header b { flex: 1; font-size: 13px; }
+#tree .snap { display: flex; gap: 4px; align-items: center; padding: 6px 8px; border-bottom: 1px solid #222a33; }
+#tree .snap select { flex: 1; min-width: 0; background: #0a0c0f; color: inherit; border: 1px solid #2b3540; border-radius: 4px; padding: 3px; font-size: 12px; }
+#tree .snap .dirty { color: #ff8c1a; font-size: 11px; white-space: nowrap; }
 #tree input[type=search] { margin: 8px; padding: 5px 8px; background: #0a0c0f; border: 1px solid #2b3540; color: inherit; border-radius: 4px; }
 #tree .scroll { flex: 1; overflow: auto; position: relative; }
 #tree .row { position: absolute; left: 0; right: 0; height: ${ROW}px; display: flex; align-items: center; padding-right: 6px; white-space: nowrap; cursor: pointer; }
@@ -57,6 +60,7 @@ export interface TreeHooks {
   /** Called after visibility/lock changes on these objects (suppression, recompile…). */
   onChange?: (objs: THREE.Object3D[], what: 'hidden' | 'locked') => void;
   stats?: () => string;
+  onSelect?: (obj: THREE.Object3D | undefined) => void;
 }
 
 export class TreePanel {
@@ -66,6 +70,8 @@ export class TreePanel {
   private info: HTMLElement;
   private statsEl: HTMLElement;
   private search: HTMLInputElement;
+  /** Container for the snapshot bar (filled by main). */
+  snapBar!: HTMLElement;
   private open = new Set<Node>();
   private roots: Node[] = [];
   private flat: Node[] = [];
@@ -80,6 +86,7 @@ export class TreePanel {
     const style = document.createElement('style'); style.textContent = CSS; document.head.appendChild(style);
     this.el = document.createElement('div'); this.el.id = 'tree';
     this.el.innerHTML = `<header><b>Assembly</b><span title="● visible   🔒 locked (never moves)   locked + hidden CAD = suppressed (freed from memory)" style="cursor:help;color:#7b8794">ⓘ</span><button data-a="collapse">Collapse all</button></header>
+      <div class="snap"></div>
       <input type="search" placeholder="Search parts… (Enter)" /><div class="scroll"><div class="spacer"></div></div>
       <div class="info">Click a part in the tree or the 3D view.</div><div class="stats"></div>`;
     document.body.appendChild(this.el);
@@ -91,6 +98,7 @@ export class TreePanel {
     this.info = this.el.querySelector('.info')!;
     this.statsEl = this.el.querySelector('.stats')!;
     this.search = this.el.querySelector('input')!;
+    this.snapBar = this.el.querySelector('.snap')!;
     let t: number | undefined;
     this.search.oninput = () => { clearTimeout(t); t = window.setTimeout(() => this.refresh(), 200); };
     this.scroll.onscroll = () => this.draw();
@@ -224,7 +232,7 @@ export class TreePanel {
       o.traverse((d) => { const did = (d.userData.id ?? d.name) as string; if (did && did !== id) delete flags[did]; });
       flags[id] = value;
     }
-    saveState();
+    markDirty();
     this.hooks.onChange?.(objs, what);
     this.refresh();
     this.updateInfo();
@@ -234,6 +242,7 @@ export class TreePanel {
   select(n: Node | undefined, reveal: boolean) {
     this.selected = n;
     this.highlight(n);
+    this.hooks.onSelect?.(n?.obj);
     if (n && reveal) {
       this.search.value = '';
       for (let p = n.parent; p; p = p.parent) this.open.add(p);
@@ -245,6 +254,11 @@ export class TreePanel {
       if (i >= 0) this.scroll.scrollTop = Math.max(0, i * ROW - this.scroll.clientHeight / 2);
     }
   }
+
+  /** Currently selected real object (single object nodes only). */
+  get selectedObject(): THREE.Object3D | undefined { return this.selected?.obj; }
+  /** Redraw rows + info (after external state changes). */
+  redraw() { this.refresh(); this.updateInfo(); }
 
   /** Select by registry id (e.g. from ?select=). */
   selectId(id: string) { const o = this.scene.registry.get(id); if (o) this.pick(o); }

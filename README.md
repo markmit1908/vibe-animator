@@ -24,7 +24,14 @@ Children are built when you expand a node and only on-screen rows are drawn, so 
   CAD defaults to locked and the generated model to unlocked. Unlock what the animation moves.
 - **Locked + hidden CAD parts are suppressed**: their geometry is freed from GPU and browser memory
   (shared meshes once no visible copy uses them). Showing them again reloads the geometry from the file.
-- Flags are saved to `scenes/state.yaml` through the dev server, and children inherit from parents.
+- Flags are inherited by children from their parents.
+
+**Snapshots** (bar at the top of the panel) are named model states: show/hide and lock flags, the camera view,
+and part placements. Nothing is written until you press **Save** (or ⌘/Ctrl+S); "● unsaved" marks pending changes.
+**Save as…** creates a new snapshot, the dropdown switches between them, and ✕ deletes one. They are stored in `scenes/snapshots.yaml`.
+
+**Moving parts:** select an **unlocked** part to get a gizmo. **W** = move, **E** = rotate, **R** = reset to its original placement, **Esc** = deselect.
+Parts the script animates can only be placed at t = 0 (that sets their start position).
 
 The panel footer shows live GPU geometry, triangle and draw-call counts.
 URL params: `?t=42` opens at 42 s, `?select=R1-1/L5` selects a part, `?debug` dumps CAD ids/stats into a hidden `<pre id=debug>`.

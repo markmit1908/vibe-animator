@@ -1,55 +1,81 @@
 import type * as THREE from 'three';
 
 /**
- * Per-part working state, persisted to scenes/state.yaml through the dev server.
- * Flags are stored only where set explicitly; descendants inherit from the
- * nearest ancestor that has a flag.
+ * Working part state + named snapshots (scenes/snapshots.yaml, via the dev server).
  *
- *  locked  – never moves: skipped by per-frame matrix updates, not scriptable.
+ *  locked  – never moves: skipped by per-frame matrix updates, not scriptable, no gizmo.
  *            CAD defaults to locked, the generated model to unlocked.
- *  hidden  – not drawn. Hidden + locked CAD parts are *suppressed*: their
- *            geometry is freed from GPU and JS memory until shown again.
+ *  hidden  – not drawn. Hidden + locked CAD parts are *suppressed* (geometry freed).
+ *  flags are stored where set explicitly; descendants inherit from the nearest flagged ancestor.
+ *
+ * A snapshot = flags + camera view + part placements (moves made with the gizmo).
+ * Nothing is written until Save; `dirty` tracks unsaved changes.
  */
 export interface PartState {
   locked: Record<string, boolean>;
   hidden: Record<string, boolean>;
 }
+export interface Placement { p: number[]; q: number[] }
+export interface Snapshot extends PartState {
+  camera?: { pos: number[]; look: number[] };
+  placements?: Record<string, Placement>;
+}
+export interface SnapshotFile { active: string; snapshots: Record<string, Snapshot> }
 
-export const state: PartState = { locked: {}, hidden: {} };
+/** The working state (what the viewer currently shows). */
+export const state: PartState & { placements: Record<string, Placement> } = { locked: {}, hidden: {}, placements: {} };
+export const store: SnapshotFile = { active: 'default', snapshots: {} };
 
-export async function loadState() {
+let dirty = false;
+const listeners = new Set<() => void>();
+export const isDirty = () => dirty;
+export const onDirtyChange = (f: () => void) => listeners.add(f);
+export function markDirty(v = true) { dirty = v; listeners.forEach((f) => f()); }
+
+export async function loadStore() {
   try {
-    const r = await fetch('/__state');
-    if (r.ok) Object.assign(state, { locked: {}, hidden: {} }, await r.json());
-  } catch { /* static build: no state endpoint */ }
+    const r = await fetch('/__snapshots');
+    if (r.ok) Object.assign(store, await r.json());
+  } catch { /* static build: no endpoint */ }
+  if (!store.snapshots[store.active]) store.snapshots[store.active] = { locked: {}, hidden: {} };
 }
 
-let saveTimer: number | undefined;
-export function saveState() {
-  clearTimeout(saveTimer);
-  saveTimer = window.setTimeout(() => {
-    fetch('/__state', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(state) })
-      .catch(() => {});
-  }, 400);
+export async function writeStore() {
+  await fetch('/__snapshots', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(store) });
+}
+
+/** Copy the working state (+ camera) into a snapshot. */
+export function captureSnapshot(camera: Snapshot['camera']): Snapshot {
+  return {
+    locked: { ...state.locked },
+    hidden: { ...state.hidden },
+    camera,
+    placements: JSON.parse(JSON.stringify(state.placements)),
+  };
+}
+
+/** Load a snapshot's flags + placements into the working state. */
+export function useSnapshot(s: Snapshot) {
+  state.locked = { ...(s.locked ?? {}) };
+  state.hidden = { ...(s.hidden ?? {}) };
+  state.placements = JSON.parse(JSON.stringify(s.placements ?? {}));
 }
 
 /** Registry id of an object, if it has one (set by build/cad registration). */
 const idOf = (o: THREE.Object3D) => (o.userData.id ?? o.name) as string | undefined;
 
 function inherited(flags: Record<string, boolean>, o: THREE.Object3D | null, dflt: (o: THREE.Object3D) => boolean): boolean {
-  let first: THREE.Object3D | null = o;
   for (let p = o; p; p = p.parent) {
     const id = idOf(p);
     if (id && id in flags) return flags[id];
   }
-  return first ? dflt(first) : false;
+  return o ? dflt(o) : false;
 }
 
-const isCad = (o: THREE.Object3D): boolean => {
+export const isCad = (o: THREE.Object3D): boolean => {
   for (let p: THREE.Object3D | null = o; p; p = p.parent) if (p.userData.cad) return true;
   return false;
 };
 
 export const isLocked = (o: THREE.Object3D) => inherited(state.locked, o, isCad);
 export const isHidden = (o: THREE.Object3D) => inherited(state.hidden, o, () => false);
-export { isCad };
