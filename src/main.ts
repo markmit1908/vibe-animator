@@ -16,6 +16,7 @@ import { Triad } from './view/triad';
 import { ScriptPanel } from './view/scriptPanel';
 import { AssistPanel } from './view/assistPanel';
 import { ASSIST_SYSTEM } from './assist/system';
+import { readTools, type ToolDeps } from './assist/tools';
 import { parseAnim, toActions, type ParseError } from './script/anim';
 import { ScriptError } from './timeline/compile';
 import { applyEdit, cameraLine, type Edit, type Probe } from './script/edit';
@@ -207,10 +208,55 @@ tabCss.textContent = `#right .rtabs { display: flex; border-top: 1px solid #222a
   #right .rtabs button.on { color: #f2b705; border-bottom-color: #f2b705; } #script, #assist { border-top: 0 !important; }`;
 document.head.appendChild(tabCss);
 right.insertBefore(tabs, scriptPanel?.el ?? null);
+// ---------- assist tools (read-only) ----------
+const toolDeps: ToolDeps = {
+  registry: built.registry,
+  groups: () => store.groups,
+  isLocked, isHidden,
+  roots: () => built.root.children.filter((o) => built.registry.get(idOfObj(o)) === o),
+  checkScript: (text) => {
+    const doc = parseAnim(text);
+    if (doc.errors.length) return { errors: doc.errors.map((e) => ({ line: e.line, message: e.message })) };
+    const t = player.time;
+    player.seek(0); // compile reads the start pose
+    try {
+      const acts = toActions(doc.steps);
+      const tl = compile(acts, built, acts.camera ?? defaultCam, isLocked, store.groups);
+      const src = text.split('\n');
+      return { errors: [], duration: tl.duration, steps: [...tl.lines].sort((a, b) => a[0] - b[0]).map(([line, x]) => ({ line, ...x, text: src[line - 1].trim() })) };
+    } catch (e: any) {
+      return { errors: [{ line: e.line ?? 0, message: e.message }] };
+    } finally { player.seek(t); }
+  },
+  screenshot: (view, target) => {
+    const helper = gizmo.getHelper(); const hv = helper.visible; helper.visible = false;
+    let cam: THREE.Camera = camera, note = 'The user\'s current view.';
+    if (view !== 'current') {
+      const objs = target ? resolveSpec(target) : [built.root];
+      const b = worldBox(objs.length ? objs : [built.root]);
+      const c = b.getCenter(new THREE.Vector3()), r = Math.max(b.getSize(new THREE.Vector3()).length() / 2, 0.5);
+      const dir = { iso: [1, 0.8, 1.1], top: [0, 1, 0.001], front: [0, 0, 1], side: [1, 0, 0] }[view as 'iso'] ?? [1, 0.8, 1.1];
+      const pc = new THREE.PerspectiveCamera(40, renderer.domElement.width / renderer.domElement.height, 0.05, r * 20);
+      pc.position.copy(c).addScaledVector(new THREE.Vector3(...dir).normalize(), r / Math.sin(THREE.MathUtils.degToRad(20)) * 1.1);
+      if (view === 'top') pc.up.set(0, 0, -1);
+      pc.lookAt(c); pc.updateMatrixWorld();
+      cam = pc;
+      note = `${view} view framed on ${target ?? 'the whole scene'} (centre ${c.toArray().map((v) => v.toFixed(2)).join(', ')}, radius ${r.toFixed(2)} m). Y is up.`;
+    }
+    renderer.render(scene3, cam);
+    const src = renderer.domElement, w = Math.min(1280, src.width), h = Math.round(src.height * w / src.width);
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    cv.getContext('2d')!.drawImage(src, 0, 0, w, h);
+    helper.visible = hv;
+    return { data: cv.toDataURL('image/jpeg', 0.85).split(',')[1], width: w, height: h, note };
+  },
+};
+const tools = readTools(toolDeps);
+
 const assist = new AssistPanel(right, {
   system: () => ASSIST_SYSTEM,
-  context: () => [{ type: 'text', text: assistContext() }],
-  tools: () => [],
+  context: async () => [{ type: 'text', text: await assistContext() }],
+  tools: () => tools,
 });
 const showTab = (t: string) => {
   tabs.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
@@ -220,7 +266,7 @@ const showTab = (t: string) => {
 tabs.querySelectorAll('button').forEach((b) => (b.onclick = () => showTab(b.dataset.t!)));
 showTab(new URLSearchParams(location.search).get('tab') ?? (scriptPanel ? 'script' : 'assist'));
 
-function assistContext() {
+async function assistContext() {
   const lines = (scriptPanel?.text ?? '').split('\n');
   const timing = player.tl.lines;
   const numbered = lines.map((l, i) => {
@@ -228,12 +274,25 @@ function assistContext() {
     return `${String(i + 1).padStart(3)}${x ? ` [${x.start.toFixed(1)}–${x.end.toFixed(1)}s]` : ''} | ${l}`;
   }).join('\n');
   const sel = gSel.spec ?? (gSel.objs.length ? gSel.objs.map(idOfObj).join(', ') : 'nothing');
+  // top of the assembly tree (the get_tree tool, depth 2)
+  const gen = tools.find((t) => t.name === 'get_tree')!.run({ depth: 2 });
+  let r = await gen.next(); while (!r.done) r = await gen.next();
+  const tree = String(r.value.content);
+  const errs = parseAnim(scriptPanel?.text ?? '').errors;
+  const selBox = gSel.objs.length ? worldBox(gSel.objs) : undefined;
+  const flagList = (f: Record<string, boolean>, v: boolean) => Object.entries(f).filter(([, x]) => x === v).map(([k]) => k);
+  const hidden = flagList(state.hidden, true), unlocked = flagList(state.locked, false);
   return `<context>
-Script file: scripts/${scriptName} (${player.duration.toFixed(1)} s)
+Script file: scripts/${scriptName} (${player.duration.toFixed(1)} s)${errs.length ? `\nScript errors: ${errs.map((e) => `line ${e.line}: ${e.message}`).join('; ')}` : ''}
 ${numbered}
-Current time: ${player.time.toFixed(2)} s
-Selection: ${sel}
-Groups: ${Object.entries(store.groups).map(([g, ids]) => `@${g} (${ids.length})`).join(', ') || 'none'}
+
+Current time: ${player.time.toFixed(2)} s${player.playing ? ' (playing)' : ' (paused)'}
+Selection: ${sel}${selBox && !selBox.isEmpty() ? ` – bbox centre [${selBox.getCenter(new THREE.Vector3()).toArray().map((v) => v.toFixed(2))}], size [${selBox.getSize(new THREE.Vector3()).toArray().map((v) => v.toFixed(2))}] m` : ''}
+Groups: ${Object.entries(store.groups).map(([g, ids]) => `@${g} (${ids.length} members)`).join(', ') || 'none'}
+Snapshot: ${store.active}. Explicitly hidden: ${hidden.length ? hidden.slice(0, 20).join(', ') + (hidden.length > 20 ? ` … ${hidden.length - 20} more` : '') : 'none'}. Unlocked (animatable) CAD: ${unlocked.length ? unlocked.slice(0, 20).join(', ') + (unlocked.length > 20 ? ' …' : '') : 'none – CAD is locked by default'}.
+
+Assembly (top levels; use get_tree / find_parts for more):
+${tree}
 </context>`;
 }
 
@@ -471,7 +530,7 @@ renderer.setAnimationLoop(() => {
 });
 
 // ?debug: dump CAD ids + stats into the DOM (for headless checks)
-if (new URLSearchParams(location.search).has('debug')) {
+if (new URLSearchParams(location.search).has('debug') && new URLSearchParams(location.search).get('debug') !== 'assist') {
   const pre = document.createElement('pre'); pre.id = 'debug'; pre.style.display = 'none';
   const ids = [...built.registry.keys()].filter((k) => k.startsWith('plant'));
   const supp: string[] = [];
@@ -486,4 +545,24 @@ if (new URLSearchParams(location.search).has('debug')) {
   built.root.traverse((o) => { if (o.userData.suppressed) after.push(o.userData.id); });
   pre.textContent = JSON.stringify({ ids, supp, before, after: { supp: after, cad: cad.stats() } }, null, 1);
   document.body.appendChild(pre);
+}
+
+// ?debug=assist: run each read tool and dump the results (headless check without the API)
+if (new URLSearchParams(location.search).get('debug') === 'assist') {
+  const out: Record<string, any> = {};
+  const call = async (name: string, input: any) => {
+    const g = tools.find((t) => t.name === name)!.run(input);
+    let r = await g.next(); while (!r.done) r = await g.next();
+    const c = r.value.content;
+    return typeof c === 'string' ? c : (c as any[]).map((b) => b.type === 'image' ? `<image ${b.source.data.length} b64 chars>` : b.text).join(' ');
+  };
+  out.find = await call('find_parts', { query: 'R1-1/L1*', limit: 5 });
+  out.part = await call('get_part', { id: 'head' });
+  out.tree = (await call('get_tree', { depth: 2 })).split('\n').slice(0, 8).join('\n');
+  out.checkBad = await call('check_script', { text: 'move head by [0,1,0] 2s\nbogus\nmove nope by [1,0,0] 1s' });
+  out.checkOk = await call('check_script', { text: 'label "a"\nmove head by [0,3,0] 2s\nwait 1s' });
+  out.shot = await call('screenshot', { view: 'iso', target: 'head' });
+  out.contextChars = (await assistContext()).length;
+  const pre = document.createElement('pre'); pre.id = 'debug'; pre.style.display = 'none';
+  pre.textContent = JSON.stringify(out, null, 1); document.body.appendChild(pre);
 }
