@@ -11,6 +11,7 @@ import { applyCutaway, type CutMode } from './view/cutaway';
 import { CadManager } from './scene/cad';
 import { loadState, isLocked, isHidden, isCad, state } from './scene/state';
 import { TreePanel } from './view/tree';
+import { Triad } from './view/triad';
 
 const cfg = parse(coreYaml);
 const script = parse(refuelYaml);
@@ -20,6 +21,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.localClippingEnabled = true;
+renderer.info.autoReset = false; // reset once per frame so stats cover the main scene + triad
 document.getElementById('app')!.appendChild(renderer.domElement);
 
 const scene3 = new THREE.Scene();
@@ -168,10 +170,13 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
+const triad = new Triad();
+
 // ---------- loop ----------
 const clock = new THREE.Clock();
 player.seek(Number(new URLSearchParams(location.search).get('t') ?? 0));
 renderer.setAnimationLoop(() => {
+  renderer.info.reset();
   const dt = Math.min(clock.getDelta(), 0.1);
   if (player.playing) player.tick(dt); else player.seek(player.time);
 
@@ -189,6 +194,7 @@ renderer.setAnimationLoop(() => {
 
   tree.update();
   renderer.render(scene3, camera);
+  triad.render(renderer, camera, document.body.classList.contains('tree-collapsed') ? 12 : 352);
 });
 
 // ?debug: dump CAD ids + stats into the DOM (for headless checks)
