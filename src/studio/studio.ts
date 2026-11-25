@@ -146,6 +146,7 @@ function applyPlacements() {
 // ---------- base colours (model.colors: part id or @group → #hex; a part's own colour wins) ----------
 let colors: Record<string, string> = { ...(model.colors ?? {}) };
 let coloured: THREE.Mesh[] = [];
+let materialColours: string[] | undefined; // the model's own material colours (computed once, for the swatches)
 /** Put a material on a mesh, respecting the tree's selection highlight (which keeps the real one in origMat). */
 const setMat = (m: THREE.Mesh, mat: THREE.Material) => { if (m.userData.origMat) m.userData.origMat = mat; else m.material = mat; };
 function applyColors() {
@@ -591,6 +592,22 @@ const tree = new TreePanel(built, scene3, {
     if (clicked && scriptPanel?.picking) scriptPanel.insertTarget(shortSpec(clicked.spec), clicked.add); // pick mode: into the script
   },
   colorOf: (spec) => colors[spec],
+  modelColors: () => {
+    // base colours set in this animation (most recent first), then the model's own material colours (most common first)
+    const base = [...new Set(Object.values(colors).reverse())];
+    if (!materialColours) {
+      const count = new Map<string, number>();
+      built.root.traverse((x) => {
+        const m = x as THREE.Mesh;
+        const mat = (m.userData.baseMat0 ?? m.userData.origMat ?? m.material) as THREE.MeshToonMaterial | undefined;
+        if (!m.isMesh || !mat?.color || mat.side === THREE.BackSide || !m.visible) return;
+        const hex = `#${mat.color.getHexString()}`;
+        count.set(hex, (count.get(hex) ?? 0) + 1);
+      });
+      materialColours = [...count].sort((a, b) => b[1] - a[1]).map(([c]) => c);
+    }
+    return [...base, ...materialColours.filter((c) => !base.includes(c))];
+  },
   labelOf: (id) => labels[id],
   onLabel: (id, l) => {
     if (l) labels[id] = l; else delete labels[id];

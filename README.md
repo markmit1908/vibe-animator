@@ -47,7 +47,7 @@ Right-click a row for its menu. Select a row and press **F2** to rename or **Del
 | **Rename** | A part gets a **display name** (scripts keep using its id). Renaming a **group** also updates `@old` → `@new` in the script. |
 | **Remove from assembly** | Takes a part out of *this* animation: hidden, unloaded, not animatable. The CAD file is untouched. Listed under **Removed** with **Restore**. |
 | **Group…** | Makes a group (`@name`) from the selection, or adds to one. Delete group leaves its parts alone. |
-| **Colour** (info box) | Base colour for the selection; **Reset** goes back to the CAD colour. A part's own colour wins over its group's. |
+| **Colour** (info box) | Base colour for the selection. Swatches offer the colours already in the model (yours first, then the CAD colours); the picker gives any colour. **Reset** goes back to the CAD colour. A part's own colour wins over its group's. |
 | **Copy id** | The id to use in scripts. |
 
 **Snapshots** (bar at the top) are named start states: lock/hide flags, part placements and a camera view. Changes

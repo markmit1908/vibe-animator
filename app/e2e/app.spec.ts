@@ -324,3 +324,20 @@ test("lists and staggered loops: lift 1 s, vanish 0.5 s, next item 0.2 s later",
   await page.keyboard.type("\neach @top stagger 0 order -ring {\nmove $ by [0, 1 + $i*0.1, 0] 1s\n}");
   await expect(page.locator("#script .status")).toHaveText("✓");
 });
+
+test("the colour picker offers the colours already in the model", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Swatches", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "S"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {},
+    colors: { bolts: "#2e86de" } };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Swatches");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const vessel = await page.evaluate(() => { let c = ""; (window as any).__studio.built.registry.get("vessel").traverse((x: any) => { if (!c && x.isMesh && x.material.side !== 1) c = "#" + x.material.color.getHexString(); }); return c; });
+  await page.locator("#tree .row", { has: page.locator(".lbl", { hasText: /^head$/ }) }).first().click();
+  const swatches = await page.locator("#tree .info [data-swatch]").evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.swatch));
+  expect(swatches[0]).toBe("#2e86de");            // a base colour set in this animation comes first
+  expect(swatches).toContain(vessel);             // then the model's own colours
+  await page.locator(`#tree .info [data-swatch="${vessel}"]`).click();
+  await expect.poll(async () => (await model(page, a.id)).colors).toEqual({ bolts: "#2e86de", head: vessel });
+});

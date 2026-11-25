@@ -68,6 +68,8 @@ export interface TreeHooks {
   onSelect?: (obj: THREE.Object3D | undefined, spec: string | undefined, objs: THREE.Object3D[], clicked?: { spec: string; add: boolean }) => void;
   /** Base colour of a part id / "@group" (undefined: its own). */
   colorOf?: (spec: string) => string | undefined;
+  /** Colours already used in the model (base colours first, then CAD material colours) – offered as swatches. */
+  modelColors?: () => string[];
   /** Set (hex) or clear (null) base colours. */
   onColor?: (specs: string[], hex: string | null) => void;
   /** Display name of a part (undefined: its CAD name). */
@@ -418,14 +420,18 @@ export class TreePanel {
     if (!this.hooks.onColor) return '';
     const specs = this.selSpecs();
     const cur = specs.map((sp) => this.hooks.colorOf?.(sp)).find(Boolean);
-    return `<div style="margin-top:6px;display:flex;align-items:center;gap:6px">Colour
-      <input type="color" data-a="color" value="${cur ?? '#cccccc'}" style="width:34px;height:20px;padding:0;border:1px solid #2b3540;background:none">
+    const used = (this.hooks.modelColors?.() ?? []).slice(0, 18);
+    const swatches = used.length ? `<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:6px" title="Colours already in the model">${used.map((c) =>
+      `<button data-swatch="${c}" title="${c}" style="width:16px;height:16px;padding:0;border-radius:3px;border:1px solid ${c === cur ? '#f2b705' : '#2b3540'};background:${c};cursor:pointer"></button>`).join('')}</div>` : '';
+    return `${swatches}<div style="margin-top:6px;display:flex;align-items:center;gap:6px">Colour
+      <input type="color" data-a="color" value="${cur ?? '#cccccc'}" title="Any colour" style="width:34px;height:20px;padding:0;border:1px solid #2b3540;background:none">
       ${cur ? `<span style="font:11px ui-monospace,monospace">${cur}</span><button data-a="uncolor" title="Back to the CAD / default colour">Reset</button>` : '<span style="color:#7b8794">default</span>'}</div>`;
   }
   private wireColor() {
     const specs = this.selSpecs();
     const inp = this.info.querySelector<HTMLInputElement>('[data-a=color]');
     if (inp) inp.onchange = () => this.hooks.onColor?.(specs, inp.value);
+    this.info.querySelectorAll<HTMLElement>('[data-swatch]').forEach((b) => (b.onclick = () => this.hooks.onColor?.(specs, b.dataset.swatch!)));
     this.info.querySelector<HTMLElement>('[data-a=uncolor]')?.addEventListener('click', () => this.hooks.onColor?.(specs, null));
   }
 
