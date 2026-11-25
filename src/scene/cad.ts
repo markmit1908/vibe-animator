@@ -13,6 +13,7 @@ export interface CadModel {
   rotation_deg?: number[];
   scale?: number;
   /** Clip with the cutaway planes (default true). */
+  /** Ignored (the cutaway always cuts CAD); kept so older files load. */
   clip?: boolean;
 }
 
@@ -98,7 +99,7 @@ export class CadManager {
     }
   }
 
-  private restyle(root: THREE.Object3D, m: CadModel) {
+  private restyle(root: THREE.Object3D, _m: CadModel) {
     root.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (!mesh.isMesh) return;
@@ -107,7 +108,7 @@ export class CadManager {
       if (!mat) {
         mat = new THREE.MeshToonMaterial({
           color: src.color ?? new THREE.Color(0xdddddd), gradientMap: ramp, side: THREE.DoubleSide,
-          ...(m.clip !== false ? { clippingPlanes: this.scene.clipPlanes, clipIntersection: true } : {}),
+          clippingPlanes: this.scene.clipPlanes, clipIntersection: true, // the cutaway cuts CAD too
         });
         this.matCache.set(src, mat);
       }

@@ -634,3 +634,21 @@ test("select by name (tool) and ~name targets (script)", async ({ page }) => {
   await page.locator("#toolsbar [data-t=blank]").click();
   await expect.poll(async () => (await model(page, a.id)).snapshots.items.default.hidden["R1-1/L2"]).toBe(true);
 });
+
+test("cutaway sections: which side, and centred on a point or a target", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Cuts", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "C"\ncutaway half -x\nwait 1s\ncutaway quarter x -z at [0,0,0]\nwait 1s\ncutaway half y at head\nwait 1s' },
+    snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Cuts");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const planes = (t: number) => page.evaluate(async (t) => { const s = (window as any).__studio; s.player.playing = false; s.player.seek(t);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    return s.built.clipPlanes.map((p: any) => [...p.normal.toArray().map((v: number) => Math.round(v) + 0), Math.abs(p.constant) > 1e8 ? Math.sign(p.constant) * 1e9 : +p.constant.toFixed(2)]); }, t);
+  expect(await planes(0.5)).toEqual([[1, 0, 0, 0], [1, 0, 0, -1e9]]);    // half -x: removes x < 0 (second plane unused)
+  expect(await planes(1.5)).toEqual([[-1, 0, 0, 0], [0, 0, 1, 0]]);                                                        // quarter x -z
+  const p3 = await planes(2.5);                                                                                            // half y at head: top removed above the head's centre
+  expect(p3[0].slice(0, 3)).toEqual([0, -1, 0]);
+  expect(p3[0][3]).toBeGreaterThan(1);
+});

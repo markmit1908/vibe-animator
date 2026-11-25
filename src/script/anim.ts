@@ -10,6 +10,7 @@
  *   rotate @lid by [0,0,90] about [0,12,0] 4s      # degrees, world axes
  *   pivot @lid [0,12,0]                            # pivot travels with @lid
  *   hide @shielding 1s     show @shielding     fade @bolts to 0.2 2s
+ *   cutaway half -z at @reactor                  # section: side removed (x|-x|y|-y|z|-z), centred on a point or target
  *   blank ~V-005202-001 1s                        # ~text: every part whose name contains text
  *   blank @lid 1s · unblank @lid · unblank all · blank others @core 1s   # blank works on locked parts too
  *   highlight @spent #c0392b 1s                    # or palette name
@@ -198,9 +199,22 @@ export function parseAnim(text: string): AnimDoc {
         tail(); break;
       }
       case 'cutaway': {
+        // cutaway half|quarter|none [x|-x|y|-y|z|-z …] [at [x,y,z] | at TARGET]
         const x = take('word', 'none | half | quarter');
         if (x && !['none', 'half', 'quarter'].includes(x.v)) err(x.from, x.to, 'Expected none | half | quarter');
-        step.word = arg(x); tail(); break;
+        step.word = arg(x);
+        const sides: string[] = [];
+        while (peek()?.t === 'word' && /^-?[xyz]$/.test(String(peek()!.v))) sides.push(String(toks[k++].v));
+        if (sides.length) step.items = { value: sides.join(','), from: step.from, to: step.to };
+        if (x?.v === 'half' && sides.length > 1) err(x.from, x.to, 'A half cut removes one side, e.g. cutaway half -z');
+        if (x?.v === 'quarter' && sides.length && (sides.length !== 2 || sides[0].slice(-1) === sides[1].slice(-1))) err(x.from, x.to, 'A quarter cut removes two sides on different axes, e.g. cutaway quarter x -z');
+        if (peek()?.t === 'word' && peek()!.v === 'at') {
+          k++;
+          if (peek()?.t === 'vec') step.vec = arg(toks[k++]);
+          else if (peek()?.t === 'word') target();
+          else err(step.from, step.to, 'Expected a point [x, y, z] or a target after "at"');
+        }
+        tail(); break;
       }
       case 'wait': tail(); if (!step.dur) err(step.from, step.to, 'Expected a duration, e.g. wait 2s'); break;
       case 'list': {
@@ -268,7 +282,7 @@ export function toActions(steps: AnimStep[]): { camera?: any; timeline: any[] } 
       case 'color': return { ...base, highlight: tgt, color: s.word?.value ?? 'reset', dur: s.dur?.value ?? 0 };
       case 'label': return { ...base, label: s.text![0]?.value, sub: s.text![1]?.value };
       case 'camera': return { ...base, camera: s.word ? { view: s.word.value } : { pos: s.vec!.value, look: s.look?.value }, dur: s.dur?.value ?? 0 };
-      case 'cutaway': return { ...base, cutaway: s.word!.value };
+      case 'cutaway': return { ...base, cutaway: { mode: s.word!.value, sides: s.items?.value ? s.items.value.split(',') : undefined, at: s.vec?.value, of: tgt } };
       case 'wait': return { ...base, wait: s.dur!.value };
       case 'parallel': return { ...base, parallel: s.children!.map((c) => [conv(c)]) };
       case 'list': return { ...base, list: tgt, items: (s.items?.value ?? '').split(',').map((x) => x.trim()).filter(Boolean) };

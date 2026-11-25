@@ -6,7 +6,7 @@ import GUI from 'lil-gui';
 import { buildScene } from '../scene/build';
 import { compile } from '../timeline/compile';
 import { Player } from '../timeline/player';
-import { applyCutaway, type CutMode } from '../view/cutaway';
+import { applyCutaway, cutLine, DEFAULT_SIDES, type Cut, type CutMode, type CutSide } from '../view/cutaway';
 import { CadManager } from '../scene/cad';
 import { setStore, setStoreWriter, store, useSnapshot, captureSnapshot, writeStore, markDirty, isDirty, onDirtyChange,
   isLocked, isHidden, isCad, state, type Snapshot } from '../scene/state';
@@ -323,6 +323,11 @@ const ui = {
   speed: 1,
   time: 0,
   cutaway: 'script' as 'script' | CutMode,
+  /** the section the Controls choose (when Cutaway isn't "script") */
+  halfSide: 'x' as CutSide,
+  quarterSides: 'x z',
+  cutAt: [0, 0, 0] as number[],
+  cutCentre: 'origin',
   xray: false,
   followCamera: true,
 };
@@ -335,6 +340,34 @@ pb.add(ui, 'speed', 0.25, 8, 0.25).onChange((v: number) => (player.speed = v));
 const timeCtl = pb.add(ui, 'time', 0, player.duration, 0.01).name('Time (s)').onChange((v: number) => { player.playing = false; player.seek(v); });
 const view = gui.addFolder('View');
 view.add(ui, 'cutaway', ['script', 'none', 'half', 'quarter']).name('Cutaway');
+view.add(ui, 'halfSide', { '+x side': 'x', '−x side': '-x', '+z side': 'z', '−z side': '-z', 'top (+y)': 'y', 'bottom (−y)': '-y' }).name('Half removes');
+view.add(ui, 'quarterSides', { '+x +z': 'x z', '+x −z': 'x -z', '−x +z': '-x z', '−x −z': '-x -z' }).name('Quarter removes');
+const centreCtl = view.add(ui, 'cutCentre').name('Cut centre').disable();
+const cutActions = {
+  centreOnSelection: () => {
+    const objs = gSel.objs;
+    if (!objs.length) { alert('Select the part or group to centre the cut on first.'); return; }
+    const box = new THREE.Box3(); objs.forEach((o) => box.expandByObject(o));
+    ui.cutAt = box.getCenter(new THREE.Vector3()).toArray();
+    ui.cutCentre = `selection [${ui.cutAt.map((v) => v.toFixed(2)).join(', ')}]`; centreCtl.updateDisplay();
+    if (ui.cutaway === 'script') { ui.cutaway = 'half'; gui.controllersRecursive().forEach((c) => c.updateDisplay()); }
+  },
+  centreOnOrigin: () => { ui.cutAt = [0, 0, 0]; ui.cutCentre = 'origin'; centreCtl.updateDisplay(); },
+  insert: () => {
+    if (!scriptPanel) return;
+    const v = scriptPanel.view, l = v.state.doc.line(scriptPanel.cursorLine);
+    v.dispatch({ changes: { from: l.to, insert: `\n${l.text.match(/^\s*/)![0]}${cutLine(uiCut())}` } });
+    showTab('script'); v.focus();
+  },
+};
+view.add(cutActions, 'centreOnSelection').name('Centre cut on selection');
+view.add(cutActions, 'centreOnOrigin').name('Centre cut on origin');
+view.add(cutActions, 'insert').name('⤓ Insert this cut into the script');
+/** The cut the Controls choose. */
+function uiCut(): Cut {
+  const mode = (ui.cutaway === 'script' ? 'half' : ui.cutaway) as CutMode;
+  return { mode, sides: mode === 'half' ? [ui.halfSide] : mode === 'quarter' ? ui.quarterSides.split(' ') as CutSide[] : DEFAULT_SIDES[mode], at: ui.cutAt };
+}
 view.add(ui, 'xray').name('X-ray shells').onChange((on: boolean) => built.shellMaterials.forEach((m) => {
   m.userData.orig ??= m.userData.baseOpacity ?? m.opacity;
   m.userData.baseOpacity = m.opacity = on ? Math.min(0.25, m.userData.orig) : m.userData.orig;
@@ -1203,8 +1236,7 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1);
   if (player.playing) player.tick(dt); else player.seek(player.time);
 
-  const mode = (ui.cutaway === 'script' ? player.current('cutaway')?.value ?? 'none' : ui.cutaway) as CutMode;
-  applyCutaway(built, mode);
+  applyCutaway(built, ui.cutaway === 'script' ? (player.current('cutaway')?.value ?? 'none') as Cut | CutMode : uiCut());
 
   if (ui.followCamera) { camera.position.copy(player.tl.camera.pos); controls.target.copy(player.tl.camera.look); }
   controls.update();

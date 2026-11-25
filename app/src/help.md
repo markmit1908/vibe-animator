@@ -62,6 +62,7 @@ camera [12,16,14] look [0,5,0] 3s
 camera overview 2s                    # a view saved with the Views tool
 label "Remove lid" "subtitle"
 cutaway quarter
+cutaway half -z at @reactor          # side removed (x -x y -y z -z), centred on a point or target
 wait 2s
 parallel {
   move @lid by [4,0,0] 5s

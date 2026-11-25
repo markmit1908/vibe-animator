@@ -288,9 +288,22 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
         steps.push({ t, kind: 'label', value: val, sub: a.sub });
         return t + (a.dur ?? 0);
 
-      case 'cutaway':
-        steps.push({ t, kind: 'cutaway', value: val });
+      case 'cutaway': {
+        // centre: a point, a target's bounding-box centre (as it is at this time), or the origin
+        let at = val?.at as number[] | undefined;
+        if (val?.of) {
+          const box = new THREE.Box3();
+          for (const id of resolveTargets(val.of)) {
+            const s = vs.get(id), o = scene.registry.get(id)!;
+            const b = new THREE.Box3().setFromObject(o);
+            if (s && !b.isEmpty()) b.translate(s.pos.clone().sub(o.getWorldPosition(new THREE.Vector3()))); // moved by the script so far
+            box.union(b);
+          }
+          if (!box.isEmpty()) at = box.getCenter(new THREE.Vector3()).toArray();
+        }
+        steps.push({ t, kind: 'cutaway', value: typeof val === 'string' ? val : { mode: val.mode, sides: val.sides, at } });
         return t;
+      }
 
       case 'camera': {
         const from = { pos: vCam.pos.clone(), look: vCam.look.clone() };

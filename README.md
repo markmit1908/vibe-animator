@@ -31,6 +31,7 @@ use the **Import old project (.zip)…** link on Home; the model goes into `CAD/
 
 **View toolbar:**
 - **Shaded / Shaded + outline / Hidden line:** hidden line draws visible edges only, black on white; shaded + outline draws those edges over the cel-shaded view. ⚙ sets line weight, crease angle, sensitivity and colours.
+- **Cutaway** (Controls → View): `script` follows the script; or choose half / quarter, which side it removes, and **Centre cut on selection**. **⤓ Insert this cut into the script** writes it as a `cutaway` line.
 - **Iso / Front / Top / Side / Fit:** frame everything visible.
 - **⤓ PNG:** saves the view at 2× resolution with a transparent background (no grid). In hidden-line mode the parts keep their white fill.
 
@@ -77,7 +78,7 @@ One step per line; steps run in sequence. `#` starts a comment. Durations: `2s`,
 | `highlight` | `highlight @spent #c0392b 1s` | Like `color`; also takes palette names (`spent`, `fresh`, `fuel`). |
 | `camera` | `camera [12,16,14] look [0,5,0] 3s` · `camera overview 2s` | Moves the camera over the time given (instant without one). A name is a view saved with **Views**. A leading instant `camera` sets the opening view. |
 | `label` | `label "Remove lid" "Unbolt and lift"` | Chapter title (+ subtitle); listed under Chapters. |
-| `cutaway` | `cutaway quarter` | `none`, `half`, `quarter`. |
+| `cutaway` | `cutaway quarter` · `cutaway half -z at @reactor` · `cutaway half y at [0,8,0]` | `none`, `half`, `quarter`. Optionally the side removed (`x`, `-x`, `y` = top, `-y`, `z`, `-z`; a quarter takes two, e.g. `x -z`) and the centre: `at [x,y,z]` or `at TARGET` (its bounding-box centre). Defaults: `half x`, `quarter x z`, at the origin. Cuts CAD and shells. |
 | `wait` | `wait 2s` | |
 | `parallel { … }` | see below | The steps inside run together. |
 | `list` | `list @layer3 = F1-*-3, F1-14-3, @bolts` | A named list, usable as `@layer3` after this line. |
