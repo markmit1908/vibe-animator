@@ -38,6 +38,8 @@
         "camera": { "type": "object" },
         "placements": { "type": "object" } } } } } },
     "groups": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } },
+    "removed": { "type": "array", "description": "Parts removed from this animation's assembly (CAD untouched).", "items": { "type": "string" } },
+    "labels": { "type": "object", "description": "Display names for parts (script ids unchanged).", "additionalProperties": { "type": "string" } },
     "colors": { "type": "object", "description": "Base colours: part id or @group → #rrggbb.", "additionalProperties": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" } },
     "view": { "type": "object" },
     "chat": { "type": "array" }

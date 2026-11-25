@@ -107,11 +107,11 @@ async function reconcile(root: THREE.Object3D) {
     const id = (o.userData.id ?? o.name) as string;
     if (id && built.registry.get(id) === o) {
       o.userData.userHidden = state.hidden[id] === true;
-      o.visible = !o.userData.userHidden && !o.userData.faded;
+      o.visible = !o.userData.userHidden && !o.userData.faded && !o.userData.removed;
     }
     const locked = isLocked(o);
     o.userData.suppressedRoot = isCad(o) && state.hidden[id] === true && locked;
-    if ((o as THREE.Mesh).isMesh && isCad(o)) (isHidden(o) && locked ? supp : rest).push(o as THREE.Mesh);
+    if ((o as THREE.Mesh).isMesh && isCad(o)) ((isHidden(o) && locked) || isRemoved(o) ? supp : rest).push(o as THREE.Mesh);
     let all = locked;
     for (const c of o.children) all = walk(c) && all;
     // locked objects never move: skip their matrix work every frame
@@ -125,6 +125,13 @@ async function reconcile(root: THREE.Object3D) {
   cad.suppress(supp);
   await cad.restore(rest);
 }
+// ---------- removed parts / display names (per animation; the CAD file is untouched) ----------
+const removed = new Set<string>(model.removed ?? []);
+let labels: Record<string, string> = { ...(model.labels ?? {}) };
+const isRemoved = (o: THREE.Object3D): boolean => { for (let p: THREE.Object3D | null = o; p; p = p.parent) if (p.userData.removed) return true; return false; };
+for (const id of removed) { const o = built.registry.get(id); if (o) o.userData.removed = true; }
+for (const [id, l] of Object.entries(labels)) { const o = built.registry.get(id); if (o) o.userData.label = l; }
+
 // ---------- placements (parts moved with the gizmo; saved in snapshots) ----------
 for (const o of built.registry.values()) { o.userData.homeP = o.position.toArray(); o.userData.homeQ = o.quaternion.toArray(); }
 const idOfObj = (o: THREE.Object3D) => (o.userData.id ?? o.name) as string;
@@ -157,6 +164,17 @@ function applyColors() {
       m.userData.ownMat = true; // the compiler's highlight/fade may change it without cloning again
     });
   }
+}
+/** Remove parts from (or restore them to) this animation's assembly; saved with the animation. */
+async function setRemoved(ids: string[], rem: boolean) {
+  for (const id of ids) {
+    const o = built.registry.get(id); if (!o) continue;
+    if (rem) { removed.add(id); o.userData.removed = true; } else { removed.delete(id); delete o.userData.removed; }
+  }
+  for (const id of ids) { const o = built.registry.get(id); if (o) await reconcile(o); }
+  edit({ removed: [...removed] });
+  tree.rebuild();
+  buildTimeline();
 }
 /** Set (hex) or clear (null) the base colour of parts / @groups; saved with the animation. */
 function setColors(specs: string[], hex: string | null) {
@@ -198,7 +216,7 @@ function buildTimeline(o: { atStart?: boolean } = {}): boolean {
   // scene at its start pose and changed it (base colours); the old player's reset would undo that change
   if (!o.atStart) player?.seek(0);
   try {
-    const tl = compile(script, built, script.camera ?? defaultCam, (o) => isLocked(o) && !previewUnlocked.has(idOfObj(o)), store.groups);
+    const tl = compile(script, built, script.camera ?? defaultCam, (o) => isLocked(o) && !previewUnlocked.has(idOfObj(o)), store.groups, isRemoved);
     player = new Player(built, tl);
     player.playing = playing;
     player.seek(Math.min(t, tl.duration));
@@ -211,7 +229,13 @@ function buildTimeline(o: { atStart?: boolean } = {}): boolean {
     if (scriptPanel && e instanceof ScriptError && e.line) {
       // locked target: offer a one-click unlock of everything that line moves
       let fix: ParseError['fix'];
-      if (/is locked/.test(e.message)) {
+      const rm = e.message.match(/^"([^"]+)" is removed from the assembly/);
+      const gone = e.message.match(/Unknown group "@([^"]+)"/);
+      if (rm) fix = { label: `Restore ${labels[rm[1]] ?? rm[1].split('/').pop()}`, run: () => setRemoved([rm[1]], false) };
+      else if (gone && tree.lastDeletedGroup?.name === gone[1]) {
+        const g = tree.lastDeletedGroup;
+        fix = { label: `Undo delete @${g.name}`, run: () => { store.groups[g.name] = g.ids; tree.lastDeletedGroup = undefined; tree.rebuild(); buildTimeline(); edit({ groups: JSON.parse(JSON.stringify(store.groups)) }); } };
+      } else if (/is locked/.test(e.message)) {
         const find = (steps: any[]): any => { for (const st of steps) { if (st.line === e.line) return st; const c = st.children && find(st.children); if (c) return c; } };
         const tg = find(parseAnim(scriptPanel.text).steps)?.target?.value as string | undefined;
         if (tg) {
@@ -327,7 +351,7 @@ const toolDeps: ToolDeps = {
         if (st.children) walk(st.children);
       });
       walk(doc.steps);
-      const tl = compile(acts, built, acts.camera ?? defaultCam, () => false, store.groups);
+      const tl = compile(acts, built, acts.camera ?? defaultCam, () => false, store.groups, isRemoved);
       const src = text.split('\n');
       return { errors: [], locked: [...locked], duration: tl.duration, steps: [...tl.lines].sort((a, b) => a[0] - b[0]).map(([line, x]) => ({ line, ...x, text: src[line - 1].trim() })) };
     } catch (e: any) {
@@ -402,8 +426,9 @@ function persistWorking() {
   edit({ snapshots: { active: store.active, items: JSON.parse(JSON.stringify(store.snapshots)) } });
   markDirty(false);
 }
-async function applyStateChanges(changes: { ids: string[]; targets?: string[]; lock?: boolean; hide?: boolean; color?: string | null }[]) {
+async function applyStateChanges(changes: { ids: string[]; targets?: string[]; lock?: boolean; hide?: boolean; color?: string | null; remove?: boolean }[]) {
   for (const c of changes) if (c.color !== undefined) setColors(c.targets ?? c.ids, c.color);
+  for (const c of changes) if (c.remove !== undefined) await setRemoved(c.ids, c.remove);
   const touched: THREE.Object3D[] = [];
   for (const c of changes) for (const id of c.ids) {
     const o = built.registry.get(id); if (!o) continue;
@@ -459,7 +484,7 @@ const assist = new AssistPanel(right, {
       const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;');
       const lines = p.kind === 'groups'
         ? (p.changes as any[]).map((c) => `${c.action} <b>@${esc(c.name)}</b>${c.ids.length ? ` – ${c.ids.length} part${c.ids.length > 1 ? 's' : ''}: ${esc(c.ids.slice(0, 4).map((x: string) => x.split('/').pop()).join(', '))}${c.ids.length > 4 ? ' …' : ''}` : ''}`)
-        : (p.changes as any[]).map((c) => `${[c.lock === true ? '🔒 lock' : c.lock === false ? '🔓 unlock' : '', c.hide === true ? 'hide' : c.hide === false ? 'show' : '', c.color ? `colour <span style="display:inline-block;width:9px;height:9px;background:${c.color}"></span> ${c.color}` : c.color === null ? 'reset colour' : ''].filter(Boolean).join(' + ')} – ${esc((c.targets as string[]).join(', '))} (${c.ids.length} part${c.ids.length === 1 ? '' : 's'})`);
+        : (p.changes as any[]).map((c) => `${[c.lock === true ? '🔒 lock' : c.lock === false ? '🔓 unlock' : '', c.hide === true ? 'hide' : c.hide === false ? 'show' : '', c.color ? `colour <span style="display:inline-block;width:9px;height:9px;background:${c.color}"></span> ${c.color}` : c.color === null ? 'reset colour' : '', c.remove === true ? 'remove from assembly' : c.remove === false ? 'restore' : ''].filter(Boolean).join(' + ')} – ${esc((c.targets as string[]).join(', '))} (${c.ids.length} part${c.ids.length === 1 ? '' : 's'})`);
       const probs = (p.problems as string[] | undefined) ?? [];
       el.innerHTML = `<ul style="margin:6px 0;padding-left:18px">${lines.map((l) => `<li>${l}</li>`).join('')}</ul>
         ${probs.length ? `<div class="err">${probs.map(esc).join('<br>')}</div>` : ''}
@@ -554,6 +579,24 @@ const tree = new TreePanel(built, scene3, {
   },
   onSelect: (o, spec, objs) => gizmoFor(o, spec, objs),
   colorOf: (spec) => colors[spec],
+  labelOf: (id) => labels[id],
+  onLabel: (id, l) => {
+    if (l) labels[id] = l; else delete labels[id];
+    const o = built.registry.get(id); if (o) { if (l) o.userData.label = l; else delete o.userData.label; }
+    edit({ labels: { ...labels } });
+    tree.rebuild();
+  },
+  removedIds: () => [...removed],
+  onRemove: (ids, rem) => setRemoved(ids, rem),
+  onGroupRename: (from, to) => {
+    // script lines using @from follow the new name (one undoable edit); so does a base colour
+    if (scriptPanel) {
+      const re = new RegExp(`@${from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w.-])`, 'g');
+      const next = scriptPanel.text.replace(re, `@${to}`);
+      if (next !== scriptPanel.text) scriptPanel.setText(next);
+    }
+    if (colors[`@${from}`]) { colors[`@${to}`] = colors[`@${from}`]; delete colors[`@${from}`]; edit({ colors: { ...colors } }); }
+  },
   onColor: (specs, hex) => setColors(specs, hex),
   onGroups: () => { buildTimeline(); edit({ groups: JSON.parse(JSON.stringify(store.groups)) }); }, // groups are part of the animation: saved at once
   stats: () => {

@@ -40,6 +40,8 @@ used to illustrate the concept. Delivered live in a browser.
 
 - Base colours: `model.colors` (id or @group → #hex). `applyColors()` in studio.ts clones the material per coloured mesh (`userData.baseMat0` keeps the original, `ownMat` set so the compiler doesn't clone again; respects the selection highlight's `origMat`). Changing them: seek 0, apply, `buildTimeline({ atStart: true })` (the old player's reset would overwrite the new colours). Script `color T #hex|reset [dur]` compiles to `highlight`; `reset` goes to the object's base colour (VState.base).
 
+- Removed parts / display names: `model.removed` (ids) and `model.labels` (id → name), per animation. Removed objects get `userData.removed`: invisible (all visibility formulas include it), suppressed in `reconcile`, filtered from tree/assist, and `compile(..., isRemoved)` refuses them (groups skip removed members). Quick-fixes in `buildTimeline`: Restore (removed), Undo delete (`tree.lastDeletedGroup`), Unlock (locked). Group rename rewrites `@old` in the script via `onGroupRename` before the groups change.
+
 ## Conventions
 - Y is up, units are metres, and the core base is at y = 0. The operating floor sits at the vessel flange (`floorY`), and locations are relative to it.
 - The machine's origin is the grapple tip.

@@ -50,7 +50,8 @@ const KINDS = ['pick', 'place', 'move', 'rotate', 'pivot', 'highlight', 'fade', 
 
 export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]; look: number[] },
   isLocked: (o: THREE.Object3D) => boolean = () => false,
-  groups: Record<string, string[]> = {}): Timeline {
+  groups: Record<string, string[]> = {},
+  isRemoved: (o: THREE.Object3D) => boolean = () => false): Timeline {
   scene.root.updateMatrixWorld(true); // positions below are world-space
   const tweens: Tween[] = [];
   const steps: StepEvent[] = [];
@@ -65,6 +66,7 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
     if (!s) {
       const obj = scene.registry.get(id);
       if (!obj) throw new Error(`Unknown object id "${id}"`);
+      if (isRemoved(obj)) throw new Error(`"${id}" is removed from the assembly – restore it to animate it`);
       if (isLocked(obj)) throw new Error(`"${id}" is locked – unlock it in the assembly tree to animate it`);
       // virtual state holds WORLD positions; tweens convert to the parent's frame
       s = { pos: obj.getWorldPosition(new THREE.Vector3()), quat: obj.getWorldQuaternion(new THREE.Quaternion()), color: firstColor(obj), base: firstColor(obj), opacity: 1 };
@@ -88,7 +90,7 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
       if (String(s).startsWith('@')) {           // user group
         const g = groups[String(s).slice(1)];
         if (!g) throw new Error(`Unknown group "${s}" (create it in the assembly tree)`);
-        for (const id of g) if (scene.registry.has(id)) out.push(id);
+        for (const id of g) if (scene.registry.has(id) && !isRemoved(scene.registry.get(id)!)) out.push(id); // removed members are skipped
       } else if (String(s).includes('*')) {
         const re = new RegExp('^' + String(s).replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');
         for (const id of scene.registry.keys()) if (re.test(id)) out.push(id);
@@ -379,7 +381,7 @@ function firstColor(obj: THREE.Object3D) {
 
 export function setOpacity(obj: THREE.Object3D, o: number) {
   obj.userData.faded = o <= 0.01;
-  obj.visible = !obj.userData.faded && !obj.userData.userHidden;
+  obj.visible = !obj.userData.faded && !obj.userData.userHidden && !obj.userData.removed;
   obj.traverse((c) => {
     const m = (c as THREE.Mesh).material as THREE.Material | undefined;
     if (!m) return;

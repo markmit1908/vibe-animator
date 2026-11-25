@@ -18,6 +18,6 @@ export function applyCutaway(scene: BuiltScene, mode: CutMode) {
     const p = obj.position;
     const insideCore = Math.hypot(p.x, p.z) < scene.coreRadius + 0.1 && p.y < scene.floorY;
     const cut = mode === 'half' ? p.x > eps : mode === 'quarter' ? p.x > eps && p.z > eps : false;
-    obj.visible = !(insideCore && cut) && !obj.userData.faded && !obj.userData.userHidden;
+    obj.visible = !(insideCore && cut) && !obj.userData.faded && !obj.userData.userHidden && !obj.userData.removed;
   }
 }

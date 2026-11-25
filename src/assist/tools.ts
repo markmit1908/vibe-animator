@@ -23,7 +23,7 @@ const idOf = (o: THREE.Object3D) => (o.userData.id ?? o.name) as string;
 const r2 = (n: number) => +n.toFixed(2);
 const v3 = (v: THREE.Vector3) => `[${r2(v.x)}, ${r2(v.y)}, ${r2(v.z)}]`;
 const box = (o: THREE.Object3D) => new THREE.Box3().setFromObject(o);
-const kids = (o: THREE.Object3D) => o.children.filter((c) => c.userData.id || c.userData.kind === 'block');
+const kids = (o: THREE.Object3D) => o.children.filter((c) => (c.userData.id || c.userData.kind === 'block') && !c.userData.removed);
 
 function flags(o: THREE.Object3D, d: ToolDeps) {
   return [d.isLocked(o) ? 'locked' : 'unlocked', d.isHidden(o) ? 'hidden' : ''].filter(Boolean).join(', ');
@@ -60,10 +60,11 @@ export function readTools(d: ToolDeps): AssistTool[] {
         const hits: string[] = [];
         let total = 0;
         for (const [id, o] of d.registry) {
-          const name = (o.name || '').toLowerCase(), lid = id.toLowerCase();
+          if (o.userData.removed) continue; // removed from this animation's assembly
+          const name = `${o.name || ''} ${o.userData.label ?? ''}`.toLowerCase(), lid = id.toLowerCase();
           if (re ? !(re.test(lid) || re.test(name)) : !(lid.includes(q) || name.includes(q))) continue;
           total++;
-          if (hits.length < lim) hits.push(`${id} | ${o.name || '-'} | ${kids(o).length} children | ${flags(o, d)} | size ${v3(box(o).getSize(new THREE.Vector3()))} m`);
+          if (hits.length < lim) hits.push(`${id} | ${o.userData.label ? `"${o.userData.label}" ` : ''}${o.name || '-'} | ${kids(o).length} children | ${flags(o, d)} | size ${v3(box(o).getSize(new THREE.Vector3()))} m`);
         }
         return done({ content: total ? `${total} match${total > 1 ? 'es' : ''}${total > lim ? ` (first ${lim})` : ''}:\n${hits.join('\n')}` : `No parts match "${i.query}".` });
       },
@@ -265,6 +266,7 @@ export function modelProposeTools(d: ModelProposeDeps): AssistTool[] {
             targets: { type: 'array', items: { type: 'string' } },
             lock: { type: 'boolean', description: 'true = lock, false = unlock' },
             hide: { type: 'boolean', description: 'true = hide, false = show' },
+            remove: { type: 'boolean', description: 'true = remove from this animation\'s assembly (hidden, unloaded; the CAD file is untouched), false = restore' },
             color: { type: ['string', 'null'], description: 'Base colour #rrggbb to show the parts in (null = back to their own colour). Use colour to clarify / highlight components.' },
           }, required: ['targets'] } },
         },
@@ -277,9 +279,9 @@ export function modelProposeTools(d: ModelProposeDeps): AssistTool[] {
         const changes = i.changes.map((c: any) => {
           const r = d.resolve(c.targets ?? []);
           r.unknown.forEach((u) => problems.push(`unknown target "${u}"`));
-          if (c.lock === undefined && c.hide === undefined && c.color === undefined) problems.push('a change needs lock, hide and/or color');
+          if (c.lock === undefined && c.hide === undefined && c.color === undefined && c.remove === undefined) problems.push('a change needs lock, hide, color and/or remove');
           if (c.color && !/^#[0-9a-fA-F]{6}$/.test(c.color)) problems.push(`colour must be #rrggbb, not ${c.color}`);
-          return { targets: c.targets, ids: r.ids, lock: c.lock, hide: c.hide, color: c.color };
+          return { targets: c.targets, ids: r.ids, lock: c.lock, hide: c.hide, color: c.color, remove: c.remove };
         });
         const ok = !problems.length;
         const n = changes.reduce((a: number, c: any) => a + c.ids.length, 0);

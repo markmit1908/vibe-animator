@@ -20,6 +20,7 @@ interface Node {
   badge?: string;
   group?: string;              // a user group node ("@name")
   memberOf?: string;           // direct member row of this group
+  removedRow?: boolean;        // a row of the Removed section
   parent?: Node;
   depth: number;
 }
@@ -69,6 +70,16 @@ export interface TreeHooks {
   colorOf?: (spec: string) => string | undefined;
   /** Set (hex) or clear (null) base colours. */
   onColor?: (specs: string[], hex: string | null) => void;
+  /** Display name of a part (undefined: its CAD name). */
+  labelOf?: (id: string) => string | undefined;
+  /** Set (name) or clear (null) a part's display name. */
+  onLabel?: (id: string, label: string | null) => void;
+  /** Remove parts from / restore them to this animation's assembly. */
+  onRemove?: (ids: string[], removed: boolean) => void;
+  /** Ids removed from the assembly. */
+  removedIds?: () => string[];
+  /** A group was renamed (rewrite @old → @new in the script) – called before the groups change is applied. */
+  onGroupRename?: (from: string, to: string) => void;
   /** User groups were created/changed (recompile the script). */
   onGroups?: () => void;
 }
@@ -114,6 +125,12 @@ export class TreePanel {
     let t: number | undefined;
     this.search.oninput = () => { clearTimeout(t); t = window.setTimeout(() => this.refresh(), 200); };
     this.scroll.onscroll = () => this.draw();
+    this.el.tabIndex = -1;
+    this.el.addEventListener('keydown', (e) => {
+      if ((e.target as HTMLElement).tagName === 'INPUT') return;
+      if (e.key === 'F2') { e.preventDefault(); this.renameSelected(); }
+      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); this.sel.some((n) => n.removedRow) ? this.restoreSelected() : this.removeSelected(); }
+    });
     this.el.querySelector<HTMLElement>('[data-a=collapse]')!.onclick = () => { this.open.clear(); this.roots.forEach((r) => this.open.add(r)); this.refresh(); };
     new ResizeObserver(() => this.draw()).observe(this.scroll);
     this.box.visible = false; // kept for reference; selection is shown by colour
@@ -136,13 +153,14 @@ export class TreePanel {
     const core = mk('core', 1, { badge: `${cols.size} columns`, parent: gen });
     core.virtualKids = [...cols.entries()].map(([c, ids]) => {
       const n = mk(c, 2, { parent: core });
-      n.virtualKids = ids.map((id) => mk(id.split('/')[1], 3, { id, obj: reg.get(id), parent: n }));
+      n.virtualKids = ids.filter((id) => !reg.get(id)!.userData.removed).map((id) => mk(this.hooks.labelOf?.(id) ?? id.split('/')[1], 3, { id, obj: reg.get(id), parent: n }));
       return n;
     });
     const freshN = mk('fresh fuel', 1, { parent: gen });
-    freshN.virtualKids = fresh.map((id) => mk(id, 2, { id, obj: reg.get(id), parent: freshN }));
-    gen.virtualKids = [core, ...['vessel', 'head', 'bolts', 'barrel', 'machine'].filter((id) => reg.has(id))
-      .map((id) => mk(id, 1, { id, obj: reg.get(id), parent: gen })), freshN];
+    freshN.virtualKids = fresh.filter((id) => !reg.get(id)!.userData.removed).map((id) => mk(this.hooks.labelOf?.(id) ?? id, 2, { id, obj: reg.get(id), parent: freshN }));
+    const keep = (id: string) => reg.has(id) && !reg.get(id)!.userData.removed;
+    gen.virtualKids = [core, ...['vessel', 'head', 'bolts', 'barrel', 'machine'].filter(keep)
+      .map((id) => mk(this.hooks.labelOf?.(id) ?? id, 1, { id, obj: reg.get(id), parent: gen })), freshN];
 
     const cadRoots = this.scene.root.children.filter((o) => o.userData.cad);
     this.roots = this.scene.blockIds.length || reg.has('vessel') ? [gen] : [];
@@ -152,7 +170,7 @@ export class TreePanel {
       const g = mk('Groups', 0);
       g.virtualKids = groups.sort(([a], [b]) => a.localeCompare(b)).map(([name, ids]) => {
         const gn = mk(name, 1, { parent: g, group: name, id: `@${name}`, badge: `${ids.length}` });
-        gn.virtualKids = ids.filter((id) => reg.has(id)).map((id) => ({ ...this.objNode(reg.get(id)!, 2, gn), label: id, memberOf: name }));
+        gn.virtualKids = ids.filter((id) => reg.has(id)).map((id) => ({ ...this.objNode(reg.get(id)!, 2, gn), label: this.hooks.labelOf?.(id) ?? id, memberOf: name }));
         return gn;
       });
       this.roots.unshift(g);
@@ -163,6 +181,13 @@ export class TreePanel {
       cad.virtualKids = cadRoots.map((o) => this.objNode(o, 1, cad));
       this.roots.push(cad);
       this.open.add(cad);
+    }
+    // parts removed from this animation's assembly: listed here, with Restore
+    const removed = (this.hooks.removedIds?.() ?? []).filter((id) => reg.has(id));
+    if (removed.length) {
+      const rn = mk('Removed', 0, { badge: String(removed.length) });
+      rn.virtualKids = removed.map((id) => ({ ...this.objNode(reg.get(id)!, 1, rn), removedRow: true, label: this.hooks.labelOf?.(id) ?? id }));
+      this.roots.push(rn);
     }
     this.refresh();
   }
@@ -179,7 +204,8 @@ export class TreePanel {
       }
     }
     names.push(nameOf(o));
-    const label = names.filter((n, i) => i === 0 || !['model', 'root'].includes(n)).join(' › ');
+    const own = this.hooks.labelOf?.((o.userData.id ?? o.name) as string);
+    const label = own ?? names.filter((n, i) => i === 0 || !['model', 'root'].includes(n)).join(' › ');
     const inst = (o as THREE.InstancedMesh).isInstancedMesh ? `×${(o as THREE.InstancedMesh).count}` : undefined;
     return { label, depth, parent, id: o.userData.id ?? o.name, obj: o, badge: inst ?? (o.children.length ? String(o.children.length) : undefined) };
   }
@@ -189,7 +215,7 @@ export class TreePanel {
     if (!n.obj || n.obj.userData.kind === 'block') return [];
     if (!n.kids) {
       // generated groups (vessel, head…) have unnamed internals – don't list them
-      n.kids = isCad(n.obj) ? n.obj.children.filter((c) => c.userData.id).map((c) => this.objNode(c, n.depth + 1, n)) : [];
+      n.kids = isCad(n.obj) ? n.obj.children.filter((c) => c.userData.id && !c.userData.removed).map((c) => this.objNode(c, n.depth + 1, n)) : [];
     }
     return n.kids;
   }
@@ -235,7 +261,7 @@ export class TreePanel {
     const locked = objs.length > 0 && objs.every(isLocked);
     const explicitH = n.id !== undefined && n.id in state.hidden;
     const explicitL = n.id !== undefined && n.id in state.locked;
-    const supp = n.obj?.userData.suppressedRoot;
+    const supp = n.obj?.userData.suppressedRoot || n.removedRow || (n.memberOf && n.obj?.userData.removed);
     const r = document.createElement('div');
     const sameAsSel = this.sel.some((x) => x === n || (n.id && x.id === n.id && !x.group === !n.group));
     r.className = 'row' + (sameAsSel ? ' sel' : '') + (hidden ? ' hidden' : '') + (supp ? ' supp' : '');
@@ -251,6 +277,11 @@ export class TreePanel {
     eye.onclick = (e) => { e.stopPropagation(); this.setFlag(n, 'hidden', !hidden); };
     lock.onclick = (e) => { e.stopPropagation(); this.setFlag(n, 'locked', !locked); };
     r.onclick = (e) => this.select(n, false, e.metaKey || e.ctrlKey || e.shiftKey);
+    r.oncontextmenu = (e) => {
+      e.preventDefault();
+      if (!this.sel.includes(n)) this.select(n, false);
+      this.menu(e.clientX, e.clientY);
+    };
     r.ondblclick = () => this.toggleOpen(n);
     return r;
   }
@@ -368,7 +399,8 @@ export class TreePanel {
       ${box.isEmpty() ? '' : `<div style="margin-top:4px">size ${fmt(size)} m · centre ${fmt(c)}</div>`}
       <div style="margin-top:4px">${n.group ? `<button data-a="ungroup">Delete group</button> <button data-a="rename">Rename</button>`
         : n.memberOf ? `<button data-a="unmember">Remove from ${esc(n.memberOf)}</button>`
-        : n.id ? `<button data-a="group">Group…</button>` : ''}</div>`;
+        : n.removedRow ? `<button data-a="restore">Restore</button>`
+        : n.id ? `<button data-a="group">Group…</button> <button data-a="partrename" title="F2">Rename</button> <button data-a="partremove" title="Delete">Remove</button>` : ''}</div>`;
     this.info.insertAdjacentHTML('beforeend', this.colorRow());
     this.info.querySelector<HTMLElement>('[data-a=copy]')?.addEventListener('click', () => navigator.clipboard?.writeText(n.id!));
     this.wireGroupButtons();
@@ -410,20 +442,100 @@ export class TreePanel {
       store.groups[name] = objs.filter((o) => !covered(o)).map((o) => (o.userData.id ?? o.name) as string);
       this.groupsChanged();
     });
-    on('ungroup', () => {
-      const g = this.selected?.group;
-      if (g && confirm(`Delete group "${g}"? (its parts are not affected)`)) { delete store.groups[g]; this.sel = []; this.groupsChanged(); }
-    });
-    on('rename', () => {
-      const g = this.selected?.group;
-      const name = g && prompt('New group name', g)?.trim().replace(/\s+/g, '-');
-      if (g && name && name !== g) { store.groups[name] = store.groups[g]; delete store.groups[g]; this.sel = []; this.groupsChanged(); }
-    });
+    on('ungroup', () => this.removeSelected());
+    on('rename', () => this.renameSelected());
+    on('partrename', () => this.renameSelected());
+    on('partremove', () => this.removeSelected());
+    on('restore', () => this.restoreSelected());
     on('unmember', () => {
       const n = this.selected!;
       store.groups[n.memberOf!] = store.groups[n.memberOf!].filter((id) => id !== n.id);
       this.sel = []; this.groupsChanged();
     });
+  }
+
+  // ---------- rename / remove / restore (context menu, F2, Delete) ----------
+  /** The last deleted group, for "Undo delete" (a script line still using it offers it as a quick-fix). */
+  lastDeletedGroup?: { name: string; ids: string[] };
+
+  private partIds(nodes = this.sel) {
+    return [...new Set(nodes.filter((n) => !n.group && !n.removedRow).flatMap((n) => (n.id && n.obj ? [n.id] : this.objsOf(n).map((o) => (o.userData.id ?? o.name) as string))))];
+  }
+
+  renameSelected() {
+    const n = this.selected;
+    if (!n || this.sel.length !== 1) return;
+    if (n.group) {
+      const to = prompt('Rename group (script lines using it are updated)', n.group)?.trim().replace(/\s+/g, '-');
+      if (!to || to === n.group) return;
+      if (!/^[\w.-]+$/.test(to)) return alert('Group names use letters, digits, - _ and .');
+      if (store.groups[to]) return alert(`A group @${to} already exists.`);
+      this.hooks.onGroupRename?.(n.group, to);
+      store.groups[to] = store.groups[n.group]; delete store.groups[n.group];
+      this.sel = []; this.groupsChanged();
+      return;
+    }
+    if (!n.id || !n.obj) return;
+    const name = prompt('Display name (empty: the CAD name). Scripts keep using the id.', this.hooks.labelOf?.(n.id) ?? n.label);
+    if (name === null) return;
+    this.hooks.onLabel?.(n.id, name.trim() || null);
+  }
+
+  removeSelected() {
+    const groups = this.sel.filter((n) => n.group).map((n) => n.group!);
+    if (groups.length === 1 && this.sel.length === 1) {
+      const g = groups[0];
+      if (!confirm(`Delete group "@${g}"? Its parts are not affected.`)) return;
+      this.lastDeletedGroup = { name: g, ids: store.groups[g] };
+      delete store.groups[g]; this.sel = []; this.groupsChanged();
+      return;
+    }
+    const ids = this.partIds();
+    if (!ids.length) return;
+    this.sel = []; this.highlight();
+    this.hooks.onRemove?.(ids, true);
+  }
+
+  restoreSelected() {
+    const ids = [...new Set(this.sel.filter((n) => n.removedRow || n.obj?.userData.removed).map((n) => n.id!).filter(Boolean))];
+    if (ids.length) { this.sel = []; this.hooks.onRemove?.(ids, false); }
+  }
+
+  private menuEl?: HTMLElement;
+  private menu(x: number, y: number) {
+    this.menuEl?.remove();
+    const n = this.selected; if (!n) return;
+    const many = this.sel.length > 1;
+    const items: [string, () => void][] = [];
+    if (n.removedRow) items.push([`Restore${many ? ` ${this.sel.length} parts` : ''}`, () => this.restoreSelected()]);
+    else if (n.group && !many) items.push(['Rename group…  F2', () => this.renameSelected()], ['Delete group  ⌫', () => this.removeSelected()]);
+    else {
+      if (!many && n.id && n.obj) items.push(['Rename (display name)…  F2', () => this.renameSelected()]);
+      if (this.partIds().length) items.push([`Remove from assembly${many ? ` (${this.partIds().length})` : ''}  ⌫`, () => this.removeSelected()]);
+      if (!many && n.memberOf) items.push([`Remove from @${n.memberOf}`, () => { store.groups[n.memberOf!] = store.groups[n.memberOf!].filter((i) => i !== n.id); this.sel = []; this.groupsChanged(); }]);
+    }
+    if (!n.removedRow) {
+      const objs = this.sel.flatMap((s) => this.objsOf(s));
+      const allLocked = objs.length > 0 && objs.every(isLocked), allHidden = objs.length > 0 && objs.every(isHidden);
+      items.push([allLocked ? 'Unlock' : 'Lock', () => this.sel.forEach((s) => this.setFlag(s, 'locked', !allLocked))]);
+      items.push([allHidden ? 'Show' : 'Hide', () => this.sel.forEach((s) => this.setFlag(s, 'hidden', !allHidden))]);
+    }
+    if (!many && n.id) items.push(['Copy id', () => navigator.clipboard?.writeText(n.id!)]);
+    const m = document.createElement('div');
+    m.className = 'treemenu';
+    m.style.cssText = `position:fixed;left:${x}px;top:${y}px;z-index:50;background:#14191f;border:1px solid #2b3540;border-radius:6px;padding:4px;min-width:200px;box-shadow:0 6px 20px #0008;font:12px system-ui;color:#d7dde4`;
+    for (const [label, f] of items) {
+      const b = document.createElement('div');
+      b.textContent = label; b.setAttribute('role', 'menuitem');
+      b.style.cssText = 'padding:5px 10px;border-radius:4px;cursor:pointer;white-space:pre';
+      b.onmouseenter = () => (b.style.background = '#26303a'); b.onmouseleave = () => (b.style.background = '');
+      b.onclick = () => { m.remove(); f(); };
+      m.appendChild(b);
+    }
+    document.body.appendChild(m);
+    this.menuEl = m;
+    const close = (e: Event) => { if (!m.contains(e.target as HTMLElement)) { m.remove(); removeEventListener('mousedown', close, true); } };
+    setTimeout(() => addEventListener('mousedown', close, true));
   }
 
   private groupsChanged() {

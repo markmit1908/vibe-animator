@@ -201,3 +201,49 @@ test("base colours from the tree are saved, and the script can change and reset 
   await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
   expect(await colourOf("head")).toBe("c0392b");
 });
+
+test("assembly: remove/restore parts, display names, group rename and delete", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Assembly", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "A"\nmove machine by [0,1,0] 1s\nmove @lid by [0,3,0] 2s' },
+    snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: { lid: ["head", "bolts"] } };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Assembly");
+  const status = page.locator("#script .status");
+  await expect(status).toHaveText("✓", { timeout: 15_000 });
+  const row = (text: string) => page.locator("#tree .row", { has: page.locator(".lbl", { hasText: new RegExp(`^${text}$`) }) }).first();
+  const menu = async (r: ReturnType<typeof row>, item: RegExp) => { await r.click({ button: "right" }); await page.getByRole("menuitem", { name: item }).click(); };
+  const machineVisible = () => page.evaluate(() => (window as any).__studio.built.registry.get("machine").visible);
+
+  // remove from the assembly: gone from the tree and the view, listed under Removed, saved, and the script flags it
+  await menu(row("machine"), /^Remove from assembly/);
+  await expect(row("Removed")).toBeVisible();
+  await expect.poll(async () => (await model(page, a.id)).removed).toEqual(["machine"]);
+  expect(await machineVisible()).toBe(false);
+  await expect(status).toHaveText("1 error");
+  // restore from the Removed section
+  await row("Removed").locator(".caret").click();
+  await menu(page.locator("#tree .row.supp").first(), /^Restore/);
+  await expect(status).toHaveText("✓");
+  await expect.poll(async () => (await model(page, a.id)).removed ?? []).toEqual([]);
+  expect(await machineVisible()).toBe(true);
+
+  // display name: the tree shows it, the script keeps the id
+  page.once("dialog", (d) => d.accept("Refuelling machine"));
+  await menu(row("machine"), /^Rename/);
+  await expect(row("Refuelling machine")).toBeVisible();
+  await expect.poll(async () => (await model(page, a.id)).labels).toEqual({ machine: "Refuelling machine" });
+  await expect(status).toHaveText("✓");
+
+  // group rename rewrites the script
+  page.once("dialog", (d) => d.accept("lid-set"));
+  await menu(row("lid"), /^Rename group/);
+  await expect.poll(async () => scriptOf(await model(page, a.id))).toContain("move @lid-set by [0,3,0] 2s");
+  await expect(status).toHaveText("✓");
+
+  // group delete: the script flags it, with an undo
+  page.once("dialog", (d) => d.accept());
+  await menu(row("lid-set"), /^Delete group/);
+  await expect(status).toHaveText("1 error");
+  await expect.poll(async () => (await model(page, a.id)).groups).toEqual({});
+});
