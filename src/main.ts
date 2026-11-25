@@ -661,7 +661,10 @@ function exportPng() {
 {
   const css = document.createElement('style');
   css.textContent = `#viewbar { position: fixed; top: 8px; right: 468px; z-index: 6; display: flex; gap: 4px; padding: 4px; background: rgba(14,17,21,.9); border: 1px solid #2b3540; border-radius: 6px; font: 12px system-ui; }
-    body.right-collapsed #viewbar { right: 48px; }
+    #viewbar { flex-wrap: wrap; justify-content: flex-end; max-width: calc(100vw - 352px - 476px); }
+    body.tree-collapsed #viewbar { max-width: calc(100vw - 56px - 476px); }
+    body.right-collapsed #viewbar { right: 48px; max-width: calc(100vw - 352px - 56px); }
+    body.right-collapsed.tree-collapsed #viewbar { max-width: calc(100vw - 112px); }
     body.paper #chapter { color: #111 !important; } body.paper #sub, body.paper #clock { color: #555 !important; }
     #viewbar .grp { display: flex; } #viewbar .sep { width: 1px; background: #2b3540; margin: 0 4px; }
     #viewbar button { background: #1b222a; color: #d7dde4; border: 1px solid #2b3540; padding: 3px 8px; cursor: pointer; font: inherit; }
@@ -965,13 +968,16 @@ function showBanner(html: string) {
 {
   const header = document.querySelector('#tree header')!;
   const wrap = document.createElement('span'); wrap.style.position = 'relative';
-  wrap.innerHTML = `<button title="Project file">File ▾</button><div class="filemenu" hidden style="position:absolute;top:calc(100% + 4px);left:0;z-index:9;background:#14191f;border:1px solid #2b3540;border-radius:6px;padding:4px;display:flex;flex-direction:column;min-width:210px">
+  wrap.innerHTML = `<button title="Project file">File ▾</button><div class="filemenu" hidden style="position:absolute;top:calc(100% + 4px);left:0;z-index:9;background:#14191f;border:1px solid #2b3540;border-radius:6px;padding:4px;flex-direction:column;min-width:210px">
     <button data-f="export" style="text-align:left">⤓ Export project (.json)</button>
     <button data-f="zip" style="text-align:left">⤓ Export project + 3D model (.zip)</button>
     <button data-f="import" style="text-align:left">⤒ Import project (.json / .zip)…</button>
     <button data-f="cad" style="text-align:left">⟳ Re-import CAD (.glb)…</button></div>`;
   header.insertBefore(wrap, header.querySelector('b')!.nextSibling);
   const menu = wrap.querySelector<HTMLElement>('.filemenu')!;
+  const fmCss = document.createElement('style'); // display only when not [hidden] (an inline display would override hidden)
+  fmCss.textContent = '#tree .filemenu:not([hidden]) { display: flex; }';
+  document.head.appendChild(fmCss);
   menu.querySelectorAll('button').forEach((b) => (b.style.margin = '1px 0'));
   wrap.querySelector<HTMLElement>('button')!.onclick = (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; };
   addEventListener('click', () => (menu.hidden = true));
