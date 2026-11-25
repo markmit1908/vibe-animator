@@ -161,9 +161,20 @@ export class TreePanel {
     this.refresh();
   }
 
+  /** Node for a CAD object. Chains of single-child levels are compacted into one row
+   *  ("a › b › c"); the row stands for the deepest object (ids are unchanged). */
   private objNode(o: THREE.Object3D, depth: number, parent?: Node): Node {
+    const names: string[] = [];
+    const nameOf = (x: THREE.Object3D) => x.name || (x.userData.id as string).split('/').pop()!;
+    if (isCad(o)) {
+      while (o.children.length === 1 && o.children[0].userData.id && !(o as THREE.Mesh).isMesh) {
+        if (!['model', 'root'].includes(o.name) || !names.length) names.push(nameOf(o));
+        o = o.children[0];
+      }
+    }
+    names.push(nameOf(o));
+    const label = names.filter((n, i) => i === 0 || !['model', 'root'].includes(n)).join(' › ');
     const inst = (o as THREE.InstancedMesh).isInstancedMesh ? `×${(o as THREE.InstancedMesh).count}` : undefined;
-    const label = o.name && o.name !== 'model' ? o.name : (o.userData.id as string).split('/').pop()!;
     return { label, depth, parent, id: o.userData.id ?? o.name, obj: o, badge: inst ?? (o.children.length ? String(o.children.length) : undefined) };
   }
 
@@ -301,7 +312,7 @@ export class TreePanel {
     };
     for (const o of chain) {
       const n = search(level, o);
-      if (!n) break;
+      if (!n) continue; // compacted level: the row is a deeper object in the chain
       found = n;
       level = this.kids(n);
     }
