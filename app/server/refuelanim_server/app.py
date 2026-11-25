@@ -15,6 +15,24 @@ from solverkit.api import ApiV1, HomeApp, PlatformApp, create_app
 from solverkit.paths import AppPaths
 from solverkit.store import ModelStore
 
+
+
+def _load_dotenv(path: Path) -> None:
+    """KEY=value lines from the repo's .env (git-ignored) into the server's environment; set variables win.
+    Server-side only: the key never reaches the page (the assist proxy adds it)."""
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip().strip("'\""))
+    except OSError:
+        pass
+
+
+_load_dotenv(Path(__file__).resolve().parents[3] / ".env")
+
 PATHS = AppPaths("RefuelAnim", "REFUELANIM", Path(__file__).resolve().parents[2])
 # The vault defaults to ~/Documents/Refuel animations (in dev too: it holds the real animations and CAD).
 PATHS.default_vault = lambda: Path.home() / "Documents" / "Refuel animations"  # type: ignore[method-assign]

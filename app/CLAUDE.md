@@ -20,7 +20,9 @@ This app is built on SolverKit (see `solverkit/CLAUDE.md` and `specs/` in the So
 ## SolverKit modules installed
 - `model-file`: Export / Replace from a model file (.json)
 - `help`: the Help tab (src/help.md)
-- `assist`: AI assist (the server's key: REFUELANIM_ANTHROPIC_API_KEY)
+- AI assist: the studio's own assistant (`../src/assist`, `../src/view/assistPanel.ts`) over SolverKit's assist key proxy
+  (`PlatformApp(assist_key=…)`, `/api/assist/proxy`). The key: REFUELANIM_ANTHROPIC_API_KEY / ANTHROPIC_API_KEY /
+  VITE_ANTHROPIC_API_KEY from the environment or the repo's `.env` (read server-side by `app.py`).
 
 Add or remove one with `/solverkit-modules`; the app's side of each is in `docs/SOLVERKIT.md` (A1–A11).
 
