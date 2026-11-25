@@ -1,0 +1,8 @@
+# Animation script for the CAD plant. Same action reference as refuel.yaml.
+# Find part ids in the assembly tree (select a part -> Copy id); unlock parts before moving them.
+#
+# camera: {pos: [x,y,z], look: [x,y,z]}   # omit to frame the whole model
+
+timeline:
+  - label: "Plant overview"
+  - wait: 1

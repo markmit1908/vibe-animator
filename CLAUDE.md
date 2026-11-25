@@ -21,6 +21,8 @@ used to illustrate the concept. Delivered live in a browser.
 - Part state (`src/scene/state.ts`, `scenes/state.yaml` via the `/__state` endpoint in vite.config.ts): explicit `locked`/`hidden` flags by id, inherited by descendants. `reconcile()` in main.ts applies them. Locked → `matrixAutoUpdate=false` (and `matrixWorldAutoUpdate=false` for fully locked subtrees). Locked + hidden CAD → `CadManager.suppress` frees geometry; `restore` reloads it from the .glb by id.
 - Changing locks recompiles the script. Scripts may not target locked objects.
 
+- `generated: false` in core.yaml builds the parametric reactor and then drops it (lights and grid stay). The registry then holds CAD only. `script:` selects scripts/<name>.yaml; with no `camera:` the view frames everything loaded.
+
 ## Conventions
 - Y is up, units are metres, and the core base is at y = 0. The operating floor sits at the vessel flange (`floorY`), and locations are relative to it.
 - The machine's origin is the grapple tip.

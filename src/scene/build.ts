@@ -247,6 +247,17 @@ export function buildScene(cfg: any): BuiltScene {
   grid.position.y = -v.bottom_gap - (vR + v.wall) * 0.5 - 0.05;
   root.add(grid);
 
+  // generated: false -> drop the parametric reactor (keep lights + grid); CAD models are added later
+  if (cfg.generated === false) {
+    for (const o of [...root.children]) {
+      if ((o as THREE.Light).isLight || o === grid) continue;
+      root.remove(o);
+      o.traverse((x) => (x as THREE.Mesh).geometry?.dispose());
+    }
+    registry.clear(); slots.clear(); columns.clear(); blockIds.length = 0;
+    grid.position.y = 0;
+  }
+
   function addGroup(id: string, g: THREE.Object3D) {
     g.name = id;
     root.add(g);

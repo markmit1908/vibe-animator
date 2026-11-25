@@ -3,7 +3,6 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import GUI from 'lil-gui';
 import { parse } from 'yaml';
 import coreYaml from '../scenes/core.yaml?raw';
-import refuelYaml from '../scripts/refuel.yaml?raw';
 import { buildScene } from './scene/build';
 import { compile } from './timeline/compile';
 import { Player } from './timeline/player';
@@ -14,7 +13,9 @@ import { TreePanel } from './view/tree';
 import { Triad } from './view/triad';
 
 const cfg = parse(coreYaml);
-const script = parse(refuelYaml);
+const scripts = import.meta.glob('../scripts/*.yaml', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+const scriptName = cfg.script ?? 'refuel.yaml';
+const script = parse(scripts[`../scripts/${scriptName}`] ?? 'timeline: []') ?? {};
 
 // ---------- renderer / scene ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -81,7 +82,16 @@ async function reconcile(root: THREE.Object3D) {
 for (const o of built.root.children) await reconcile(o);
 
 let player!: Player;
-const defaultCam = script.camera ?? { pos: [12, 16, 14], look: [0, 5, 0] };
+// no camera in the script: frame everything that's loaded
+const frameAll = () => {
+  const box = new THREE.Box3().setFromObject(built.root);
+  if (box.isEmpty()) return { pos: [12, 16, 14], look: [0, 5, 0] };
+  const c = box.getCenter(new THREE.Vector3()), r = box.getSize(new THREE.Vector3()).length() / 2;
+  const d = r / Math.sin(THREE.MathUtils.degToRad(20)) * 0.9;
+  const dir = new THREE.Vector3(1, 0.8, 1.1).normalize();
+  return { pos: c.clone().addScaledVector(dir, d).toArray(), look: c.toArray() };
+};
+const defaultCam = script.camera ?? frameAll();
 function buildTimeline(): boolean {
   try {
     const tl = compile(script, built, defaultCam, isLocked);

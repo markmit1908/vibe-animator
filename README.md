@@ -33,8 +33,8 @@ URL params: `?t=42` opens at 42 s, `?select=R1-1/L5` selects a part, `?debug` du
 
 | Path | What it is |
 |---|---|
-| `scenes/core.yaml` | Model setup: core lattice, block sizes, vessel, head, machine, named locations, fresh-fuel staging, palette, CAD models |
-| `scripts/refuel.yaml` | Animation script (timeline + macros). Action reference is in the file header |
+| `scenes/core.yaml` | Model setup: `generated: true/false` (parametric placeholder reactor on/off), `script:`, core lattice, block sizes, vessel, head, machine, named locations, fresh-fuel staging, palette, CAD models |
+| `scripts/*.yaml` | Animation scripts. `script:` in core.yaml picks one: `refuel.yaml` animates the generated reactor, `plant.yaml` is the CAD starter. Action reference is in refuel.yaml's header |
 | `public/cad/` | Converted `.glb` files (git-ignored), listed under `cad_models:` in core.yaml |
 | `src/scene/build.ts` | Generates geometry from `core.yaml` |
 | `src/timeline/compile.ts` | Turns the script into tweens |

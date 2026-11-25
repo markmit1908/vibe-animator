@@ -121,7 +121,7 @@ export class TreePanel {
       .map((id) => mk(id, 1, { id, obj: reg.get(id), parent: gen })), freshN];
 
     const cadRoots = this.scene.root.children.filter((o) => o.userData.cad);
-    this.roots = [gen];
+    this.roots = this.scene.blockIds.length || reg.has('vessel') ? [gen] : [];
     this.open.add(gen);
     if (cadRoots.length) {
       const cad = mk('CAD', 0);
