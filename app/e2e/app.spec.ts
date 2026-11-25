@@ -578,3 +578,38 @@ test("Tab accepts the highlighted completion in the script", async ({ page }) =>
   await page.keyboard.press("Tab");
   await expect(page.locator("#script .cm-content")).toContainText("unblank");
 });
+
+test("script completion is context sensitive", async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.goto("/");
+  const m = { name: "Ctx", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "C"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: { lid: ["head"] } };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Ctx");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const ed = page.locator("#script .cm-content");
+  await ed.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Meta+ArrowDown");
+  const tip = page.locator(".cm-tooltip-autocomplete");
+  const at = async (text: string) => {
+    await page.keyboard.press("Escape"); await page.keyboard.press("End"); await page.keyboard.press("Shift+Home");
+    await page.keyboard.type(text); await page.waitForTimeout(500);
+    return (await tip.count()) ? (await tip.locator("li").allTextContents()).join("|") : "";
+  };
+  await page.keyboard.press("Enter");
+  expect(await at("mo")).toContain("move");                     // a verb at the start
+  expect(await at("move @l")).toContain("@lid");                // a target
+  expect(await at("move @lid ")).toMatch(/^by\|to$/);           // its keywords, not part ids
+  expect(await at("move @lid by [0,")).toBe("");                // inside a vector: nothing
+  expect(await at("move @lid by [0,1,0] 2")).toBe("");          // a number: nothing
+  expect(await at("move @lid by [0,1,0] 2s ")).toContain("ease");
+  expect(await at("move @lid by [0,1,0] 2s ")).not.toContain("@lid");
+  expect(await at("rotate @lid by [0,90,0] ")).toContain("about");
+  expect(await at("fade @lid ")).toBe("to");
+  expect(await at("blank ")).toContain("others");
+  expect(await at("unblank ")).toContain("all");
+  expect(await at("each @lid ")).toBe("stagger|order");
+  expect(await at("each @lid order ")).toContain("ring");
+  expect(await at("cutaway ")).toBe("none|half|quarter");
+  expect(await at('label "Lift @l')).toBe("");                   // in a string: nothing
+  expect(await at("wait ")).toBe("");
+});

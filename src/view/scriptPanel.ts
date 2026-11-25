@@ -170,7 +170,7 @@ export class ScriptPanel {
   private pick?: { from: number; to: number };
   private pickEl!: HTMLElement;
   /** Verbs whose next word is a target. */
-  private static TARGETED = /^(\s*)(?:move|rotate|hide|show|fade|highlight|color|pivot|each|list\s+@[\w.-]+\s*=)\s+([^\s]*(?:,\s*[^\s]*)*)$/;
+  private static TARGETED = /^(\s*)(?:move|rotate|hide|show|fade|highlight|color|pivot|each|unblank|blank(?:\s+others)?|list\s+@[\w.-]+\s*=)\s+([^\s]*(?:,\s*[^\s]*)*)$/;
 
   constructor(public right: HTMLElement, public name: string, text: string, public hooks: ScriptHooks) {
     const style = document.createElement('style'); style.textContent = CSS; document.head.appendChild(style);
@@ -221,15 +221,68 @@ export class ScriptPanel {
         if (!vs.length) return null;
         return { from: cx.pos - cv[1].length, options: vs.map((v, i) => ({ label: v, type: 'constant', detail: 'view', boost: 50 - i })), validFor: /^[\w-]*$/ };
       }
-      const word = cx.matchBefore(/[@\w./#-]*/);
-      if (!word || (word.from === word.to && !cx.explicit)) return null;
-      if (/^\s*[\w]*$/.test(before)) {
-        return { from: word.from, options: ANIM_VERBS.map((v) => ({ label: v, type: 'keyword' })) };
-      }
-      const opts = this.hooks.ids().map((id) => ({ label: id, type: id.startsWith('@') ? 'class' : 'variable' }));
-      return { from: word.from, options: opts, validFor: /^[@\w./#-]*$/ };
+      return contextual(cx, before);
     };
 
+    /** What fits where the cursor is: a verb, a target, the step's keywords – or nothing (numbers, vectors, comments). */
+    const kw = (from: number, words: string[], detail?: string): CompletionResult =>
+      ({ from, options: words.map((w, i) => ({ label: w, type: 'keyword', detail, boost: 20 - i })), validFor: /^\w*$/ });
+    const contextual = (cx: CompletionContext, before: string): CompletionResult | null => {
+      const w = before.match(/[@\w./*$-]*$/)![0];
+      const from = cx.pos - w.length;
+      if (!w && !cx.explicit && !/\s$/.test(before)) return null;
+      // in a comment, a string, an open [vector] or {expression}: nothing
+      const code = before.replace(/"[^"]*"/g, '""');
+      if (/"[^"]*$/.test(code) || /(^|\s)#(?![0-9a-fA-F]*$)/.test(code)) return null;
+      if ((code.match(/\[/g)?.length ?? 0) > (code.match(/\]/g)?.length ?? 0) || (code.match(/\{/g)?.length ?? 0) > (code.match(/\}/g)?.length ?? 0) && !/\{\s*$/.test(code)) return null;
+      if (/^\d/.test(w)) return null;                               // a number or duration being typed
+      // start of a line: the verbs
+      if (/^\s*\w*$/.test(before)) return w || cx.explicit ? { from, options: ANIM_VERBS.map((v) => ({ label: v, type: 'keyword' })), validFor: /^\w*$/ } : null;
+      // a target: parts, groups, lists (and the step's own words)
+      const tm = before.match(ScriptPanel.TARGETED);
+      if (tm) {
+        const doc = cx.state.doc.toString();
+        const lists = [...doc.matchAll(/^\s*list\s+(@[\w.-]+)/gm)].map((m) => m[1]);
+        const extra = /^\s*blank\s+\S*$/.test(before) ? ['others'] : /^\s*unblank\s+\S*$/.test(before) ? ['all'] : [];
+        const inLoop = /(^|\n)\s*each\b[^\n]*\{/.test(doc.slice(0, cx.pos)) ? ['$'] : [];
+        const ids = [...new Set([...lists, ...this.hooks.ids()])];
+        const word = w.replace(/^.*,\s*/, '');
+        if (!word && !cx.explicit && !/[\s,]$/.test(before)) return null;
+        return { from: cx.pos - word.length, validFor: /^[@\w./*$-]*$/, options: [
+          ...extra.map((x) => ({ label: x, type: 'keyword', boost: 30 })),
+          ...inLoop.map((x) => ({ label: x, type: 'variable', detail: 'loop item', boost: 25 })),
+          ...ids.map((id) => ({ label: id, type: id.startsWith('@') ? 'class' : 'variable' })),
+        ] };
+      }
+      const cut = before.match(/^\s*cutaway\s+(\w*)$/);
+      if (cut) return kw(from, ['none', 'half', 'quarter']);
+      // after the target(s): the step's keywords
+      const am = before.match(/^\s*(\w+)\s+(?:others\s+)?[^\s,]+(?:\s*,\s*[^\s,]+)*\s+(.*)$/);
+      if (!am) return null;
+      const [, verb, rest0] = am;
+      const prev = rest0.slice(0, rest0.length - w.length).trim();
+      const hasDur = /\d(?:ms|s)\b/.test(prev);
+      const ease = ['ease', 'linear', 'in', 'out'];
+      switch (verb) {
+        case 'move': case 'rotate':
+          if (!prev) return kw(from, ['by', 'to']);
+          if (/\]$/.test(prev) || hasDur) {
+            if (/\babout$/.test(prev)) return null;
+            return kw(from, [...(verb === 'rotate' && !/\babout\b/.test(prev) ? ['about'] : []), ...(hasDur ? ease : [])]);
+          }
+          return null;
+        case 'fade': return !prev ? kw(from, ['to']) : hasDur ? kw(from, ease) : null;
+        case 'each': {
+          if (/\border$/.test(prev)) return kw(from, ['x', '-x', 'y', '-y', 'z', '-z', 'ring', '-ring', 'random'], 'order');
+          if (/\bstagger$/.test(prev)) return null;
+          const left = ['stagger', 'order'].filter((x) => !new RegExp(`\\b${x}\\b`).test(prev));
+          return left.length ? kw(from, left) : null;
+        }
+        case 'hide': case 'show': case 'blank': case 'unblank': case 'color': case 'highlight':
+          return hasDur ? kw(from, ease) : null;
+        default: return null;
+      }
+    };
     this.view = new EditorView({
       parent: this.el.querySelector('.host')!,
       state: EditorState.create({
