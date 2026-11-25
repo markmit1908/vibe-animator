@@ -62,6 +62,14 @@ Set `script: plant.anim` in `core.yaml`. The panel sits on the right, under the 
 
 Syntax reference: see the header of `scripts/plant.anim`.
 
+## Project files (File ▾ in the assembly panel)
+
+- **Export project (.json):** script, `core.yaml` (as written), all snapshots and groups, unsaved working state, assist chat, the current view (camera, time, style), and a fingerprint of each CAD model. It doesn't include the 3D geometry.
+- **Export project + 3D model (.zip):** the same `project.json` plus the converted `.glb` files (about 10 MB for the plant).
+- **Import project (.json / .zip):** restores everything. The current files are backed up to `data/backups/<time>/` first, and the page reloads.
+  A banner then reports missing or changed 3D models, and any script/group/placement ids the model no longer has.
+- **Re-import CAD (.glb):** replaces a model's `.glb` (e.g. after re-converting the STEP) and runs the same check.
+
 ## AI assist (Assist tab)
 
 The **Assist** tab is a chat with Claude (`claude-opus-5-5`) that knows the script, the assembly tree, your groups,

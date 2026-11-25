@@ -840,3 +840,141 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
   const pre = document.createElement('pre'); pre.id = 'debug2'; pre.style.display = 'none';
   pre.textContent = JSON.stringify(out, null, 1); document.body.appendChild(pre);
 }
+
+// ---------- project file: export / import everything except 3D geometry; re-import CAD ----------
+const idHash = (ids: string[]) => { let h = 5381; for (const id of ids) for (let i = 0; i < id.length; i++) h = ((h << 5) + h + id.charCodeAt(i)) | 0; return (h >>> 0).toString(16); };
+function cadFingerprints() {
+  return (cfg.cad_models ?? []).map((m: any) => {
+    const ids = [...built.registry.keys()].filter((k) => k === m.id || k.startsWith(`${m.id}/`)).sort();
+    return { id: m.id, file: m.file, loaded: ids.length > 0, nodes: ids.length, hash: idHash(ids), sample: ids.slice(0, 25) };
+  });
+}
+async function exportProject(asZip = false) {
+  const files = await fetch(`/__project?script=${encodeURIComponent(isAnim ? scriptName : '')}`).then((r) => r.json());
+  const project = {
+    format: 'refuel-project', version: 1, exportedAt: new Date().toISOString(),
+    note: '3D geometry is not included – re-import the .glb files listed under "cad" (File ▸ Re-import CAD).',
+    core: files.core,
+    script: isAnim ? { name: scriptName, text: scriptPanel?.text ?? files.script?.text ?? '' } : null,
+    snapshots: { active: store.active, snapshots: store.snapshots, groups: store.groups },
+    working: { ...captureSnapshot(camView()), unsaved: isDirty() },
+    chat: assist.history,
+    view: { camera: camView(), time: player.time, mode: drawing.enabled ? 'hidden' : 'shaded', cutaway: ui.cutaway },
+    cad: cadFingerprints(),
+  };
+  let blob = new Blob([JSON.stringify(project, null, 1)], { type: 'application/json' });
+  if (asZip) {
+    const r = await fetch('/__zip', { method: 'POST', body: blob });
+    if (!r.ok) return alert(`Zip export failed: ${await r.text()}`);
+    blob = await r.blob();
+  }
+  const a = document.createElement('a');
+  const d = new Date(), pad = (n: number) => String(n).padStart(2, '0');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${scriptName.replace(/\.\w+$/, '')}-project-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}.${asZip ? 'zip' : 'json'}`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function pickFile(accept: string): Promise<File | undefined> {
+  return new Promise((res) => {
+    const i = document.createElement('input'); i.type = 'file'; i.accept = accept;
+    i.onchange = () => res(i.files?.[0]); i.click();
+  });
+}
+async function importProject() {
+  const f = await pickFile('.json,.zip,application/json,application/zip');
+  if (!f) return;
+  if (f.name.toLowerCase().endsWith('.zip')) {
+    if (!confirm(`Import ${f.name} (${(f.size / 1e6).toFixed(1)} MB)? The project and its 3D model replace the current ones (backed up to data/backups/ first). The page reloads.`)) return;
+    if (isDirty() && !confirm('You have unsaved changes – discard them?')) return;
+    const r = await fetch('/__zip', { method: 'PUT', body: f });
+    if (!r.ok) return alert(`Import failed: ${await r.text()}`);
+    const j = await r.json();
+    try { sessionStorage.setItem('restoreProject', JSON.stringify({ ...j.project, check: true })); } catch { /* ignore */ }
+    location.reload();
+    return;
+  }
+  let p: any;
+  try { p = JSON.parse(await f.text()); } catch { return alert('That file is not valid JSON.'); }
+  if (p.format !== 'refuel-project') return alert('That is not a project file exported from this tool.');
+  const cad = (p.cad ?? []).map((c: any) => `${c.id} (${c.file}, ${c.nodes} nodes)`).join(', ') || 'none';
+  if (!confirm(`Import project exported ${p.exportedAt ?? '?'}?\n\nScript: ${p.script?.name ?? '–'}\nSnapshots: ${Object.keys(p.snapshots?.snapshots ?? {}).length}, groups: ${Object.keys(p.snapshots?.groups ?? {}).length}\nCAD models: ${cad}\n\nCurrent files are backed up to data/backups/ first. The page reloads.`)) return;
+  if (isDirty() && !confirm('You have unsaved changes – discard them?')) return;
+  const r = await fetch('/__project', { method: 'POST', body: JSON.stringify(p) });
+  if (!r.ok) return alert(`Import failed: ${await r.text()}`);
+  try { sessionStorage.setItem('restoreProject', JSON.stringify({ view: p.view, working: p.working, cad: p.cad, check: true })); } catch { /* ignore */ }
+  location.reload();
+}
+async function reimportCad() {
+  const models = (cfg.cad_models ?? []) as any[];
+  if (!models.length) return alert('No CAD models are listed under cad_models in core.yaml.');
+  const target = models.length === 1 ? models[0] : models.find((m) => m.id === prompt(`Which model? ${models.map((m) => m.id).join(', ')}`, models[0].id));
+  if (!target) return;
+  const f = await pickFile('.glb,model/gltf-binary');
+  if (!f) return;
+  const name = String(target.file).split('/').pop()!;
+  if (!confirm(`Replace public/${target.file} with ${f.name} (${(f.size / 1e6).toFixed(1)} MB)? The page reloads.`)) return;
+  if (isDirty() && !confirm('You have unsaved changes – discard them?')) return;
+  const r = await fetch(`/__cad?name=${encodeURIComponent(name)}`, { method: 'POST', body: f });
+  if (!r.ok) return alert(`Upload failed: ${await r.text()}`);
+  try { sessionStorage.setItem('restoreProject', JSON.stringify({ view: { camera: camView(), time: player.time, mode: drawing.enabled ? 'hidden' : 'shaded' }, check: true })); } catch { /* ignore */ }
+  location.reload();
+}
+/** Ids used by the script, groups and snapshots that the loaded model no longer has. */
+function missingReferences() {
+  const has = (id: string) => built.registry.has(id);
+  const out: { where: string; ids: string[] }[] = [];
+  const scriptIds = new Set<string>();
+  const walk = (steps: any[]) => steps.forEach((st) => { const t = st.target?.value; if (t && !t.startsWith('@') && !t.includes('*')) scriptIds.add(t); if (st.children) walk(st.children); });
+  walk(parseAnim(scriptPanel?.text ?? '').steps);
+  const miss = [...scriptIds].filter((x) => !has(x)); if (miss.length) out.push({ where: 'script', ids: miss });
+  for (const [g, ids] of Object.entries(store.groups)) { const m = ids.filter((x) => !has(x)); if (m.length) out.push({ where: `group @${g}`, ids: m }); }
+  const pl = Object.keys(state.placements).filter((x) => !has(x)); if (pl.length) out.push({ where: 'part placements', ids: pl });
+  return out;
+}
+function showBanner(html: string) {
+  const b = document.createElement('div');
+  b.style.cssText = 'position:fixed;left:50%;top:56px;transform:translateX(-50%);z-index:8;max-width:620px;background:#14191f;color:#d7dde4;border:1px solid #f2b705;border-radius:6px;padding:8px 12px;font:12px system-ui;box-shadow:0 4px 20px #0008';
+  b.innerHTML = `${html}<div style="text-align:right;margin-top:6px"><button style="background:#222a33;color:inherit;border:1px solid #2b3540;border-radius:4px;padding:2px 8px;cursor:pointer">OK</button></div>`;
+  b.querySelector('button')!.onclick = () => b.remove();
+  document.body.appendChild(b);
+}
+// after an import / CAD re-import: restore the view and unsaved state, then check the 3D data
+{
+  let rp: any;
+  try { rp = JSON.parse(sessionStorage.getItem('restoreProject') ?? 'null'); sessionStorage.removeItem('restoreProject'); } catch { /* ignore */ }
+  if (rp) {
+    if (rp.working?.unsaved) { useSnapshot(rp.working); applyPlacements(); for (const o of built.root.children) await reconcile(o); buildTimeline(); markDirty(); }
+    if (rp.view?.camera) { ui.followCamera = false; camera.position.fromArray(rp.view.camera.pos); controls.target.fromArray(rp.view.camera.look); }
+    if (rp.view?.time) player.seek(rp.view.time);
+    if (rp.view?.mode === 'hidden') (document.querySelector('#viewbar [data-m=hidden]') as HTMLElement | null)?.click();
+    tree.rebuild();
+    const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const notes: string[] = [];
+    for (const c of cadFingerprints()) {
+      const was = (rp.cad ?? []).find((x: any) => x.id === c.id);
+      if (!c.loaded) notes.push(`<b>Missing 3D model:</b> ${esc(c.file)} – use <b>File ▸ Re-import CAD</b> to load the .glb.`);
+      else if (was && was.hash !== c.hash) notes.push(`3D model <b>${esc(c.id)}</b> differs from the exported one (${was.nodes} → ${c.nodes} nodes).`);
+    }
+    const miss = missingReferences();
+    for (const m of miss) notes.push(`<b>${esc(m.where)}</b> refers to ${m.ids.length} part${m.ids.length > 1 ? 's' : ''} not in the model: ${esc(m.ids.slice(0, 5).map((x) => x.split('/').pop()!).join(', '))}${m.ids.length > 5 ? ' …' : ''}`);
+    showBanner(notes.length ? `<div style="margin-bottom:4px;font-weight:600">Project loaded – check:</div>${notes.map((n) => `<div>• ${n}</div>`).join('')}` : '✓ Project loaded – all script, group and placement references found in the 3D model.');
+  }
+}
+// File ▾ menu in the assembly panel header
+{
+  const header = document.querySelector('#tree header')!;
+  const wrap = document.createElement('span'); wrap.style.position = 'relative';
+  wrap.innerHTML = `<button title="Project file">File ▾</button><div class="filemenu" hidden style="position:absolute;top:calc(100% + 4px);left:0;z-index:9;background:#14191f;border:1px solid #2b3540;border-radius:6px;padding:4px;display:flex;flex-direction:column;min-width:210px">
+    <button data-f="export" style="text-align:left">⤓ Export project (.json)</button>
+    <button data-f="zip" style="text-align:left">⤓ Export project + 3D model (.zip)</button>
+    <button data-f="import" style="text-align:left">⤒ Import project (.json / .zip)…</button>
+    <button data-f="cad" style="text-align:left">⟳ Re-import CAD (.glb)…</button></div>`;
+  header.insertBefore(wrap, header.querySelector('b')!.nextSibling);
+  const menu = wrap.querySelector<HTMLElement>('.filemenu')!;
+  menu.querySelectorAll('button').forEach((b) => (b.style.margin = '1px 0'));
+  wrap.querySelector<HTMLElement>('button')!.onclick = (e) => { e.stopPropagation(); menu.hidden = !menu.hidden; };
+  addEventListener('click', () => (menu.hidden = true));
+  const act: Record<string, () => void> = { export: () => exportProject(false), zip: () => exportProject(true), import: importProject, cad: reimportCad };
+  menu.querySelectorAll<HTMLElement>('[data-f]').forEach((b) => (b.onclick = () => { menu.hidden = true; act[b.dataset.f!](); }));
+}

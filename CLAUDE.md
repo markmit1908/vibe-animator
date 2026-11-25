@@ -31,6 +31,8 @@ used to illustrate the concept. Delivered live in a browser.
 
 - Hidden-line mode: `src/view/drawing.ts` – normal+depth pass (scene.overrideMaterial = MeshNormalMaterial with the cutaway clip planes; edge lines, outline hulls, sprites and the gizmo hidden for that pass) then a full-screen edge shader. `drawFrame()` in main.ts picks shaded or drawing; PNG export renders one frame at 2× pixel ratio.
 
+- Project files: `/__project` (GET text files / POST restore via `applyProject`, which backs up to data/backups), `/__zip` (POST project JSON → zip with cad/*.glb; PUT zip → restore + write public/cad), `/__cad?name=` (POST a .glb). The zip reader/writer is in vite.config.ts (node:zlib, no dependency). After an import, main.ts restores the view and unsaved state from `sessionStorage.restoreProject` and checks references (`missingReferences`).
+
 ## Conventions
 - Y is up, units are metres, and the core base is at y = 0. The operating floor sits at the vessel flange (`floorY`), and locations are relative to it.
 - The machine's origin is the grapple tip.
