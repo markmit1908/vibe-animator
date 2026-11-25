@@ -10,6 +10,7 @@
  *   rotate @lid by [0,0,90] about [0,12,0] 4s      # degrees, world axes
  *   pivot @lid [0,12,0]                            # pivot travels with @lid
  *   hide @shielding 1s     show @shielding     fade @bolts to 0.2 2s
+ *   blank ~V-005202-001 1s                        # ~text: every part whose name contains text
  *   blank @lid 1s · unblank @lid · unblank all · blank others @core 1s   # blank works on locked parts too
  *   highlight @spent #c0392b 1s                    # or palette name
  *   color @lid #2e86de 1s · color @lid reset 1s    # change colour / back to its base colour

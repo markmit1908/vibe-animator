@@ -340,6 +340,32 @@ export class TreePanel {
   /** Select by registry id (e.g. from ?select=). */
   selectId(id: string) { const o = this.scene.registry.get(id); if (o) this.pick(o); }
 
+  /** Select many objects at once (e.g. every part matching a name); one selection event. */
+  selectObjects(objs: THREE.Object3D[]) {
+    const nodes = [...new Set(objs.map((o) => this.nodeOf(o)).filter(Boolean) as Node[])];
+    this.sel = nodes;
+    this.highlight();
+    const one = nodes.length === 1 ? nodes[0] : undefined;
+    this.hooks.onSelect?.(one?.obj, one ? one.id : undefined, nodes.flatMap((x) => this.objsOf(x)));
+    this.updateInfo();
+    this.refresh();
+  }
+
+  /** The tree row of a registered object (materialising lazy levels). */
+  private nodeOf(obj: THREE.Object3D): Node | undefined {
+    const chain: THREE.Object3D[] = [];
+    for (let o: THREE.Object3D | null = obj; o; o = o.parent) if (this.scene.registry.get((o.userData.id ?? o.name) as string) === o) chain.unshift(o);
+    let level = this.roots, found: Node | undefined;
+    const search = (nodes: Node[], target: THREE.Object3D): Node | undefined => {
+      for (const n of nodes) {
+        if (n.obj === target) return n;
+        if (!n.obj && !n.group && !n.removedRow) { const r = search(this.kids(n), target); if (r) return r; }
+      }
+    };
+    for (const o of chain) { const n = search(level, o); if (!n) continue; found = n; level = this.kids(n); }
+    return found?.obj === obj ? found : undefined;
+  }
+
   /** Select the registered object containing this 3D object (from a 3D pick). */
   pick(obj: THREE.Object3D | undefined, additive = false) {
     if (!obj) return additive ? undefined : this.select(undefined, false);

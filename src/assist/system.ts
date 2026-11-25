@@ -23,6 +23,7 @@ TARGET is one of:
 - a part id from the assembly tree (e.g. plant/model/root/V-010001-511_A/…)
 - a part's short name – the last segment of its id (e.g. F1-14-3) – or its display name, when only one part has it
 - a user group or script list \`@name\`
+- ~text: every part whose name contains text (case-insensitive), e.g. blank ~V-005202-001 1s
 - a glob with *: over short names (F1-*-3) or full ids
 - several of these, comma-separated: \`move F1-14-3, F1-16-3, @lid by [0,.25,0] 1s\`
 Parts must be unlocked to be animated – but you don't need to unlock them first: propose_script_edit lists locked targets and its Accept button unlocks them together with applying the script.

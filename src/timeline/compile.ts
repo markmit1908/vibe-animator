@@ -117,6 +117,23 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
         const g = groups[String(s).slice(1)];
         if (!g) throw new Error(`Unknown group "${s}" (create it in the assembly tree, or with list ${s} = …)`);
         for (const id of g) if (scene.registry.has(id) && !isRemoved(scene.registry.get(id)!)) out.push(id); // removed members are skipped
+      } else if (String(s).startsWith('~')) {
+        // ~text: every part whose name (last id segment, display name or node name) contains text, case-insensitive;
+        // top-most matches only (a match's own sub-parts aren't listed again) – like the Select by name tool
+        const q = String(s).slice(1).toLowerCase();
+        const hit = (o: THREE.Object3D) => {
+          const id = (o.userData.id ?? o.name) as string;
+          return [id.slice(id.lastIndexOf('/') + 1), String(o.userData.label ?? ''), o.name].some((n) => n.toLowerCase().includes(q));
+        };
+        const hits: string[] = [];
+        for (const [id, o] of scene.registry) {
+          if (!q || isRemoved(o) || !hit(o)) continue;
+          let covered = false;
+          for (let p = o.parent; p && !covered; p = p.parent) if (scene.registry.get((p.userData.id ?? p.name) as string) === p && hit(p)) covered = true;
+          if (!covered) hits.push(id);
+        }
+        if (!hits.length) throw new Error(`No part names contain "${q}"`);
+        out.push(...hits.sort((x, y) => x.localeCompare(y, undefined, { numeric: true })));
       } else if (String(s).includes('*')) {
         // a glob over full ids, or over short names (the last id segment) when it has no "/"; natural order
         const re = new RegExp('^' + String(s).replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');

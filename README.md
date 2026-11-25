@@ -53,7 +53,7 @@ Right-click a row for its menu. Select a row and press **F2** to rename or **Del
 **Snapshots** (bar at the top) are named start states: lock/hide flags, part placements and a camera view. Changes
 save into the active snapshot automatically. **Save** also records the camera; **Save as…** makes a new snapshot.
 
-**Tools** (floating bar, left of the 3D view): **Blank / Unblank** (**H**) hides the selected parts or shows them again; **Blank others** (**⇧H**) hides everything that isn't selected; **Show all** unblanks every part; **Views** saves the camera (position and target) under a name, goes back to it, or inserts `camera <name> 2s` into the script; **Group** (**G**) makes a group from the selection.
+**Tools** (floating bar, left of the 3D view): **Blank / Unblank** (**H**) hides the selected parts or shows them again; **Blank others** (**⇧H**) hides everything that isn't selected; **Show all** unblanks every part; **Select by name** (**F**) selects every part whose name contains the text you type (or matches a `*` glob), ready to blank, group or colour; **Views** saves the camera (position and target) under a name, goes back to it, or inserts `camera <name> 2s` into the script; **Group** (**G**) makes a group from the selection.
 
 **Undo / redo:** **⌘/Ctrl+Z** and **⇧⌘Z** (or Ctrl+Y) undo colours, moves (gizmo), lock/hide, groups, renames, remove/restore and script changes made by the gizmo or an accepted AI proposal. While you're typing in the script, ⌘Z is the editor's own undo.
 
@@ -87,6 +87,7 @@ One step per line; steps run in sequence. `#` starts a comment. Durations: `2s`,
 - a part's **id** (tree → Copy id)
 - its **short name**, the last segment of the id (e.g. `F1-14-3`), or its **display name**, when only one part has it
 - a group or list **`@name`**
+- **`~text`**: every part whose name contains *text* (case-insensitive), e.g. `blank ~V-005202-001 1s`
 - a **glob** with `*`: over short names (`F1-*-3`) or full ids (`R1-1/L*`)
 - **several, comma-separated:** `move F1-14-3, F1-16-3, @lid by [0,.25,0] 1s`
 

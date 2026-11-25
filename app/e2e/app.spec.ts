@@ -613,3 +613,24 @@ test("script completion is context sensitive", async ({ page }) => {
   expect(await at('label "Lift @l')).toBe("");                   // in a string: nothing
   expect(await at("wait ")).toBe("");
 });
+
+test("select by name (tool) and ~name targets (script)", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Named", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "N"\nblank ~L1 1s' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Named");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  // script: ~L1 blanks every L1.. block (names containing "L1": L1, L10, L11 …)
+  const hiddenL = await page.evaluate(() => { const s = (window as any).__studio; s.player.playing = false; s.player.seek(2);
+    const r = s.built.registry; return [r.get("R1-1/L1").visible, r.get("R1-1/L10").visible, r.get("R1-1/L2").visible]; });
+  expect(hiddenL).toEqual([false, false, true]);
+  // tool: select every block whose name contains "l2", then blank them
+  await page.locator("#toolsbar [data-t=find]").click();
+  await page.locator("#toolsbar .fpop input").fill("l2");
+  await expect(page.locator("#toolsbar .fpop .hint")).toContainText("match");
+  await page.locator("#toolsbar .fpop input").press("Enter");
+  await expect(page.locator("#tree .info")).toContainText("items selected");
+  await page.locator("#toolsbar [data-t=blank]").click();
+  await expect.poll(async () => (await model(page, a.id)).snapshots.items.default.hidden["R1-1/L2"]).toBe(true);
+});

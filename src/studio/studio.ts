@@ -828,6 +828,7 @@ on('keydown', (e: any) => {
   if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).closest?.('.cm-editor')) return;
   if (e.key === 'w') gizmo.setMode('translate');
   if (e.key === 'H' && !e.metaKey && !e.ctrlKey) void blankOthers();
+  if (e.key === 'f' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); toggleFind(true); }
   if (e.key === 'h' && !e.metaKey && !e.ctrlKey) { tree.toggleHiddenSelected(); updateTools(); }
   if (e.key === 'g' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); tree.groupSelected(); updateTools(); }
   if (e.key === 'e') gizmo.setMode('rotate');
@@ -1043,6 +1044,8 @@ on('keydown', (e: KeyboardEvent) => {
 const toolbar = document.createElement('div'); toolbar.id = 'toolsbar';
 toolbar.innerHTML = `<button data-t="blank" title="Blank / unblank the selected parts (H)"><span class="i">◐</span><span class="l">Blank</span></button>
   <button data-t="others" title="Reverse blank: hide everything that is not selected (⇧H)"><span class="i">◑</span><span class="l">Blank others</span></button>
+  <button data-t="find" title="Select by name: every part whose name contains the text (or matches a glob with *), e.g. V-005202-001 – then Blank, Group, colour… (F)"><span class="i">⌕</span><span class="l">Select by name</span></button>
+  <div class="fpop" hidden><input placeholder="Part of a name, e.g. V-005202-001" spellcheck="false"><div class="hint"></div><button data-f="go">Select</button></div>
   <button data-t="showall" title="Show all: unblank every part (removed parts stay removed)"><span class="i">●</span><span class="l">Show all</span></button>
   <button data-t="views" title="Camera views: save the current view (position and target), go to one, or put it in the script (camera <name> 2s)"><span class="i">📷</span><span class="l">Views</span></button>
   <div class="vpop" hidden></div>
@@ -1058,7 +1061,11 @@ host().appendChild(toolbar);
     #toolsbar button:hover:not(:disabled) { background: #26303a; } #toolsbar button:disabled { opacity: .4; cursor: default; }
     #toolsbar button.on { border-color: #f2b705; color: #f2b705; }
     #toolsbar .vpop { position: absolute; left: calc(100% + 6px); top: 0; width: 250px; background: rgba(14,17,21,.97); border: 1px solid #2b3540; border-radius: 6px; padding: 8px; color: #d7dde4; display: flex; flex-direction: column; gap: 4px; }
-    #toolsbar .vpop[hidden] { display: none; }
+    #toolsbar .vpop[hidden], #toolsbar .fpop[hidden] { display: none; }
+    #toolsbar .fpop { position: absolute; left: calc(100% + 6px); top: 0; width: 260px; background: rgba(14,17,21,.97); border: 1px solid #2b3540; border-radius: 6px; padding: 8px; color: #d7dde4; display: flex; flex-direction: column; gap: 6px; }
+    #toolsbar .fpop input { background: #0a0c0f; color: inherit; border: 1px solid #2b3540; border-radius: 4px; padding: 4px 6px; font: 12px ui-monospace, monospace; }
+    #toolsbar .fpop button { width: auto; flex-direction: row; justify-content: center; padding: 4px; }
+    #toolsbar .fpop .hint { color: #7b8794; font-size: 10.5px; }
     #toolsbar .vpop .row { display: flex; align-items: center; gap: 4px; }
     #toolsbar .vpop .row .n { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #toolsbar .vpop button { width: auto; flex-direction: row; padding: 3px 6px; }
@@ -1086,6 +1093,25 @@ async function blankOthers() {
   for (const o of built.root.children) await reconcile(o);
   persistWorking(); tree.redraw(); buildTimeline(); updateTools();
 }
+/** Parts whose name (last id segment, display name or node name) contains `q` (case-insensitive), or matches it as a
+ *  glob with *. Top-most matches only (a match's own sub-parts aren't listed again); removed parts are skipped. */
+function partsNamed(q: string): THREE.Object3D[] {
+  q = q.trim().toLowerCase();
+  if (!q) return [];
+  const re = q.includes('*') ? new RegExp(`^${q.split('*').map((x) => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`) : undefined;
+  const hit = (o: THREE.Object3D) => {
+    const id = idOfObj(o);
+    return [id.slice(id.lastIndexOf('/') + 1), labels[id] ?? '', o.name].some((n) => { n = n.toLowerCase(); return re ? re.test(n) : n.includes(q); });
+  };
+  const out: THREE.Object3D[] = [];
+  for (const [id, o] of built.registry) {
+    if (built.registry.get(id) !== o || isRemoved(o) || !hit(o)) continue;
+    let covered = false;
+    for (let p = o.parent; p && !covered; p = p.parent) if (built.registry.get(idOfObj(p)) === p && hit(p)) covered = true;
+    if (!covered) out.push(o);
+  }
+  return out;
+}
 /** Show all: clear every hide flag. */
 async function showAll() {
   if (!Object.values(state.hidden).some(Boolean)) return;
@@ -1103,6 +1129,30 @@ function updateTools() {
 toolbar.querySelector<HTMLElement>('[data-t=blank]')!.onclick = () => { tree.toggleHiddenSelected(); updateTools(); };
 toolbar.querySelector<HTMLElement>('[data-t=others]')!.onclick = () => void blankOthers();
 toolbar.querySelector<HTMLElement>('[data-t=showall]')!.onclick = () => void showAll();
+// select by name
+const fpop = toolbar.querySelector<HTMLElement>('.fpop')!, finput = fpop.querySelector('input')!, fhint = fpop.querySelector<HTMLElement>('.hint')!;
+const findCount = () => {
+  const n = partsNamed(finput.value).length;
+  fhint.textContent = finput.value.trim() ? `${n} part${n === 1 ? '' : 's'} match${n === 1 ? 'es' : ''}` : 'Contains the text (case-insensitive); * for a glob.';
+};
+const findGo = () => {
+  const objs = partsNamed(finput.value);
+  if (!objs.length) return;
+  tree.selectObjects(objs); updateTools();
+  fhint.textContent = `Selected ${objs.length}. Blank (H), Blank others (⇧H), Group (G) or colour them.`;
+};
+const toggleFind = (open = fpop.hidden) => {
+  fpop.hidden = !open; toolbar.querySelector('[data-t=find]')!.classList.toggle('on', open);
+  if (open) { findCount(); finput.focus(); finput.select(); }
+};
+toolbar.querySelector<HTMLElement>('[data-t=find]')!.onclick = () => toggleFind();
+finput.oninput = findCount;
+finput.onkeydown = (e) => {
+  e.stopPropagation();                                  // keep viewer shortcuts out of the box
+  if (e.key === 'Enter') findGo();
+  if (e.key === 'Escape') toggleFind(false);
+};
+fpop.querySelector<HTMLElement>('[data-f=go]')!.onclick = findGo;
 // ---- camera views ----
 const vpop = toolbar.querySelector<HTMLElement>('.vpop')!;
 const escH = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
