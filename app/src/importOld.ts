@@ -56,7 +56,7 @@ export async function readImport(f: File): Promise<Partial<AnimModel>> {
   for (const [name, data] of files) {
     const m = name.match(/^cad\/([\w.-]+\.glb)$/);
     if (!m) continue;
-    const r = await fetch(`/api/files/CAD/${encodeURIComponent(m[1])}?overwrite=true`, { method: "PUT", body: data });
+    const r = await fetch(`/api/files/CAD/${encodeURIComponent(m[1])}?overwrite=true`, { method: "PUT", body: new Blob([data as BlobPart]) });
     if (!r.ok) throw new Error(`Could not store ${m[1]} in the vault: ${r.statusText}`);
   }
   return fromOldProject(JSON.parse(new TextDecoder().decode(pj)));

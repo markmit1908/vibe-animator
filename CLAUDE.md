@@ -3,10 +3,16 @@
 Interactive Three.js animation of refuelling a hex-block (HTGR-style) reactor core,
 used to illustrate the concept. Delivered live in a browser.
 
+## Layout (after the SolverKit migration)
+- `app/` is the app (SolverKit: Home, vault, editor frame; see `app/CLAUDE.md`). The shared core is in `src/` and
+  imported by the app; `src/studio/studio.ts` mounts it into the Studio view for one model (`StudioIO`: `edit`
+  → ctx.edit autosave, `fileUrl` → `/api/files/<vault path>`, `assist` → SolverKit's key proxy).
+- Animations are model files in the vault (`src/model/file.ts`); there is no `scenes/` or `scripts/` any more.
+
 ## Commands
-- `npm run dev`: Vite dev server
-- `npm run typecheck`: `tsc --noEmit`. Run it after every TS change.
-- `npm run build`: typecheck plus a production bundle
+- `npm run dev`: the app (server + web on :5174)
+- `npm run typecheck`: `src/` and `app/`. Run it after every TS change.
+- `npm run test:server`: the app server's pytest
 
 ## Architecture
 - `scenes/core.yaml` → `src/scene/build.ts` → `BuiltScene` (registry of animatable objects by id, slots, columns, locations, clip planes)
@@ -22,7 +28,7 @@ used to illustrate the concept. Delivered live in a browser.
 - User groups: `store.groups` (name → member ids, ancestor-covered members dropped), saved in snapshots.yaml, shared by all snapshots. Scripts expand `@name` in `resolveTargets`. Compiler virtual state is WORLD space (`getWorldPosition`); tweens convert to parent-local, assuming parents of moving parts are static.
 - Changing locks recompiles the script. Scripts may not target locked objects.
 
-- `generated: false` in core.yaml builds the parametric reactor and then drops it (lights and grid stay). The registry then holds CAD only. `script:` selects scripts/<name>.yaml; with no `camera:` the view frames everything loaded.
+- `scene.generated: false` in the model builds the parametric reactor and then drops it (lights and grid stay). The registry then holds CAD only. `script:` selects scripts/<name>.yaml; with no `camera:` the view frames everything loaded.
 
 - `.anim` scripts: `src/script/anim.ts` (parser → engine actions, keeps source ranges), `src/view/scriptPanel.ts` (CodeMirror 6, SolverKit ModelText patterns), `src/script/edit.ts` (gizmo edits → text: update/add a line in the step at t, split the step if t is mid-step). Saved via `/__script?name=`. `buildTimeline()` seeks the old player to 0 before compiling (compile reads the start pose), then restores t. `Timeline.lines` maps script line → {start, end}.
 - Rotation: world-space slerp about a pivot. The default pivot is the targets' bbox centre at their virtual pose; `pivot @x [p]` is stored in the first member's frame, so it follows the part. Don't move and rotate the same part in one parallel block (the last tween wins).
@@ -31,7 +37,6 @@ used to illustrate the concept. Delivered live in a browser.
 
 - Hidden-line mode: `src/view/drawing.ts` – normal+depth pass (scene.overrideMaterial = MeshNormalMaterial with the cutaway clip planes; edge lines, outline hulls, sprites and the gizmo hidden for that pass) then a full-screen edge shader. `drawFrame()` in main.ts picks shaded or drawing; PNG export renders one frame at 2× pixel ratio.
 
-- Project files: `/__project` (GET text files / POST restore via `applyProject`, which backs up to data/backups), `/__zip` (POST project JSON → zip with cad/*.glb; PUT zip → restore + write public/cad), `/__cad?name=` (POST a .glb). The zip reader/writer is in vite.config.ts (node:zlib, no dependency). After an import, main.ts restores the view and unsaved state from `sessionStorage.restoreProject` and checks references (`missingReferences`).
 
 ## Conventions
 - Y is up, units are metres, and the core base is at y = 0. The operating floor sits at the vessel flange (`floorY`), and locations are relative to it.

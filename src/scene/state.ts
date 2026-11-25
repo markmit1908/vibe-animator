@@ -33,22 +33,12 @@ export const isDirty = () => dirty;
 export const onDirtyChange = (f: () => void) => listeners.add(f);
 export function markDirty(v = true) { dirty = v; listeners.forEach((f) => f()); }
 
-export async function loadStore() {
-  try {
-    const r = await fetch('/__snapshots');
-    if (r.ok) Object.assign(store, await r.json());
-  } catch { /* static build: no endpoint */ }
-  store.groups ??= {};
-  if (!store.snapshots[store.active]) store.snapshots[store.active] = { locked: {}, hidden: {} };
-}
-
 let writer: ((s: SnapshotFile) => Promise<void> | void) | undefined;
-/** Where Save writes (old app: the dev server's /__snapshots; SolverKit: the model file). */
+/** Where Save writes (the model file, through the studio's io.edit). */
 export function setStoreWriter(w: (s: SnapshotFile) => Promise<void> | void) { writer = w; }
 
 export async function writeStore() {
-  if (writer) { await writer(store); return; }
-  await fetch('/__snapshots', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(store) });
+  await writer?.(store);
 }
 
 /** Replace the store (SolverKit: from the model file) – the working state follows the active snapshot. */

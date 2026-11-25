@@ -7,68 +7,44 @@ YAML, so you can change the geometry and choreography without touching code.
 ## Quick start
 
 ```bash
-npm install
-npm run dev        # open the printed URL; edits to YAML hot-reload
-npm run build      # static site in dist/ (typecheck + bundle)
+npm run dev        # the app on SolverKit: Python server (vault) + web on http://127.0.0.1:5174
+npm run typecheck  # shared core (src/) and the app (app/)
+npm run test:server
 ```
 
-Controls: **Space** play/pause, drag to orbit (turns off the scripted camera),
-GUI panel for speed, scrubbing, cutaway mode, X-ray shells and chapter jumps.
+The app is built on **SolverKit** (`app/`): **Home** lists your animations (New, Duplicate, Rename, Delete to trash,
+folders, versions, Import/Export). Each animation is one human-readable JSON file in the **vault**,
+`~/Documents/Refuel animations` by default (Settings changes it). The 3D models (`.glb`) live in the vault's
+`CAD/` folder and are **shared** between animations. Opening an animation shows the **Studio**: 3D view, assembly
+tree, script editor and AI assist. Edits autosave, and SolverKit keeps versions.
 
-**View toolbar** (floating, top right of the viewport):
-- **Shaded / Hidden line:** hidden line draws visible edges only, black on white. It's screen-space edge detection, so it works on the full plant, follows animation and cutaway, and the gizmo stays on top.
-- **Iso / Front / Top / Side / Fit:** frame everything visible.
-- **⤓ PNG:** saves the current view at 2× resolution.
+**Importing old projects:** Home → Import accepts the old app's exported `.json`, and its `.zip`, whose 3D model goes into `CAD/`.
 
-URL: `?mode=hidden&view=iso`.
+## Files
 
-**Assembly tree** (left, ☰ toggles it): browse the generated model and loaded CAD,
-search by name, and click a row or the part in 3D to select it (its script id is shown with a copy button).
-Children are built when you expand a node and only on-screen rows are drawn, so trees of any size work.
-
-- ● **show/hide**
-- 🔒 **lock/unlock**: locked parts never move. They skip per-frame matrix updates and can't be used in scripts.
-  CAD defaults to locked and the generated model to unlocked. Unlock what the animation moves.
-- **Locked + hidden CAD parts are suppressed**: their geometry is freed from GPU and browser memory
-  (shared meshes once no visible copy uses them). Showing them again reloads the geometry from the file.
-- Flags are inherited by children from their parents.
-
-**Snapshots** (bar at the top of the panel) are named model states: show/hide and lock flags, the camera view,
-and part placements. Nothing is written until you press **Save** (or ⌘/Ctrl+S); "● unsaved" marks pending changes.
-**Save as…** creates a new snapshot, the dropdown switches between them, and ✕ deletes one. They are stored in `scenes/snapshots.yaml`.
-
-**Groups** are your own assemblies, separate from the CAD structure. ⌘/Ctrl/Shift-click to select several parts
-(in the tree or in 3D), then press **Group…** and enter a new name, or an existing one to add to it. Groups are listed under
-**Groups** in the tree; show/hide and lock apply to all members, and a group can be renamed or deleted, and members removed.
-Scripts address a group as `"@name"`, e.g. `{move: "@lifting-rig", by: [0, 3, 0], dur: 4}`.
-Groups are shared by all snapshots and saved with Save.
-
-**Moving parts:** select an **unlocked** part to get a gizmo. **W** = move, **E** = rotate, **R** = reset to its original placement, **Esc** = deselect.
-Parts the script animates can only be placed at t = 0 (that sets their start position).
-
-The panel footer shows live GPU geometry, triangle and draw-call counts.
-URL params: `?t=42` opens at 42 s, `?select=R1-1/L5` selects a part, `?debug` dumps CAD ids/stats into a hidden `<pre id=debug>`.
+| Path | What it is |
+|---|---|
+| `app/` | The SolverKit app: `src/main.tsx` (manifest, Home), `src/module.tsx` (modules + the Studio view), `src/studio.tsx`, `src/importOld.ts`, `server/` (Python: vault-backed store, files, assist key proxy) |
+| `src/model/file.ts` | The animation model file (SolverKit envelope, `solver: refuel-anim`, format 1) and `refuel-anim.schema.json` |
+| `src/studio/studio.ts` | The studio: mounts 3D view, tree, script, assist into a container for one model |
+| `src/scene/` | Scene build, CAD loading/suppression, part state (locks, hides, snapshots, groups) |
+| `src/timeline/`, `src/script/` | `.anim` parser, compiler, player, edit write-back |
+| `src/view/` | Tree, script panel, assist panel, drawing mode, triad, cutaway |
+| `src/assist/` | Assist loop (Anthropic SDK over the server's key proxy), tools, system prompt |
+| `tools/step2gltf.py` | STEP → glTF converter. Put its output in the vault's `CAD/` folder. |
 
 ## Script panel (`.anim`)
 
-Set `script: plant.anim` in `core.yaml`. The panel sits on the right, under the controls:
+The panel sits on the right, under the controls:
 - **Edit live:** each change recompiles. Errors are underlined on their line, and the last good version keeps playing.
 - **Step times:** the left gutter shows when each step starts. **Click** a time to run to the end of that step, **drag** on it to scrub within the step, or press **⌘↵** to run to the cursor's step.
 - **Write by direct manipulation:** pause at a time t > 0, select a part, group or multi-selection, then move (W) or rotate (E) it with the gizmo. The change is written into the step at t:
   an existing `move`/`rotate` line for that target is updated, otherwise a line is added (the step becomes `parallel { }`).
   If t falls mid-step, the step is **split** at t first. The `edit: by | to` toggle chooses relative or absolute values (default `by`).
   At t = 0 the gizmo sets the start pose instead (snapshot placements).
-- **📷** inserts the current camera view as a step. **⌘S** saves to `scripts/<name>.anim`.
+- **📷** inserts the current camera view as a step. Script edits autosave into the animation file.
 
 Syntax reference: see the header of `scripts/plant.anim`.
-
-## Project files (File ▾ in the assembly panel)
-
-- **Export project (.json):** script, `core.yaml` (as written), all snapshots and groups, unsaved working state, assist chat, the current view (camera, time, style), and a fingerprint of each CAD model. It doesn't include the 3D geometry.
-- **Export project + 3D model (.zip):** the same `project.json` plus the converted `.glb` files (about 10 MB for the plant).
-- **Import project (.json / .zip):** restores everything. The current files are backed up to `data/backups/<time>/` first, and the page reloads.
-  A banner then reports missing or changed 3D models, and any script/group/placement ids the model no longer has.
-- **Re-import CAD (.glb):** replaces a model's `.glb` (e.g. after re-converting the STEP) and runs the same check.
 
 ## AI assist (Assist tab)
 
@@ -81,11 +57,10 @@ take a screenshot) and **propose** changes:
 
 Nothing changes without **Accept**.
 Chat controls: Stop (Esc), Edit a sent message, Regenerate, Copy, plus effort (low → xhigh) and New.
-The conversation is saved beside the script as `scripts/<name>.chat.json`.
+The conversation is saved in the animation file.
 
-**Setup:** put a key from console.anthropic.com in `.env` as `ANTHROPIC_API_KEY=…` (git-ignored) and restart `npm run dev`.
-The dev server proxies `/__assist` and adds the key server-side, so the key never reaches the page.
-Don't prefix it `VITE_`: Vite can expose `VITE_` variables to browser code.
+**Setup:** put the key in the repo's `.env` (git-ignored) as `ANTHROPIC_API_KEY=…` (or `VITE_ANTHROPIC_API_KEY`), then restart `npm run dev`.
+The Python server reads it and SolverKit's assist proxy adds it to each request, so the key never reaches the page.
 
 ## Files
 

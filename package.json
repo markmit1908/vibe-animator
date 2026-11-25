@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc --noEmit && vite build",
-    "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "dev": "cd app && npm run dev",
+    "build": "cd app && npm run build",
+    "typecheck": "tsc --noEmit && cd app && tsc -p . --noEmit",
+    "test:server": "cd app && PYTHONPATH=server .venv/bin/pytest -q server/tests"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.14.0",

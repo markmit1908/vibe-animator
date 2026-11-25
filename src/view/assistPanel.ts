@@ -14,7 +14,7 @@ export interface AssistHooks {
   renderProposal?(p: Proposal, el: HTMLElement, decide: (s: 'accepted' | 'rejected') => void): void;
   /** Insert a code block from a reply into the script (after the cursor line). */
   insertCode?(code: string): void;
-  /** The key proxy (old app: /__assist; SolverKit: /api/assist/proxy) and its status URL. */
+  /** The key proxy (SolverKit: /api/assist/proxy) and its status URL (/api/assist). */
   endpoints?: { base: string; status: string };
   /** History changed (persist it). */
   saveHistory?(h: ChatMessage[]): void;
@@ -109,7 +109,7 @@ export class AssistPanel {
       this.history = []; this.hooks.saveHistory?.(this.history); this.render();
     };
     addEventListener('keydown', (e) => { if (e.key === 'Escape' && this.abort) this.stop(); });
-    fetch(hooks.endpoints?.status ?? '/__assist/status').then((r) => r.json()).then((s) => {
+    fetch(hooks.endpoints?.status ?? '/api/assist').then((r) => r.json()).then((s) => {
       this.enabled = !!(s.enabled ?? s.key ?? s.available);
       this.status.textContent = this.enabled ? 'claude-opus-5-5' : 'no API key';
       this.status.className = 'st' + (this.enabled ? '' : ' off');

@@ -1,6 +1,6 @@
 /**
  * AI assist loop (after SolverKit's packages/app/src/assist/loop.ts), on the official Anthropic SDK.
- * Runs in the browser; requests go to the dev server's /__assist proxy, which adds the API key.
+ * Runs in the browser; requests go to the server's key proxy (SolverKit /api/assist/proxy), which adds the API key.
  *
  *  - system prompt (the app's reference) is cached; the live context goes in front of the latest user message
  *  - tools run here; proposal tools yield `proposal` events the panel shows as Accept / Reject cards
@@ -43,7 +43,7 @@ export interface AssistTool {
   run(input: any): AsyncGenerator<AssistEvent, ToolResult, void>;
 }
 
-export function assistClient(base = '/__assist') {
+export function assistClient(base = '/api/assist/proxy') {
   // The proxy holds the key; the SDK needs a placeholder and browser opt-in.
   return new Anthropic({
     baseURL: new URL(base, location.href).href,
