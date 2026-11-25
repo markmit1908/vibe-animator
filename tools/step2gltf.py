@@ -19,7 +19,8 @@ name and its full path ("Top/Sub/Part"). --include keeps matching subtrees (and
 their ancestors); --exclude drops matching subtrees; --min-size drops parts whose
 bounding-box diagonal is below N mm (fasteners, magnets, etc.).
 """
-import argparse, fnmatch, sys, time
+import argparse, faulthandler, fnmatch, sys, time
+faulthandler.enable()  # OCCT crashes otherwise exit silently
 from OCP.STEPCAFControl import STEPCAFControl_Reader
 from OCP.TDocStd import TDocStd_Document
 from OCP.TCollection import TCollection_ExtendedString, TCollection_AsciiString
@@ -55,7 +56,26 @@ def load(path):
         sys.exit("failed to read STEP")
     r.Transfer(doc)
     log("read done")
+    global READER
+    READER = r
     return doc, XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
+
+
+READER = None
+
+
+def step_name(shape):
+    """Name of the STEP entity a shape was read from (e.g. a body's MANIFOLD_SOLID_BREP name)."""
+    if READER is None:
+        return ""
+    try:
+        tr = READER.ChangeReader().WS().TransferReader()
+        ent = tr.EntityFromShapeResult(shape, 1) or tr.EntityFromShapeResult(shape, -1)
+        if ent is not None and hasattr(ent, "Name") and ent.Name() is not None:
+            return ent.Name().ToCString().strip()
+    except Exception:
+        pass
+    return ""
 
 
 def name_of(label):
@@ -326,6 +346,7 @@ def split_bodies(st):
         for k in children(l):
             users.setdefault(referred(k).Tag(), []).append((l, k))
     split = bodies = named_n = 0
+    log(f"split: scanning {len(labels)} shapes for multi-body parts…")
     for l in labels:
         if not ST.IsSimpleShape_s(l) or l.Tag() not in users:
             continue
@@ -335,14 +356,14 @@ def split_bodies(st):
         while e.More(): solids.append(e.Current()); e.Next()
         if len(solids) < 2:
             continue
+        log(f"  {name_of(l)}: {len(solids)} bodies")
         # body names live on sub-shape labels
-        subs = TDF_LabelSequence(); ST.GetSubShapes_s(l, subs)
-        named = [(ST.GetShape_s(subs.Value(i)), name_of(subs.Value(i))) for i in range(1, subs.Length() + 1)]
+        # body names come from the STEP entities (reading XCAF sub-shape labels segfaults in OCP)
         part_name = name_of(l)
         asm = st.NewShape()
         TDataStd_Name.Set_s(asm, TCollection_ExtendedString(part_name))
         for i, so in enumerate(solids, 1):
-            nm = next((n for sh, n in named if sh.IsSame(so) and n not in ("?", "")), f"{part_name} body {i}")
+            nm = step_name(so) or f"{part_name} body {i}"
             nm = nm[:-len("-solid1")] if nm.endswith("-solid1") else nm
             body = st.AddShape(so, False)
             TDataStd_Name.Set_s(body, TCollection_ExtendedString(nm))
