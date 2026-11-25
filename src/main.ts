@@ -14,6 +14,8 @@ import { loadStore, store, useSnapshot, captureSnapshot, writeStore, markDirty, 
 import { TreePanel } from './view/tree';
 import { Triad } from './view/triad';
 import { ScriptPanel } from './view/scriptPanel';
+import { AssistPanel } from './view/assistPanel';
+import { ASSIST_SYSTEM } from './assist/system';
 import { parseAnim, toActions, type ParseError } from './script/anim';
 import { ScriptError } from './timeline/compile';
 import { applyEdit, cameraLine, type Edit, type Probe } from './script/edit';
@@ -197,6 +199,44 @@ if (isAnim) {
   });
   scriptPanel.setErrors(scriptErrors);
 }
+// ---------- [Script | Assist] tabs ----------
+const tabs = document.createElement('div'); tabs.className = 'rtabs';
+tabs.innerHTML = `<button data-t="script" class="on">Script</button><button data-t="assist">Assist</button>`;
+const tabCss = document.createElement('style');
+tabCss.textContent = `#right .rtabs { display: flex; border-top: 1px solid #222a33; } #right .rtabs button { flex: 1; background: transparent; color: #7b8794; border: 0; border-bottom: 2px solid transparent; padding: 6px; cursor: pointer; font: 600 12px system-ui; }
+  #right .rtabs button.on { color: #f2b705; border-bottom-color: #f2b705; } #script, #assist { border-top: 0 !important; }`;
+document.head.appendChild(tabCss);
+right.insertBefore(tabs, scriptPanel?.el ?? null);
+const assist = new AssistPanel(right, {
+  system: () => ASSIST_SYSTEM,
+  context: () => [{ type: 'text', text: assistContext() }],
+  tools: () => [],
+});
+const showTab = (t: string) => {
+  tabs.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
+  if (scriptPanel) scriptPanel.el.style.display = t === 'script' ? '' : 'none';
+  assist.el.style.display = t === 'assist' ? '' : 'none';
+};
+tabs.querySelectorAll('button').forEach((b) => (b.onclick = () => showTab(b.dataset.t!)));
+showTab(new URLSearchParams(location.search).get('tab') ?? (scriptPanel ? 'script' : 'assist'));
+
+function assistContext() {
+  const lines = (scriptPanel?.text ?? '').split('\n');
+  const timing = player.tl.lines;
+  const numbered = lines.map((l, i) => {
+    const x = timing.get(i + 1);
+    return `${String(i + 1).padStart(3)}${x ? ` [${x.start.toFixed(1)}–${x.end.toFixed(1)}s]` : ''} | ${l}`;
+  }).join('\n');
+  const sel = gSel.spec ?? (gSel.objs.length ? gSel.objs.map(idOfObj).join(', ') : 'nothing');
+  return `<context>
+Script file: scripts/${scriptName} (${player.duration.toFixed(1)} s)
+${numbered}
+Current time: ${player.time.toFixed(2)} s
+Selection: ${sel}
+Groups: ${Object.entries(store.groups).map(([g, ids]) => `@${g} (${ids.length})`).join(', ') || 'none'}
+</context>`;
+}
+
 const rightToggle = document.createElement('button'); rightToggle.id = 'right-toggle'; rightToggle.textContent = '☰';
 rightToggle.onclick = () => { right.classList.toggle('collapsed'); document.body.classList.toggle('right-collapsed'); };
 document.body.appendChild(rightToggle);

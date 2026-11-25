@@ -27,6 +27,8 @@ used to illustrate the concept. Delivered live in a browser.
 - `.anim` scripts: `src/script/anim.ts` (parser → engine actions, keeps source ranges), `src/view/scriptPanel.ts` (CodeMirror 6, SolverKit ModelText patterns), `src/script/edit.ts` (gizmo edits → text: update/add a line in the step at t, split the step if t is mid-step). Saved via `/__script?name=`. `buildTimeline()` seeks the old player to 0 before compiling (compile reads the start pose), then restores t. `Timeline.lines` maps script line → {start, end}.
 - Rotation: world-space slerp about a pivot. The default pivot is the targets' bbox centre at their virtual pose; `pivot @x [p]` is stored in the first member's frame, so it follows the part. Don't move and rotate the same part in one parallel block (the last tween wins).
 
+- AI assist: `src/assist/loop.ts` (manual streaming tool loop on `@anthropic-ai/sdk`, SolverKit's event protocol; model `claude-opus-5-5`, adaptive thinking, `fallbacks: "default"`, cached system prompt; tools use `eager_input_streaming` and are validated before running), `src/assist/system.ts` (system prompt – keep it stable for caching), `src/view/assistPanel.ts` (chat UI). The browser SDK talks to the dev server's `/__assist` proxy, which adds the key from `.env` server-side (`ANTHROPIC_API_KEY`; `VITE_ANTHROPIC_API_KEY` is accepted with a warning). Never expose the key to the page. Every change the assistant makes is a proposal the user accepts.
+
 ## Conventions
 - Y is up, units are metres, and the core base is at y = 0. The operating floor sits at the vessel flange (`floorY`), and locations are relative to it.
 - The machine's origin is the grapple tip.

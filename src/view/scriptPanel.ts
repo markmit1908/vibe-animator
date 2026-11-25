@@ -111,7 +111,7 @@ const CSS = `
   background: rgba(14,17,21,.95); border-left: 1px solid #222a33; }
 #right.collapsed { transform: translateX(420px); }
 #right .lil-gui.root { width: 100% !important; --width: 100%; max-height: 45vh; overflow: auto; flex: none; }
-#script { flex: 1; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid #222a33; color: #d7dde4; font: 12px system-ui, sans-serif; }
+#script { flex: 1; min-height: 0; display: flex; flex-direction: column; color: #d7dde4; font: 12px system-ui, sans-serif; }
 #script .bar { display: flex; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid #222a33; }
 #script .bar b { flex: 1; font-size: 12px; }
 #script .bar .dirty { color: #ff8c1a; font-size: 11px; }
