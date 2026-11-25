@@ -51,7 +51,14 @@ const KINDS = ['list', 'each', 'pick', 'place', 'move', 'rotate', 'pivot', 'high
 export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]; look: number[] },
   isLocked: (o: THREE.Object3D) => boolean = () => false,
   groups: Record<string, string[]> = {},
-  isRemoved: (o: THREE.Object3D) => boolean = () => false): Timeline {
+  isRemoved: (o: THREE.Object3D) => boolean = () => false,
+  views: Record<string, { pos: number[]; look: number[] }> = {}): Timeline {
+  const view = (name: string, line?: number) => {
+    const v = views[name];
+    if (!v) throw new ScriptError(`Unknown view "${name}"${Object.keys(views).length ? ` – saved views: ${Object.keys(views).join(', ')}` : ' – save one with the Views tool'}`, line);
+    return v;
+  };
+  if ((camInit as any).view) camInit = view((camInit as any).view, (camInit as any).line);
   scene.root.updateMatrixWorld(true); // positions below are world-space
   const tweens: Tween[] = [];
   const steps: StepEvent[] = [];
@@ -269,7 +276,8 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
 
       case 'camera': {
         const from = { pos: vCam.pos.clone(), look: vCam.look.clone() };
-        const to = { pos: val.pos ? new THREE.Vector3(...val.pos) : from.pos.clone(), look: val.look ? new THREE.Vector3(...val.look) : from.look.clone() };
+        const v = val.view ? view(val.view, a.line) : val;
+        const to = { pos: v.pos ? new THREE.Vector3(...v.pos) : from.pos.clone(), look: v.look ? new THREE.Vector3(...v.look) : from.look.clone() };
         vCam.pos.copy(to.pos); vCam.look.copy(to.look);
         const d = dur(2);
         const e = curEase;

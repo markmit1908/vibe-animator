@@ -53,7 +53,7 @@ Right-click a row for its menu. Select a row and press **F2** to rename or **Del
 **Snapshots** (bar at the top) are named start states: lock/hide flags, part placements and a camera view. Changes
 save into the active snapshot automatically. **Save** also records the camera; **Save as…** makes a new snapshot.
 
-**Tools** (floating bar, left of the 3D view): **Blank / Unblank** (**H**) hides the selected parts or shows them again; **Blank others** (**⇧H**) hides everything that isn't selected; **Group** (**G**) makes a group from the selection.
+**Tools** (floating bar, left of the 3D view): **Blank / Unblank** (**H**) hides the selected parts or shows them again; **Blank others** (**⇧H**) hides everything that isn't selected; **Views** saves the camera (position and target) under a name, goes back to it, or inserts `camera <name> 2s` into the script; **Group** (**G**) makes a group from the selection.
 
 **Undo / redo:** **⌘/Ctrl+Z** and **⇧⌘Z** (or Ctrl+Y) undo colours, moves (gizmo), lock/hide, groups, renames, remove/restore and script changes made by the gizmo or an accepted AI proposal. While you're typing in the script, ⌘Z is the editor's own undo.
 
@@ -74,7 +74,7 @@ One step per line; steps run in sequence. `#` starts a comment. Durations: `2s`,
 | `fade` | `fade @bolts to 0.2 2s` | Opacity 0–1. Faded to 0 = hidden. |
 | `color` | `color @lid #2e86de 1s` · `color @lid reset 1s` | Change colour over time / back to the base colour. |
 | `highlight` | `highlight @spent #c0392b 1s` | Like `color`; also takes palette names (`spent`, `fresh`, `fuel`). |
-| `camera` | `camera [12,16,14] look [0,5,0] 3s` | A leading instant `camera` sets the opening view. |
+| `camera` | `camera [12,16,14] look [0,5,0] 3s` · `camera overview 2s` | Moves the camera over the time given (instant without one). A name is a view saved with **Views**. A leading instant `camera` sets the opening view. |
 | `label` | `label "Remove lid" "Unbolt and lift"` | Chapter title (+ subtitle); listed under Chapters. |
 | `cutaway` | `cutaway quarter` | `none`, `half`, `quarter`. |
 | `wait` | `wait 2s` | |

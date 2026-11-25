@@ -34,7 +34,7 @@ Right-click a row for its menu; **F2** renames, **Delete** removes, ⌘/Ctrl-cli
 - **Colour** (info box): base colour of the selection. The swatches are colours already in the model (yours first, then the CAD colours); the picker gives any colour. A second row is a **palette** from a key colour (pick it with **Palette**): complementary, split complementary, triadic and analogous. In the script, `color TARGET ` offers the same colours; click the chip by a `#hex` to change it. **Reset** goes back to the CAD colour.
 - **Snapshots** (top bar): named start states (locks, hides, placements, camera). Save also records the camera.
 
-**Tools** (floating bar on the left of the 3D view): **Blank/Unblank** (H) the selection, **Blank others** (⇧H), **Group** (G) it.
+**Tools** (floating bar on the left of the 3D view): **Blank/Unblank** (H) the selection, **Blank others** (⇧H), **Views** (save the camera as a named view; use it with `camera <name> 2s`), **Group** (G) it.
 
 **Undo:** ⌘/Ctrl+Z, redo ⇧⌘Z – colours, moves, lock/hide, groups, renames, removals. In the script editor, ⌘Z undoes typing.
 
@@ -56,6 +56,7 @@ color @lid #2e86de 1s
 color @lid reset 1s
 highlight @spent spent 1s
 camera [12,16,14] look [0,5,0] 3s
+camera overview 2s                    # a view saved with the Views tool
 label "Remove lid" "subtitle"
 cutaway quarter
 wait 2s

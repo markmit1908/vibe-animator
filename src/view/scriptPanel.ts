@@ -133,6 +133,8 @@ export interface ScriptHooks {
   ids(): string[];
   /** `camera … look …` line for the current view. */
   cameraLine(): string;
+  /** Saved camera view names (offered after `camera `). */
+  views?(): string[];
   /** Colours to offer in `color`/`highlight` steps (the model's own first). */
   colors?(): string[];
 }
@@ -211,6 +213,13 @@ export class ScriptPanel {
           ...extra.map((w) => ({ label: w, type: 'keyword', boost: -1 })),
         ];
         return { from: cx.pos - cm[2].length, to: cx.pos + (line.text.slice(cx.pos - line.from).match(/^#?\w*/)?.[0].length ?? 0), options, validFor: /^#?\w*$/ };
+      }
+      // camera: the saved views
+      const cv = before.match(/^\s*camera\s+([\w-]*)$/);
+      if (cv) {
+        const vs = this.hooks.views?.() ?? [];
+        if (!vs.length) return null;
+        return { from: cx.pos - cv[1].length, options: vs.map((v, i) => ({ label: v, type: 'constant', detail: 'view', boost: 50 - i })), validFor: /^[\w-]*$/ };
       }
       const word = cx.matchBefore(/[@\w./#-]*/);
       if (!word || (word.from === word.to && !cx.explicit)) return null;

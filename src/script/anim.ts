@@ -2,6 +2,7 @@
  * `.anim` animation script: one step per line, `parallel { … }` blocks run together.
  *
  *   camera [12,16,14] look [0,5,0] 3s
+ *   camera overview 2s                 (a view saved with the Views tool)
  *   label "Remove lid" "Unbolt and lift"
  *   move @lid by [0,3,0] 6s ease
  *   move part-a, part-b, @lid by [0,3,0] 6s       # several targets
@@ -182,6 +183,7 @@ export function parseAnim(text: string): AnimDoc {
         tail(); break;
       }
       case 'camera': {
+        if (peek()?.t === 'word' && !/^\d/.test(peek()!.v)) { step.word = arg(toks[k++]); tail(); break; } // a saved view: camera <name> 2s
         step.vec = arg(take('vec', 'camera position [x, y, z]'));
         if (peek()?.t === 'word' && peek()!.v === 'look') { k++; step.look = arg(take('vec', 'look-at point [x, y, z]')); }
         tail(); break;
@@ -254,7 +256,7 @@ export function toActions(steps: AnimStep[]): { camera?: any; timeline: any[] } 
       case 'highlight': return { ...base, highlight: tgt, color: s.word?.value ?? 'spent' };
       case 'color': return { ...base, highlight: tgt, color: s.word?.value ?? 'reset', dur: s.dur?.value ?? 0 };
       case 'label': return { ...base, label: s.text![0]?.value, sub: s.text![1]?.value };
-      case 'camera': return { ...base, camera: { pos: s.vec!.value, look: s.look?.value }, dur: s.dur?.value ?? 0 };
+      case 'camera': return { ...base, camera: s.word ? { view: s.word.value } : { pos: s.vec!.value, look: s.look?.value }, dur: s.dur?.value ?? 0 };
       case 'cutaway': return { ...base, cutaway: s.word!.value };
       case 'wait': return { ...base, wait: s.dur!.value };
       case 'parallel': return { ...base, parallel: s.children!.map((c) => [conv(c)]) };
@@ -264,6 +266,6 @@ export function toActions(steps: AnimStep[]): { camera?: any; timeline: any[] } 
   };
   const timeline = steps.map(conv);
   // a leading instant camera sets the initial view
-  if (timeline[0]?.camera && !timeline[0].dur) camera = { pos: timeline[0].camera.pos, look: timeline[0].camera.look ?? [0, 0, 0] };
+  if (timeline[0]?.camera && !timeline[0].dur) camera = timeline[0].camera.view ? { view: timeline[0].camera.view, line: timeline[0].line } : { pos: timeline[0].camera.pos, look: timeline[0].camera.look ?? [0, 0, 0] };
   return { camera, timeline };
 }

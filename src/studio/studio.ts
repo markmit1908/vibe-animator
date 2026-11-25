@@ -56,13 +56,13 @@ const edit = (patch: Partial<AnimModel>) => {
 // ---------- undo / redo (⌘/Ctrl+Z, ⇧⌘Z / Ctrl+Y) of the animation's state ----------
 // Every change goes through edit(): before the first change of a burst (400 ms), the state as it was is pushed.
 // Script typing has the editor's own undo; script changes made by code (gizmo write-back, an accepted proposal) undo here.
-type UndoKey = 'colors' | 'snapshots' | 'groups' | 'labels' | 'removed' | 'script';
-const UNDO_KEYS: UndoKey[] = ['colors', 'snapshots', 'groups', 'labels', 'removed', 'script'];
+type UndoKey = 'colors' | 'snapshots' | 'groups' | 'labels' | 'removed' | 'script' | 'views';
+const UNDO_KEYS: UndoKey[] = ['colors', 'snapshots', 'groups', 'labels', 'removed', 'script', 'views'];
 type DocState = Partial<Record<UndoKey, any>>;
 const clone = <T,>(x: T): T => (x === undefined ? x : JSON.parse(JSON.stringify(x)));
 const docNow: DocState = {
   colors: model.colors ?? {}, snapshots: model.snapshots ?? { active: 'default', items: {} }, groups: model.groups ?? {},
-  labels: model.labels ?? {}, removed: model.removed ?? [], script: model.script ? { language: 'anim', text: joinLines(model.script.text) } : undefined,
+  labels: model.labels ?? {}, removed: model.removed ?? [], views: model.views ?? {}, script: model.script ? { language: 'anim', text: joinLines(model.script.text) } : undefined,
 };
 const undoStack: DocState[] = [], redoStack: DocState[] = [];
 let undoing = false, typing = false, burst = false, burstTimer: number | undefined;
@@ -165,6 +165,8 @@ async function reconcile(root: THREE.Object3D) {
 // ---------- removed parts / display names (per animation; the CAD file is untouched) ----------
 const removed = new Set<string>(model.removed ?? []);
 let labels: Record<string, string> = { ...(model.labels ?? {}) };
+/** Named camera views (script: camera <name> 2s). */
+let views: Record<string, { pos: number[]; look: number[] }> = clone(model.views ?? {});
 const isRemoved = (o: THREE.Object3D): boolean => { for (let p: THREE.Object3D | null = o; p; p = p.parent) if (p.userData.removed) return true; return false; };
 for (const id of removed) { const o = built.registry.get(id); if (o) o.userData.removed = true; }
 for (const [id, l] of Object.entries(labels)) { const o = built.registry.get(id); if (o) o.userData.label = l; }
@@ -262,7 +264,7 @@ function lockedIn(acts: ReturnType<typeof toActions>): string[] {
   const t = player?.time ?? 0;
   player?.seek(0);
   try {
-    compile(acts, built, acts.camera ?? defaultCam, (o) => { if (isLocked(o)) ids.add(idOfObj(o)); return false; }, store.groups, isRemoved);
+    compile(acts, built, acts.camera ?? defaultCam, (o) => { if (isLocked(o)) ids.add(idOfObj(o)); return false; }, store.groups, isRemoved, views);
   } catch { /* other errors are reported elsewhere */ } finally { player?.seek(t); }
   return [...ids];
 }
@@ -273,7 +275,7 @@ function buildTimeline(o: { atStart?: boolean } = {}): boolean {
   // scene at its start pose and changed it (base colours); the old player's reset would undo that change
   if (!o.atStart) player?.seek(0);
   try {
-    const tl = compile(script, built, script.camera ?? defaultCam, (o) => isLocked(o) && !previewUnlocked.has(idOfObj(o)), store.groups, isRemoved);
+    const tl = compile(script, built, script.camera ?? defaultCam, (o) => isLocked(o) && !previewUnlocked.has(idOfObj(o)), store.groups, isRemoved, views);
     player = new Player(built, tl);
     player.playing = playing;
     player.seek(Math.min(t, tl.duration));
@@ -384,6 +386,7 @@ if (isAnim) {
     save: async (text) => { typing = true; try { edit({ script: { language: 'anim', text } }); } finally { typing = false; } },
     seek: (t) => { player.playing = false; player.seek(t); gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs); },
     ids: () => [...Object.keys(store.groups).map((g) => `@${g}`), ...built.registry.keys()],
+    views: () => Object.keys(views),
     cameraLine: () => cameraLine(probe),
     colors: () => [...new Set([...modelColors(), ...palette(paletteKey).map((p) => p.hex)])],
   });
@@ -419,7 +422,7 @@ const toolDeps: ToolDeps = {
       const acts = toActions(doc.steps);
       // locked parts are reported, not errors: accepting a proposal unlocks them (every one the script animates)
       const locked = lockedIn(acts);
-      const tl = compile(acts, built, acts.camera ?? defaultCam, () => false, store.groups, isRemoved);
+      const tl = compile(acts, built, acts.camera ?? defaultCam, () => false, store.groups, isRemoved, views);
       const src = text.split('\n');
       return { errors: [], locked, duration: tl.duration, steps: [...tl.lines].sort((a, b) => a[0] - b[0]).map(([line, x]) => ({ line, ...x, text: src[line - 1].trim() })) };
     } catch (e: any) {
@@ -598,6 +601,7 @@ ${numbered}
 
 Current time: ${player.time.toFixed(2)} s${player.playing ? ' (playing)' : ' (paused)'}
 Selection: ${sel}${selBox && !selBox.isEmpty() ? ` – bbox centre [${selBox.getCenter(new THREE.Vector3()).toArray().map((v) => v.toFixed(2))}], size [${selBox.getSize(new THREE.Vector3()).toArray().map((v) => v.toFixed(2))}] m` : ''}
+Camera views: ${Object.keys(views).map((v) => `${v} (pos [${views[v].pos.map((x) => x.toFixed(1))}], look [${views[v].look.map((x) => x.toFixed(1))}])`).join(', ') || 'none'}
 Groups: ${Object.entries(store.groups).map(([g, ids]) => `@${g} (${ids.length} members)`).join(', ') || 'none'}
 Snapshot: ${store.active}. Explicitly hidden: ${hidden.length ? hidden.slice(0, 20).join(', ') + (hidden.length > 20 ? ` … ${hidden.length - 20} more` : '') : 'none'}. Unlocked (animatable) CAD: ${unlocked.length ? unlocked.slice(0, 20).join(', ') + (unlocked.length > 20 ? ' …' : '') : 'none – CAD is locked by default'}.
 
@@ -973,7 +977,7 @@ const undoToast = document.createElement('div');
 undoToast.style.cssText = 'position:absolute;left:50%;bottom:16px;transform:translateX(-50%);z-index:8;background:rgba(14,17,21,.95);color:#d7dde4;border:1px solid #2b3540;border-radius:6px;padding:5px 12px;font:12px system-ui;display:none;pointer-events:none';
 host().appendChild(undoToast);
 let toastTimer: number | undefined;
-const WHAT: Record<UndoKey, string> = { colors: 'colour', snapshots: 'move / lock / hide', groups: 'groups', labels: 'rename', removed: 'remove / restore', script: 'script edit' };
+const WHAT: Record<UndoKey, string> = { colors: 'colour', snapshots: 'move / lock / hide', groups: 'groups', labels: 'rename', removed: 'remove / restore', script: 'script edit', views: 'views' };
 async function restoreDoc(d: DocState, verb: string) {
   const what = UNDO_KEYS.filter((k) => d[k] !== undefined && JSON.stringify(d[k]) !== JSON.stringify(docNow[k])).map((k) => WHAT[k]);
   undoing = true;
@@ -995,6 +999,7 @@ async function restoreDoc(d: DocState, verb: string) {
       for (const [id, o] of built.registry) { if (labels[id]) o.userData.label = labels[id]; else delete o.userData.label; }
     }
     if (d.colors) { colors = clone(d.colors); applyColors(); }
+    if (d.views) { views = clone(d.views); renderViews(); }
     for (const o of built.root.children) await reconcile(o);
     if (d.script && scriptPanel && d.script.text !== scriptPanel.text) {
       docNow.script = clone(d.script);
@@ -1002,7 +1007,7 @@ async function restoreDoc(d: DocState, verb: string) {
     }
     buildTimeline({ atStart: true });
     player.seek(Math.min(t, player.duration));
-    edit({ colors: { ...colors }, snapshots: { active: store.active, items: clone(store.snapshots) }, groups: clone(store.groups), labels: { ...labels }, removed: [...removed] });
+    edit({ colors: { ...colors }, snapshots: { active: store.active, items: clone(store.snapshots) }, groups: clone(store.groups), labels: { ...labels }, removed: [...removed], views: clone(views) });
     tree.rebuild();
     gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs);
     updateTools(); renderSnapBar(); markDirty(false);
@@ -1036,6 +1041,8 @@ on('keydown', (e: KeyboardEvent) => {
 const toolbar = document.createElement('div'); toolbar.id = 'toolsbar';
 toolbar.innerHTML = `<button data-t="blank" title="Blank / unblank the selected parts (H)"><span class="i">◐</span><span class="l">Blank</span></button>
   <button data-t="others" title="Reverse blank: hide everything that is not selected (⇧H)"><span class="i">◑</span><span class="l">Blank others</span></button>
+  <button data-t="views" title="Camera views: save the current view (position and target), go to one, or put it in the script (camera <name> 2s)"><span class="i">📷</span><span class="l">Views</span></button>
+  <div class="vpop" hidden></div>
   <button data-t="group" title="Create a group from the selected parts, or add them to one (G)"><span class="i">⊞</span><span class="l">Group</span></button>`;
 host().appendChild(toolbar);
 {
@@ -1046,7 +1053,13 @@ host().appendChild(toolbar);
     #toolsbar button { width: 60px; text-align: center; line-height: 1.15; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 5px 2px; background: #1b222a; color: #d7dde4; border: 1px solid #2b3540; border-radius: 4px; cursor: pointer; font: inherit; }
     #toolsbar button .i { font-size: 16px; line-height: 1; }
     #toolsbar button:hover:not(:disabled) { background: #26303a; } #toolsbar button:disabled { opacity: .4; cursor: default; }
-    #toolsbar button.on { border-color: #f2b705; color: #f2b705; }`;
+    #toolsbar button.on { border-color: #f2b705; color: #f2b705; }
+    #toolsbar .vpop { position: absolute; left: calc(100% + 6px); top: 0; width: 250px; background: rgba(14,17,21,.97); border: 1px solid #2b3540; border-radius: 6px; padding: 8px; color: #d7dde4; display: flex; flex-direction: column; gap: 4px; }
+    #toolsbar .vpop[hidden] { display: none; }
+    #toolsbar .vpop .row { display: flex; align-items: center; gap: 4px; }
+    #toolsbar .vpop .row .n { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #toolsbar .vpop button { width: auto; flex-direction: row; padding: 3px 6px; }
+    #toolsbar .vpop .hint { color: #7b8794; font-size: 10.5px; }`;
   document.head.appendChild(css);
 }
 /** Reverse blank: hide everything outside the selection (siblings along each selected part's path), show the selection. */
@@ -1079,6 +1092,45 @@ function updateTools() {
 }
 toolbar.querySelector<HTMLElement>('[data-t=blank]')!.onclick = () => { tree.toggleHiddenSelected(); updateTools(); };
 toolbar.querySelector<HTMLElement>('[data-t=others]')!.onclick = () => void blankOthers();
+// ---- camera views ----
+const vpop = toolbar.querySelector<HTMLElement>('.vpop')!;
+const escH = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+function saveViews() { edit({ views: clone(views) }); buildTimeline(); renderViews(); }
+function renderViews() {
+  const names = Object.keys(views);
+  vpop.innerHTML = `<button data-v="save">＋ Save current view…</button>
+    ${names.map((n) => `<div class="row" data-n="${escH(n)}"><button class="n" data-v="go" title="Go to this view">${escH(n)}</button>
+      <button data-v="ins" title="Insert “camera ${escH(n)} 2s” into the script">⤓ script</button>
+      <button data-v="upd" title="Replace with the current view">⟳</button><button data-v="del" title="Delete">✕</button></div>`).join('')}
+    <div class="hint">${names.length ? 'In the script: <code>camera &lt;name&gt; 2s</code> moves the camera to a view over 2 s.' : 'Saved views can be used in the script: camera &lt;name&gt; 2s'}</div>`;
+  vpop.querySelector<HTMLElement>('[data-v=save]')!.onclick = () => {
+    let i = names.length + 1; while (views[`view${i}`]) i++;
+    const name = prompt('Name for this camera view (a word: letters, digits, - and _)', `view${i}`)?.trim().replace(/\s+/g, '-');
+    if (!name || !/^[A-Za-z_][\w-]*$/.test(name)) return;
+    if (views[name] && !confirm(`Replace the view "${name}"?`)) return;
+    views[name] = camView(); saveViews();
+  };
+  vpop.querySelectorAll<HTMLElement>('.row').forEach((row) => {
+    const n = row.dataset.n!;
+    row.querySelector<HTMLElement>('[data-v=go]')!.onclick = () => {
+      ui.followCamera = false; gui.controllersRecursive().forEach((c) => c.updateDisplay());
+      camera.position.fromArray(views[n].pos); controls.target.fromArray(views[n].look); controls.update();
+    };
+    row.querySelector<HTMLElement>('[data-v=ins]')!.onclick = () => {
+      if (!scriptPanel) return;
+      const v = scriptPanel.view, l = v.state.doc.line(scriptPanel.cursorLine);
+      v.dispatch({ changes: { from: l.to, insert: `\n${l.text.match(/^\s*/)![0]}camera ${n} 2s` } });
+      showTab('script'); v.focus();
+    };
+    row.querySelector<HTMLElement>('[data-v=upd]')!.onclick = () => { views[n] = camView(); saveViews(); };
+    row.querySelector<HTMLElement>('[data-v=del]')!.onclick = () => { delete views[n]; saveViews(); };
+  });
+}
+renderViews();
+toolbar.querySelector<HTMLElement>('[data-t=views]')!.onclick = () => {
+  vpop.hidden = !vpop.hidden;
+  toolbar.querySelector('[data-t=views]')!.classList.toggle('on', !vpop.hidden);
+};
 toolbar.querySelector<HTMLElement>('[data-t=group]')!.onclick = () => { tree.groupSelected(); updateTools(); };
 updateTools();
 
@@ -1179,7 +1231,7 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 }
 
 // read-only handle for tests and debugging
-(window as any).__studio = { built, state, store, cad, tree, tools, assist: { host: assistHost, mount: assist }, get player() { return player; } };
+(window as any).__studio = { built, state, store, cad, tree, tools, camera, controls, ui, assist: { host: assistHost, mount: assist }, get player() { return player; } };
 
 return {
   dispose() {

@@ -515,3 +515,30 @@ test("undo / redo (⌘Z / ⇧⌘Z): colour, blank and group changes; the script 
   await expect(page.locator("#script .cm-content")).not.toContainText("wait 1s");
   expect((await saved()).colors).toEqual({ bolts: "#2e86de", head: "#2e86de" });     // the colour stays
 });
+
+test("camera views: save from the tools bar, use as `camera <name> 2s`; unknown names are errors", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Views", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "V"\nwait 1s' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Views");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  await page.locator("#toolsbar [data-t=views]").click();
+  const cam = () => page.evaluate(() => { const s = (window as any).__studio; return s.player.tl.camera.pos.toArray().map((x: number) => +x.toFixed(2)); });
+  await page.evaluate(() => { const s = (window as any).__studio; s.ui.followCamera = false; s.camera.position.set(30, 5, 0); s.controls.target.set(0, 2, 0); s.controls.update(); });
+  page.once("dialog", (d) => d.accept("side"));
+  await page.locator("#toolsbar .vpop [data-v=save]").click();
+  await expect.poll(async () => (await model(page, a.id)).views?.side?.pos.map((x: number) => +x.toFixed(1))).toEqual([30, 5, 0]);
+  // insert into the script, then play it: the camera ends at the view
+  await page.locator("#script .cm-content").click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Meta+ArrowDown");
+  await page.locator("#toolsbar .vpop [data-n=side] [data-v=ins]").click();
+  await expect(page.locator("#script .cm-content")).toContainText("camera side 2s");
+  await expect(page.locator("#script .status")).toHaveText("✓");
+  await expect.poll(() => page.evaluate(() => (window as any).__studio.player.duration)).toBe(3);
+  await page.evaluate(() => { const s = (window as any).__studio; s.player.playing = false; s.player.seek(3); });
+  expect(await cam()).toEqual([30, 5, 0]);
+  // an unknown view is an error
+  await page.keyboard.press("Control+End"); await page.keyboard.press("Meta+ArrowDown");
+  await page.keyboard.type("\ncamera nowhere 1s");
+  await expect(page.locator("#script .status")).toHaveText("1 error");
+});
