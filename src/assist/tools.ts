@@ -146,3 +146,61 @@ export function readTools(d: ToolDeps): AssistTool[] {
     },
   ];
 }
+
+// ---------------------------------------------------------------- proposals
+export interface ProposeDeps {
+  checkScript: ToolDeps['checkScript'];
+  currentScript: () => string;
+}
+
+/** Proposal tools: they never change anything – they show a card the user accepts or rejects. */
+export function proposeTools(d: ProposeDeps): AssistTool[] {
+  return [
+    {
+      name: 'propose_script_edit',
+      description: 'Propose a new version of the whole .anim script. The user sees a diff with a compile check and can preview, accept or reject it. Send the COMPLETE script text (not a fragment), keeping lines you are not changing exactly as they are. Run check_script first and only propose a script that compiles.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          text: { type: 'string', description: 'The complete new script' },
+          summary: { type: 'string', description: 'One line: what changes, e.g. "Lift @lid 3 m over 6 s, then slide it aside"' },
+        },
+        required: ['text', 'summary'],
+      },
+      writing: 'a script edit',
+      validate: (i) => check(i, { text: 'string', summary: 'string' }),
+      async *run(i) {
+        const base = d.currentScript();
+        const text = i.text.endsWith('\n') ? i.text : `${i.text}\n`;
+        if (text === base) return { content: 'That is identical to the current script – nothing to propose.', is_error: true };
+        const r = d.checkScript(text);
+        const ok = r.errors.length === 0;
+        const label = ok ? `✓ compiles · ${r.duration?.toFixed(1)} s` : `${r.errors.length} error${r.errors.length > 1 ? 's' : ''}`;
+        yield { type: 'proposal', proposal: { kind: 'script edit', summary: i.summary, check: { ok, label }, base, text, errors: r.errors } };
+        return {
+          content: ok
+            ? `Proposed (${label}). The user will preview/accept or reject it; don't repeat the script in your reply – summarise the change in a sentence or two.`
+            : `Proposed, but it does not compile:\n${r.errors.map((e) => `line ${e.line}: ${e.message}`).join('\n')}\nFix it with check_script and propose again.`,
+        };
+      },
+    },
+  ];
+}
+
+/** Line diff (LCS) for proposal cards: [' '|'+'|'-', line]. */
+export function lineDiff(a: string, b: string): [string, string][] {
+  const A = a.replace(/\n$/, '').split('\n'), B = b.replace(/\n$/, '').split('\n');
+  const n = A.length, m = B.length;
+  const L = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = A[i] === B[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const out: [string, string][] = [];
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (A[i] === B[j]) { out.push([' ', A[i]]); i++; j++; }
+    else if (L[i + 1][j] >= L[i][j + 1]) out.push(['-', A[i++]]);
+    else out.push(['+', B[j++]]);
+  }
+  while (i < n) out.push(['-', A[i++]]);
+  while (j < m) out.push(['+', B[j++]]);
+  return out;
+}

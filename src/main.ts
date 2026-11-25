@@ -16,7 +16,8 @@ import { Triad } from './view/triad';
 import { ScriptPanel } from './view/scriptPanel';
 import { AssistPanel } from './view/assistPanel';
 import { ASSIST_SYSTEM } from './assist/system';
-import { readTools, type ToolDeps } from './assist/tools';
+import { readTools, proposeTools, lineDiff, type ToolDeps } from './assist/tools';
+import type { Proposal } from './assist/loop';
 import { parseAnim, toActions, type ParseError } from './script/anim';
 import { ScriptError } from './timeline/compile';
 import { applyEdit, cameraLine, type Edit, type Probe } from './script/edit';
@@ -251,12 +252,59 @@ const toolDeps: ToolDeps = {
     return { data: cv.toDataURL('image/jpeg', 0.85).split(',')[1], width: w, height: h, note };
   },
 };
-const tools = readTools(toolDeps);
+const tools = [...readTools(toolDeps), ...proposeTools({ checkScript: toolDeps.checkScript, currentScript: () => scriptPanel?.text ?? '' })];
+
+// ---------- proposal preview: play a proposed script without touching the editor ----------
+let previewing: Proposal | undefined;
+const previewBanner = document.createElement('div');
+previewBanner.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:7;background:#3a2a14;color:#f2b705;border:1px solid #f2b705;border-radius:6px;padding:5px 10px;font:600 12px system-ui;display:none;gap:8px;align-items:center';
+document.body.appendChild(previewBanner);
+function previewProposal(p: Proposal | undefined) {
+  previewing = p;
+  const src = p ? String(p.text) : scriptPanel?.text ?? '';
+  const doc = parseAnim(src);
+  if (!doc.errors.length) { script = toActions(doc.steps); buildTimeline(); }
+  if (p) { player.seek(0); player.playing = true; }
+  previewBanner.style.display = p ? 'flex' : 'none';
+  previewBanner.innerHTML = p ? `▶ Previewing proposal: ${p.summary.replace(/</g, '&lt;')} <button style="margin-left:8px">End preview</button>` : '';
+  previewBanner.querySelector('button')?.addEventListener('click', () => previewProposal(undefined));
+  assist.refreshCards();
+}
 
 const assist = new AssistPanel(right, {
   system: () => ASSIST_SYSTEM,
   context: async () => [{ type: 'text', text: await assistContext() }],
   tools: () => tools,
+  renderProposal: (p, el, decide) => {
+    if (p.kind !== 'script edit') return;
+    const diff = lineDiff(String(p.base ?? ''), String(p.text));
+    // show changes with 2 lines of context
+    const keep = diff.map((_, i) => diff.slice(Math.max(0, i - 2), i + 3).some(([k]) => k !== ' '));
+    let html = '', gap = false;
+    diff.forEach(([k, l], i) => {
+      if (!keep[i]) { if (!gap) html += '<div style="color:#5b6670">⋯</div>'; gap = true; return; }
+      gap = false;
+      const c = k === '+' ? 'background:#16301c;color:#9be9a8' : k === '-' ? 'background:#3a1a1a;color:#ffaaaa;text-decoration:line-through' : 'color:#7b8794';
+      html += `<div style="${c}">${k} ${l.replace(/&/g, '&amp;').replace(/</g, '&lt;') || '&nbsp;'}</div>`;
+    });
+    const errs = (p.errors as any[] | undefined) ?? [];
+    el.innerHTML = `<pre style="max-height:260px;overflow:auto;margin:6px 0;padding:4px 6px;background:#0a0c0f;border-radius:4px;font:11px ui-monospace,monospace;white-space:pre">${html}</pre>
+      ${errs.length ? `<div class="err">${errs.map((e) => `line ${e.line}: ${e.message}`).join('<br>').replace(/</g, '&lt;').replace(/&lt;br>/g, '<br>')}</div>` : ''}
+      ${p.state ? '' : `<div style="display:flex;gap:6px;margin-top:4px">
+        ${p.check.ok ? `<button data-a="preview">${previewing === p ? '■ End preview' : '▶ Preview'}</button>` : ''}
+        <button data-a="accept" ${p.check.ok ? '' : 'title="It does not compile – you can still accept and fix it in the editor"'}>Accept</button>
+        <button data-a="reject">Reject</button></div>`}`;
+    el.querySelector<HTMLElement>('[data-a=preview]')?.addEventListener('click', () => previewProposal(previewing === p ? undefined : p));
+    el.querySelector<HTMLElement>('[data-a=accept]')?.addEventListener('click', () => {
+      if (!scriptPanel) return;
+      if (scriptPanel.text !== p.base && !confirm('The script has changed since this was proposed. Replace it with the proposal anyway?')) return;
+      if (previewing) previewProposal(undefined);
+      scriptPanel.setText(String(p.text));
+      decide('accepted');
+      showTab('script');
+    });
+    el.querySelector<HTMLElement>('[data-a=reject]')?.addEventListener('click', () => { if (previewing === p) previewProposal(undefined); decide('rejected'); });
+  },
 });
 const showTab = (t: string) => {
   tabs.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
@@ -565,4 +613,15 @@ if (new URLSearchParams(location.search).get('debug') === 'assist') {
   out.contextChars = (await assistContext()).length;
   const pre = document.createElement('pre'); pre.id = 'debug'; pre.style.display = 'none';
   pre.textContent = JSON.stringify(out, null, 1); document.body.appendChild(pre);
+}
+
+// ?debug=proposal: inject a proposal made by the real tool (headless check of the card)
+if (new URLSearchParams(location.search).get('debug') === 'proposal' && scriptPanel) {
+  const t = tools.find((x) => x.name === 'propose_script_edit')!;
+  const draft = scriptPanel.text.replace(/^wait 2s$/m, 'wait 1s\nmove head by [0,3,0] 4s\nhighlight head spent 1s');
+  const g = t.run({ text: draft, summary: 'Lift the head 3 m and mark it' });
+  const msg: any = { role: 'assistant', content: 'Here is a change that lifts the head.', proposals: [] };
+  for (let r = await g.next(); !r.done; r = await g.next()) if (r.value.type === 'proposal') msg.proposals.push(r.value.proposal);
+  assist.history.push({ role: 'user', content: 'Lift the head 3 m' }, msg);
+  assist.refreshCards();
 }

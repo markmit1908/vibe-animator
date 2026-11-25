@@ -24,7 +24,8 @@ const CSS = `
 #assist .bar .st.off { color: #e5484d; }
 #assist button, #assist select { background: #222a33; color: inherit; border: 1px solid #2b3540; border-radius: 4px; padding: 2px 7px; cursor: pointer; font-size: 11px; }
 #assist .log { flex: 1; min-height: 0; overflow: auto; padding: 8px; display: flex; flex-direction: column; gap: 10px; }
-#assist .msg { border-radius: 6px; padding: 7px 9px; position: relative; white-space: pre-wrap; word-wrap: break-word; }
+#assist .msg { border-radius: 6px; padding: 7px 9px; position: relative; word-wrap: break-word; }
+#assist .msg .body { white-space: pre-wrap; }
 #assist .msg.user { background: #1d2a38; align-self: flex-end; max-width: 90%; }
 #assist .msg.assistant { background: #14191f; border: 1px solid #222a33; }
 #assist .msg pre { background: #0a0c0f; padding: 6px; border-radius: 4px; overflow: auto; white-space: pre; font: 11.5px ui-monospace, monospace; margin: 4px 0; }
@@ -112,6 +113,9 @@ export class AssistPanel {
   }
 
   private stop() { this.abort?.abort(); }
+
+  /** Re-render the conversation (e.g. a card's preview state changed). */
+  refreshCards() { if (!this.abort) this.render(); }
 
   /** Send the input (or `text`) as a new user message. */
   async send(text = this.input.value.trim()) {
@@ -208,8 +212,8 @@ export class AssistPanel {
       cards.appendChild(c);
       this.hooks.renderProposal?.(p, c.querySelector('.pbody')!, (s) => {
         p.state = s;
-        c.querySelector('.state')!.textContent = s === 'accepted' ? '✓ accepted' : '✕ rejected';
         this.hooks.saveHistory?.(this.history);
+        this.render();
       });
     }
     const act = (a: string, f: () => void) => el.querySelector<HTMLElement>(`[data-a=${a}]`)?.addEventListener('click', f);
