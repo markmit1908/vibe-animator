@@ -1,25 +1,41 @@
 // The Studio view: the animation studio (3D view, assembly tree, script, assist) from the repo's ../src/studio,
 // mounted into this full-bleed view. Edits go through ctx.edit (autosaved, versioned by SolverKit).
-import { useEffect, useRef } from "react";
+// Changes from elsewhere (a version restored, Replace from file, the file edited on disk) remount the studio.
+import { useEffect, useRef, useState } from "react";
 import { mountStudio } from "../../src/studio/studio";
+import { joinLines } from "../../src/model/file";
 import type { Context } from "./module";
+import type { Model } from "./run";
 
 const fileUrl = (path: string) => `/api/files/${path.split("/").map(encodeURIComponent).join("/")}`;
+/** What the studio shows (chat and view state left out: they don't need a remount). */
+const content = (m: Partial<Model>) => JSON.stringify([joinLines(m.script?.text), m.snapshots, m.groups, m.scene]);
 
 export function StudioView({ c }: { c: Context }) {
   const host = useRef<HTMLDivElement>(null);
   const ctx = useRef(c);
   ctx.current = c;
+  const mine = useRef(content(c.model));   // the content as the studio last saw or wrote it
+  const [generation, setGeneration] = useState(0);
+
+  // an outside change: remount with the new model
+  useEffect(() => {
+    if (content(c.model) !== mine.current) { mine.current = content(c.model); setGeneration((g) => g + 1); }
+  }, [c.model]);
+
   useEffect(() => {
     let studio: { dispose(): void } | undefined, gone = false;
-    mountStudio(host.current!, c.current(), {
-      edit: (patch) => ctx.current.edit(patch as Partial<Parameters<Context["edit"]>[0] & object>),
+    const model = ctx.current.current();
+    mine.current = content(model);
+    mountStudio(host.current!, model, {
+      edit: (patch) => {
+        mine.current = content({ ...ctx.current.current(), ...(patch as Partial<Model>) });
+        ctx.current.edit(patch as Partial<Model>);
+      },
       fileUrl,
       assist: { base: "/api/assist/proxy", status: "/api/assist" },
     }).then((s) => { if (gone) s.dispose(); else studio = s; }, (e) => console.error("studio:", e));
     return () => { gone = true; studio?.dispose(); };
-    // one studio per opened animation
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [c.id]);
+  }, [c.id, generation]);
   return <div ref={host} style={{ position: "absolute", inset: 0 }} />;
 }
