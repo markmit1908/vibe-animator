@@ -57,8 +57,24 @@ functions.
 
 ## Using CAD
 
-1. Export or convert STEP to glTF binary (`.glb`). FreeCAD, CAD Exchanger and Blender can all do this. Use metres with Y up.
-2. Put it in `public/cad/` and add an entry like `overrides: { vessel: cad/vessel.glb }` in `core.yaml`.
+Raw CAD goes in `data/` (git-ignored). Convert with `tools/step2gltf.py`
+(OpenCASCADE via `uv`; the first run downloads it):
+
+```bash
+uv run tools/step2gltf.py tree    data/model.step --depth 5      # browse the assembly
+uv run tools/step2gltf.py audit   data/model.step > data/audit.md  # naming/instancing problems
+uv run tools/step2gltf.py convert data/model.step -o public/cad/model.glb \
+    --include 'V-0100*' --exclude '*Screw*' '*Magnet*' --min-size 50 --deflection 2
+```
+
+The converter keeps the assembly tree, part names and colours. It converts mm to m and Z-up to Y-up (use `--up y` if the model is already Y-up).
+Reading a large STEP is slow: the 757 MB plant model takes about 3 minutes and 6 GB of RAM.
+
+`audit` lists names shared by geometrically different parts, identical parts stored
+as separate copies instead of instances, and unnamed, empty or surface-only parts.
+
+1. Convert as above.
+2. Put the `.glb` in `public/cad/` and add an entry like `overrides: { vessel: cad/vessel.glb }` in `core.yaml`.
 3. The generated geometry for that group is replaced by the glTF. The pivot is the group's origin: the vessel's origin is the core base, and the head's origin is the flange face.
 
 Group objects can be overridden today. Per-block CAD overrides aren't supported yet.
@@ -79,4 +95,5 @@ in `palette:` in `core.yaml`.
 - [x] Thick outlines on blocks and shells (inverted hull; `outline_width` in core.yaml)
 - [ ] Outlines for imported CAD
 - [ ] Video export
-- [ ] STEP→glTF conversion script
+- [x] STEP→glTF conversion script (`tools/step2gltf.py`)
+- [ ] glTF dedup/instancing pass (OCCT writes one mesh per instance)

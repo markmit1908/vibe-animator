@@ -23,5 +23,10 @@ used to illustrate the concept. Delivered live in a browser.
 - Look and feel: cel-shaded (MeshToonMaterial with a 3-band ramp), black background, black outlines, off-white plus a copper accent. Use the `toon()` helper in build.ts, not Lambert/Standard materials. Colours come from `palette` in core.yaml.
 - All dimensions are currently placeholders until the user supplies real numbers.
 
+## CAD
+- `data/` holds raw CAD and is git-ignored. Never commit it; the plant STEP is 757 MB.
+- `tools/step2gltf.py` (uv inline deps, cadquery-ocp, Python <3.13) has three commands: `tree`, `audit`, `convert`. Parsing the plant model takes about 3 minutes and 6 GB, so run it in the background.
+- OCCT's glTF writer does not share meshes between instances. A dedup/instance pass (e.g. gltf-transform) is still needed.
+
 ## Testing
 No test suite yet. A quick headless check is to bundle or run (e.g. with `tsx`) a script that builds the scene, compiles the timeline, and seeks a `Player` to several times, then prints object positions.
