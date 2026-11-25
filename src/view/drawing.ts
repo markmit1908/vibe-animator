@@ -8,6 +8,8 @@ import * as THREE from 'three';
  */
 export class DrawingMode {
   enabled = false;
+  /** Shaded + outline: draw only the lines, over the shaded (cel) frame already on screen. */
+  overlay = false;
   lineColor = new THREE.Color(0x111111);
   paperColor = new THREE.Color(0xffffff);
   /** Leave the background transparent (PNG export). */
@@ -38,13 +40,13 @@ export class DrawingMode {
         tNormal: { value: this.rt.texture }, tDepth: { value: this.rt.depthTexture },
         texel: { value: new THREE.Vector2() }, near: { value: 0.1 }, far: { value: 100 },
         thickness: { value: 1 }, nThr: { value: 0.25 }, dThr: { value: 0.004 },
-        lineColor: { value: this.lineColor }, paper: { value: this.paperColor }, clearBg: { value: 0 },
+        lineColor: { value: this.lineColor }, paper: { value: this.paperColor }, clearBg: { value: 0 }, overlay: { value: 0 },
       },
       vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
       fragmentShader: `
         uniform sampler2D tNormal; uniform sampler2D tDepth; uniform vec2 texel;
         uniform float near; uniform float far; uniform float thickness; uniform float nThr; uniform float dThr;
-        uniform vec3 lineColor; uniform vec3 paper; uniform float clearBg; varying vec2 vUv;
+        uniform vec3 lineColor; uniform vec3 paper; uniform float clearBg; uniform float overlay; varying vec2 vUv;
         float lin(float d){ return (near * far) / (far - d * (far - near)); }
         void main(){
           float d0 = texture2D(tDepth, vUv).r;
@@ -66,7 +68,7 @@ export class DrawingMode {
           }
           // transparent background (PNG export): empty space clear, parts keep their paper fill (premultiplied)
           float a = (clearBg > 0.5 && d0 >= 0.9999) ? edge : 1.0;
-          gl_FragColor = vec4(mix(paper, lineColor, edge) * a, a);
+          gl_FragColor = overlay > 0.5 ? vec4(lineColor, edge) : vec4(mix(paper, lineColor, edge) * a, a);
         }`,
       depthTest: false, depthWrite: false,
     });
@@ -106,6 +108,11 @@ export class DrawingMode {
     u.near.value = camera.near; u.far.value = camera.far;
     u.thickness.value = this.thickness * r.getPixelRatio();
     u.nThr.value = this.normalThreshold; u.dThr.value = this.depthThreshold;
+    u.overlay.value = this.overlay ? 1 : 0;
+    this.mat.transparent = this.overlay;               // overlay: blend the lines onto the shaded frame
+    const ac = r.autoClear;
+    if (this.overlay) r.autoClear = false;
     r.render(this.quadScene, this.quadCam);
+    r.autoClear = ac;
   }
 }

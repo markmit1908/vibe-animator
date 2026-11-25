@@ -422,6 +422,10 @@ test("PNG export has a transparent background (shaded and hidden line)", async (
   const hidden = await alphaAt();
   expect(hidden.corner).toBe(0);
   expect(hidden.opaque).toBeGreaterThan(0);
+  await page.locator("#viewbar button", { hasText: "Shaded + outline" }).click();   // the third view
+  const outline = await alphaAt();
+  expect(outline.corner).toBe(0);
+  expect(outline.opaque).toBeGreaterThan(0);
 });
 
 test("locked parts: the error has an Unlock button for every locked part the script moves; AI Accept unlocks them too", async ({ page }) => {
@@ -475,6 +479,8 @@ test("floating tools: blank / unblank the selection, and group it", async ({ pag
   await page.locator("#toolsbar [data-t=others]").click();
   await expect.poll(async () => { const h = (await model(page, a.id)).snapshots.items.default.hidden; return [h.vessel, h['R1-1/L1'], h.machine, h.head, h.bolts]; })
     .toEqual([true, true, true, false, false]);
+  await page.locator("#toolsbar [data-t=showall]").click();           // show all
+  await expect.poll(async () => (await model(page, a.id)).snapshots.items.default.hidden).toEqual({});
   page.once("dialog", (d) => d.accept("lid set"));
   await group.click();
   await expect.poll(async () => (await model(page, a.id)).groups).toEqual({ "lid-set": ["head", "bolts"] });

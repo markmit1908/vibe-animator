@@ -696,7 +696,7 @@ async function loadSnapshot(name: string) {
   renderSnapBar();
 }
 async function saveSnapshot(name: string) {
-  edit({ view: { camera: camView(), time: player.time, mode: drawing.enabled ? 'hidden' : 'shaded', paletteKey } });
+  edit({ view: { camera: camView(), time: player.time, mode: drawing.enabled ? (drawing.overlay ? 'outline' : 'hidden') : 'shaded', paletteKey } });
   store.snapshots[name] = captureSnapshot(camView());
   store.active = name;
   await writeStore();
@@ -879,7 +879,7 @@ function exportPng() {
   scene3.background = bg; grids.forEach((o) => (o.visible = true)); drawing.transparentBg = false;
   renderer.setPixelRatio(pr); renderer.setSize(W(), H(), false);
   const a = document.createElement('a');
-  a.href = url; a.download = `${scriptName.replace(/\.\w+$/, '')}-${drawing.enabled ? 'hidden-line' : 'shaded'}-${lastView}-t${player.time.toFixed(1)}s.png`;
+  a.href = url; a.download = `${scriptName.replace(/\.\w+$/, '')}-${drawing.enabled ? (drawing.overlay ? 'shaded-outline' : 'hidden-line') : 'shaded'}-${lastView}-t${player.time.toFixed(1)}s.png`;
   a.click();
 }
 {
@@ -902,7 +902,7 @@ function exportPng() {
     #viewbar .pop span { color: #9aa6b2; text-align: right; font: 11px ui-monospace, monospace; }`;
   document.head.appendChild(css);
   const bar = document.createElement('div'); bar.id = 'viewbar';
-  bar.innerHTML = `<div class="grp"><button data-m="shaded" class="on" title="Shaded (cel) view">Shaded</button><button data-m="hidden" title="Hidden line: visible edges only, black on white">Hidden line</button></div>
+  bar.innerHTML = `<div class="grp"><button data-m="shaded" class="on" title="Shaded (cel) view">Shaded</button><button data-m="outline" title="Shaded + outline: the cel-shaded view with the hidden-line edges drawn over it">Shaded + outline</button><button data-m="hidden" title="Hidden line: visible edges only, black on white">Hidden line</button></div>
     <div class="sep"></div>
     <div class="grp"><button data-v="iso">Iso</button><button data-v="front">Front</button><button data-v="top">Top</button><button data-v="side">Side</button><button data-v="fit" title="Fit everything visible in the current direction">Fit</button></div>
     <div class="sep"></div>
@@ -918,8 +918,9 @@ function exportPng() {
     </div>`;
   host().appendChild(bar);
   const setMode = (m: string) => {
-    drawing.enabled = m === 'hidden';
-    host().classList.toggle('paper', drawing.enabled);
+    drawing.enabled = m === 'hidden' || m === 'outline';
+    drawing.overlay = m === 'outline';
+    host().classList.toggle('paper', m === 'hidden');
     if (drawing.enabled) drawing.collectDecor(scene3, [gizmo.getHelper()]);
     bar.querySelectorAll<HTMLElement>('[data-m]').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
   };
@@ -967,6 +968,7 @@ function exportPng() {
 /** One frame of the main view in the current style (+ gizmo on top in drawing mode). */
 function drawFrame() {
   if (!drawing.enabled) { renderer.render(scene3, camera); return; }
+  if (drawing.overlay) renderer.render(scene3, camera);   // shaded + outline: the cel-shaded frame, lines on top
   drawing.render(scene3, camera);
   const h = gizmo.getHelper();
   if (gizmo.object) { renderer.autoClear = false; renderer.clearDepth(); renderer.render(h, camera); renderer.autoClear = true; }
@@ -1041,6 +1043,7 @@ on('keydown', (e: KeyboardEvent) => {
 const toolbar = document.createElement('div'); toolbar.id = 'toolsbar';
 toolbar.innerHTML = `<button data-t="blank" title="Blank / unblank the selected parts (H)"><span class="i">◐</span><span class="l">Blank</span></button>
   <button data-t="others" title="Reverse blank: hide everything that is not selected (⇧H)"><span class="i">◑</span><span class="l">Blank others</span></button>
+  <button data-t="showall" title="Show all: unblank every part (removed parts stay removed)"><span class="i">●</span><span class="l">Show all</span></button>
   <button data-t="views" title="Camera views: save the current view (position and target), go to one, or put it in the script (camera <name> 2s)"><span class="i">📷</span><span class="l">Views</span></button>
   <div class="vpop" hidden></div>
   <button data-t="group" title="Create a group from the selected parts, or add them to one (G)"><span class="i">⊞</span><span class="l">Group</span></button>`;
@@ -1083,6 +1086,13 @@ async function blankOthers() {
   for (const o of built.root.children) await reconcile(o);
   persistWorking(); tree.redraw(); buildTimeline(); updateTools();
 }
+/** Show all: clear every hide flag. */
+async function showAll() {
+  if (!Object.values(state.hidden).some(Boolean)) return;
+  state.hidden = {};
+  for (const o of built.root.children) await reconcile(o);
+  persistWorking(); tree.redraw(); buildTimeline(); updateTools();
+}
 function updateTools() {
   const { count, allHidden } = tree.selectionInfo();
   const blank = toolbar.querySelector<HTMLButtonElement>('[data-t=blank]')!, group = toolbar.querySelector<HTMLButtonElement>('[data-t=group]')!;
@@ -1092,6 +1102,7 @@ function updateTools() {
 }
 toolbar.querySelector<HTMLElement>('[data-t=blank]')!.onclick = () => { tree.toggleHiddenSelected(); updateTools(); };
 toolbar.querySelector<HTMLElement>('[data-t=others]')!.onclick = () => void blankOthers();
+toolbar.querySelector<HTMLElement>('[data-t=showall]')!.onclick = () => void showAll();
 // ---- camera views ----
 const vpop = toolbar.querySelector<HTMLElement>('.vpop')!;
 const escH = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');

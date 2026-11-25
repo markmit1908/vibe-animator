@@ -30,7 +30,7 @@ use the **Import old project (.zip)…** link on Home; the model goes into `CAD/
 | **Script / Assist** (right, tabs) | The `.anim` editor, and the AI assistant. |
 
 **View toolbar:**
-- **Shaded / Hidden line:** hidden line draws visible edges only, black on white. ⚙ sets line weight, crease angle, sensitivity and colours.
+- **Shaded / Shaded + outline / Hidden line:** hidden line draws visible edges only, black on white; shaded + outline draws those edges over the cel-shaded view. ⚙ sets line weight, crease angle, sensitivity and colours.
 - **Iso / Front / Top / Side / Fit:** frame everything visible.
 - **⤓ PNG:** saves the view at 2× resolution with a transparent background (no grid). In hidden-line mode the parts keep their white fill.
 
@@ -53,7 +53,7 @@ Right-click a row for its menu. Select a row and press **F2** to rename or **Del
 **Snapshots** (bar at the top) are named start states: lock/hide flags, part placements and a camera view. Changes
 save into the active snapshot automatically. **Save** also records the camera; **Save as…** makes a new snapshot.
 
-**Tools** (floating bar, left of the 3D view): **Blank / Unblank** (**H**) hides the selected parts or shows them again; **Blank others** (**⇧H**) hides everything that isn't selected; **Views** saves the camera (position and target) under a name, goes back to it, or inserts `camera <name> 2s` into the script; **Group** (**G**) makes a group from the selection.
+**Tools** (floating bar, left of the 3D view): **Blank / Unblank** (**H**) hides the selected parts or shows them again; **Blank others** (**⇧H**) hides everything that isn't selected; **Show all** unblanks every part; **Views** saves the camera (position and target) under a name, goes back to it, or inserts `camera <name> 2s` into the script; **Group** (**G**) makes a group from the selection.
 
 **Undo / redo:** **⌘/Ctrl+Z** and **⇧⌘Z** (or Ctrl+Y) undo colours, moves (gizmo), lock/hide, groups, renames, remove/restore and script changes made by the gizmo or an accepted AI proposal. While you're typing in the script, ⌘Z is the editor's own undo.
 

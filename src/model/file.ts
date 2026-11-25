@@ -51,7 +51,7 @@ export interface AnimModel {
   labels?: Record<string, string>;
   /** Named camera views (script: `camera <name> 2s`). */
   views?: Record<string, { pos: number[]; look: number[] }>;
-  view?: { camera?: { pos: number[]; look: number[] }; time?: number; mode?: 'shaded' | 'hidden'; paletteKey?: string };
+  view?: { camera?: { pos: number[]; look: number[] }; time?: number; mode?: 'shaded' | 'hidden' | 'outline'; paletteKey?: string };
   chat?: unknown[];
   /** Unknown keys are preserved on save (SolverKit rule). */
   [k: string]: unknown;
