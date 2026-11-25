@@ -67,6 +67,7 @@ uv run tools/step2gltf.py convert data/model.step -o public/cad/model.glb \
     --include 'V-0100*' --exclude '*Screw*' '*Magnet*' --min-size 50 --deflection 2
 ```
 
+After writing, `convert` runs gltf-transform `dedup` + `instance`, so identical parts share one mesh and draw as GPU instances (`--no-optimize` skips this).
 The converter keeps the assembly tree, part names and colours. It converts mm to m and Z-up to Y-up (use `--up y` if the model is already Y-up).
 Reading a large STEP is slow: the 757 MB plant model takes about 3 minutes and 6 GB of RAM.
 
@@ -96,4 +97,5 @@ in `palette:` in `core.yaml`.
 - [ ] Outlines for imported CAD
 - [ ] Video export
 - [x] STEP→glTF conversion script (`tools/step2gltf.py`)
-- [ ] glTF dedup/instancing pass (OCCT writes one mesh per instance)
+- [x] glTF dedup + GPU instancing pass (gltf-transform, runs automatically in `convert`)
+- [ ] Re-instance copies that the CAD export baked in place (Shapr3D)

@@ -184,7 +184,19 @@ def cmd_convert(doc, st, a):
     conv.SetOutputCoordinateSystem(RWMesh_CoordinateSystem.RWMesh_CoordinateSystem_glTF)
     if not w.Perform(doc, TColStd_IndexedDataMapOfStringString(), Message_ProgressRange()):
         sys.exit("glTF write failed")
+    if a.optimize:
+        optimize(a.output)
     log("done")
+
+
+def optimize(path):
+    """Share identical meshes (dedup) and turn repeated nodes into GPU instances."""
+    import os, subprocess
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for step in ("dedup", "instance"):
+        log(f"gltf-transform {step}")
+        subprocess.run(["npx", "gltf-transform", step, path, path], cwd=root, check=True,
+                       stdout=subprocess.DEVNULL)
 
 
 def cmd_audit(st, tol):
@@ -297,6 +309,8 @@ def main():
     c.add_argument("--deflection", type=float, default=1.0, help="mesh chord tolerance, mm")
     c.add_argument("--angle", type=float, default=20, help="mesh angular tolerance, degrees")
     c.add_argument("--up", choices=["z", "y"], default="z", help="up axis of the STEP model")
+    c.add_argument("--no-optimize", dest="optimize", action="store_false",
+                   help="skip the gltf-transform dedup + GPU-instancing pass")
     a = ap.parse_args()
     doc, st = load(a.step)
     if a.cmd == "tree":
