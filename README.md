@@ -72,7 +72,7 @@ One step per line; steps run in sequence. `#` starts a comment. Durations: `2s`,
 | `pivot` | `pivot @lid [0,12,0]` | A pivot that travels with the part for later rotations. |
 | `hide` / `show` | `hide @shielding 1s` | |
 | `blank` / `unblank` | `blank @lid 1s` · `unblank all` · `blank others @core 1s` | Hide / show; work on locked parts (they don't move them). `blank others` hides everything not in the target (reverse blank); `unblank all` shows everything the script blanked. |
-| `fade` | `fade @bolts to 0.2 2s` | Opacity 0–1. Faded to 0 = hidden. |
+| `fade` | `fade @bolts to 0.2 2s` · `fade @bolts 1s` | Opacity 0–1; without one it fades out. Faded to 0 = hidden. |
 | `color` | `color @lid #2e86de 1s` · `color @lid reset 1s` | Change colour over time / back to the base colour. |
 | `highlight` | `highlight @spent #c0392b 1s` | Like `color`; also takes palette names (`spent`, `fresh`, `fuel`). |
 | `camera` | `camera [12,16,14] look [0,5,0] 3s` · `camera overview 2s` | Moves the camera over the time given (instant without one). A name is a view saved with **Views**. A leading instant `camera` sets the opening view. |

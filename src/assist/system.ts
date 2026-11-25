@@ -9,7 +9,7 @@ One step per line; steps run in sequence. \`parallel { … }\` runs the steps in
 - rotate TARGET by [rx,ry,rz] 4s [about [x,y,z]]      – degrees about world X/Y/Z; pivot = bounding-box centre unless \`about\`
 - rotate TARGET to [rx,ry,rz] 4s                      – absolute orientation of the first member
 - pivot TARGET [x,y,z]                                 – pivot that travels with TARGET for later rotations
-- hide TARGET [1s] · show TARGET [1s] · fade TARGET to 0.3 2s
+- hide TARGET [1s] · show TARGET [1s] · fade TARGET to 0.3 2s (no opacity: fade out)
 - blank TARGET [1s] · unblank TARGET [1s] · unblank all · blank others TARGET [1s]   – blank = hide (works on locked parts); "blank others" hides everything not in TARGET; "unblank all" shows everything the script blanked
 - highlight TARGET #c0392b 1s                          – or a palette name (spent, fresh, fuel)
 - color TARGET #2e86de 1s · color TARGET reset 1s      – change a colour over time / back to the part's base colour

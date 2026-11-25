@@ -172,8 +172,10 @@ export function parseAnim(text: string): AnimDoc {
       case 'unblank': target(); tail(); break;          // unblank T · unblank all
       case 'fade': {
         target();
-        if (peek()?.t === 'word' && peek()!.v === 'to') k++;
-        step.num = arg(take('num', 'opacity 0..1'));
+        const to = peek()?.t === 'word' && peek()!.v === 'to';
+        if (to) k++;
+        // "fade @x 1s" (no opacity) fades out
+        step.num = to || peek()?.t === 'num' ? arg(take('num', 'opacity 0..1 after "to"')) : { value: 0, from: step.to, to: step.to };
         tail(); break;
       }
       case 'highlight': case 'color': {
@@ -260,7 +262,7 @@ export function toActions(steps: AnimStep[]): { camera?: any; timeline: any[] } 
       case 'blank': return { ...base, fade: tgt, to: 0, others: s.word?.value === 'others', dur: s.dur?.value ?? 0 };
       case 'unblank': return tgt === 'all' ? { ...base, fade: 'all', all: true, to: 1, dur: s.dur?.value ?? 0 } : { ...base, fade: tgt, to: 1, dur: s.dur?.value ?? 0 };
       case 'show': return { ...base, fade: tgt, to: 1, dur: s.dur?.value ?? 0 };
-      case 'fade': return { ...base, fade: tgt, to: s.num!.value, dur: s.dur?.value ?? 1 };
+      case 'fade': return { ...base, fade: tgt, to: s.num?.value ?? 0, dur: s.dur?.value ?? 1 };
       case 'highlight': return { ...base, highlight: tgt, color: s.word?.value ?? 'spent' };
       case 'color': return { ...base, highlight: tgt, color: s.word?.value ?? 'reset', dur: s.dur?.value ?? 0 };
       case 'label': return { ...base, label: s.text![0]?.value, sub: s.text![1]?.value };
