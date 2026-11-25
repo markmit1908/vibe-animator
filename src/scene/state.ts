@@ -20,11 +20,12 @@ export interface Snapshot extends PartState {
   camera?: { pos: number[]; look: number[] };
   placements?: Record<string, Placement>;
 }
-export interface SnapshotFile { active: string; snapshots: Record<string, Snapshot> }
+/** groups: user-defined assemblies (name -> member ids), shared by all snapshots, scriptable as "@name". */
+export interface SnapshotFile { active: string; snapshots: Record<string, Snapshot>; groups: Record<string, string[]> }
 
 /** The working state (what the viewer currently shows). */
 export const state: PartState & { placements: Record<string, Placement> } = { locked: {}, hidden: {}, placements: {} };
-export const store: SnapshotFile = { active: 'default', snapshots: {} };
+export const store: SnapshotFile = { active: 'default', snapshots: {}, groups: {} };
 
 let dirty = false;
 const listeners = new Set<() => void>();
@@ -37,6 +38,7 @@ export async function loadStore() {
     const r = await fetch('/__snapshots');
     if (r.ok) Object.assign(store, await r.json());
   } catch { /* static build: no endpoint */ }
+  store.groups ??= {};
   if (!store.snapshots[store.active]) store.snapshots[store.active] = { locked: {}, hidden: {} };
 }
 

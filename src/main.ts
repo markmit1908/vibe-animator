@@ -109,7 +109,7 @@ const frameAll = () => {
 const defaultCam = script.camera ?? frameAll();
 function buildTimeline(): boolean {
   try {
-    const tl = compile(script, built, defaultCam, isLocked);
+    const tl = compile(script, built, defaultCam, isLocked, store.groups);
     const t = player?.time ?? 0, playing = player?.playing ?? false;
     player = new Player(built, tl);
     player.time = t; player.playing = playing;
@@ -163,6 +163,7 @@ const tree = new TreePanel(built, scene3, {
     if (what === 'locked') { buildTimeline(); gizmoFor(tree.selectedObject); }
   },
   onSelect: (o) => gizmoFor(o),
+  onGroups: () => buildTimeline(),
   stats: () => {
     const c = cad.stats(), r = renderer.info;
     return `GPU geometries ${r.memory.geometries} · drawn ${(r.render.triangles / 1e6).toFixed(2)}M tris · ${r.render.calls} calls` +
@@ -179,7 +180,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   raycaster.setFromCamera(ndc, camera);
   const hits = raycaster.intersectObject(built.root, true).filter((h) =>
     (h.object as THREE.Mesh).isMesh && isShown(h.object) && !clipped(h.point));
-  tree.pick(hits[0]?.object);
+  tree.pick(hits[0]?.object, e.metaKey || e.ctrlKey || e.shiftKey);
 });
 const isShown = (o: THREE.Object3D | null): boolean => !o || (o.visible && isShown(o.parent));
 const clipped = (p: THREE.Vector3) => {

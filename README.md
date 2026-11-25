@@ -30,6 +30,12 @@ Children are built when you expand a node and only on-screen rows are drawn, so 
 and part placements. Nothing is written until you press **Save** (or ⌘/Ctrl+S); "● unsaved" marks pending changes.
 **Save as…** creates a new snapshot, the dropdown switches between them, and ✕ deletes one. They are stored in `scenes/snapshots.yaml`.
 
+**Groups** are your own assemblies, separate from the CAD structure. ⌘/Ctrl/Shift-click to select several parts
+(in the tree or in 3D), then press **Group…** and enter a new name, or an existing one to add to it. Groups are listed under
+**Groups** in the tree; show/hide and lock apply to all members, and a group can be renamed or deleted, and members removed.
+Scripts address a group as `"@name"`, e.g. `{move: "@lifting-rig", by: [0, 3, 0], dur: 4}`.
+Groups are shared by all snapshots and saved with Save.
+
 **Moving parts:** select an **unlocked** part to get a gizmo. **W** = move, **E** = rotate, **R** = reset to its original placement, **Esc** = deselect.
 Parts the script animates can only be placed at t = 0 (that sets their start position).
 

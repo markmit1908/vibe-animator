@@ -20,6 +20,8 @@
 #          plus optional x/y/z overrides and dx/dy/dz offsets.
 # Expressions in {braces} can use loop vars, macro args, bh (block height),
 # floorY (operating floor height), clear (machine travel height) and Math (floor, min...).
+# Groups: "@name" targets every member of a user group (made in the assembly tree);
+#         use `by:` to move a group rigidly. Moves are world-space.
 # Ids: columns R<ring>-<i> (R0-0 = centre); blocks R1-1/L0..L11 (L0 bottom);
 #      fresh/0..7; vessel, head, bolts, barrel, machine.
 

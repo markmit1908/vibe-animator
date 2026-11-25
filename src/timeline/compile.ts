@@ -38,7 +38,9 @@ function substitute(node: any, vars: Record<string, any>): any {
 const KINDS = ['pick', 'place', 'move', 'highlight', 'fade', 'label', 'cutaway', 'camera', 'wait', 'parallel', 'repeat', 'call'];
 
 export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]; look: number[] },
-  isLocked: (o: THREE.Object3D) => boolean = () => false): Timeline {
+  isLocked: (o: THREE.Object3D) => boolean = () => false,
+  groups: Record<string, string[]> = {}): Timeline {
+  scene.root.updateMatrixWorld(true); // positions below are world-space
   const tweens: Tween[] = [];
   const steps: StepEvent[] = [];
   const macros: Record<string, any[]> = script.macros ?? {};
@@ -53,7 +55,8 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
       const obj = scene.registry.get(id);
       if (!obj) throw new Error(`Unknown object id "${id}"`);
       if (isLocked(obj)) throw new Error(`"${id}" is locked – unlock it in the assembly tree to animate it`);
-      s = { pos: obj.position.clone(), color: firstColor(obj), opacity: 1 };
+      // virtual state holds WORLD positions; tweens convert to the parent's frame
+      s = { pos: obj.getWorldPosition(new THREE.Vector3()), color: firstColor(obj), opacity: 1 };
       vs.set(id, s);
     }
     return s;
@@ -71,7 +74,11 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
     const list: string[] = Array.isArray(spec) ? spec : [spec];
     const out: string[] = [];
     for (const s of list) {
-      if (String(s).includes('*')) {
+      if (String(s).startsWith('@')) {           // user group
+        const g = groups[String(s).slice(1)];
+        if (!g) throw new Error(`Unknown group "${s}" (create it in the assembly tree)`);
+        for (const id of g) if (scene.registry.has(id)) out.push(id);
+      } else if (String(s).includes('*')) {
         const re = new RegExp('^' + String(s).replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');
         for (const id of scene.registry.keys()) if (re.test(id)) out.push(id);
       } else {
@@ -99,8 +106,11 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
     for (const id of ids) {
       const obj = scene.registry.get(id)!;
       const s = state(id);
-      const from = s.pos.clone(), to = s.pos.clone().add(delta);
-      s.pos.copy(to);
+      const wFrom = s.pos.clone(), wTo = s.pos.clone().add(delta);
+      s.pos.copy(wTo);
+      // world -> parent-local (parents of moving parts are static: locked CAD or the scene root)
+      const from = obj.parent ? obj.parent.worldToLocal(wFrom.clone()) : wFrom;
+      const to = obj.parent ? obj.parent.worldToLocal(wTo.clone()) : wTo;
       tweens.push({ start: t, dur, apply: (p) => obj.position.lerpVectors(from, to, ease(p)) });
     }
   };

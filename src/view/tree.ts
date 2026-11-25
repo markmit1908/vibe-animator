@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { BuiltScene } from '../scene/build';
-import { state, markDirty, isLocked, isHidden, isCad } from '../scene/state';
+import { state, store, markDirty, isLocked, isHidden, isCad } from '../scene/state';
 
 /**
  * Left-hand assembly tree.
@@ -17,6 +17,8 @@ interface Node {
   virtualKids?: Node[];        // children of virtual nodes
   kids?: Node[];               // built lazily for real objects
   badge?: string;
+  group?: string;              // a user group node ("@name")
+  memberOf?: string;           // direct member row of this group
   parent?: Node;
   depth: number;
 }
@@ -61,6 +63,8 @@ export interface TreeHooks {
   onChange?: (objs: THREE.Object3D[], what: 'hidden' | 'locked') => void;
   stats?: () => string;
   onSelect?: (obj: THREE.Object3D | undefined) => void;
+  /** User groups were created/changed (recompile the script). */
+  onGroups?: () => void;
 }
 
 export class TreePanel {
@@ -75,7 +79,9 @@ export class TreePanel {
   private open = new Set<Node>();
   private roots: Node[] = [];
   private flat: Node[] = [];
-  private selected?: Node;
+  /** Selection (⌘/Ctrl/Shift-click adds); the last one is the primary. */
+  private sel: Node[] = [];
+  private get selected(): Node | undefined { return this.sel[this.sel.length - 1]; }
   private box = new THREE.Box3Helper(new THREE.Box3(), 0xf2b705);
   /** Meshes currently showing the selection colour (material swapped, original in userData.origMat). */
   private lit: THREE.Mesh[] = [];
@@ -135,6 +141,17 @@ export class TreePanel {
     const cadRoots = this.scene.root.children.filter((o) => o.userData.cad);
     this.roots = this.scene.blockIds.length || reg.has('vessel') ? [gen] : [];
     this.open.add(gen);
+    const groups = Object.entries(store.groups ?? {});
+    if (groups.length) {
+      const g = mk('Groups', 0);
+      g.virtualKids = groups.sort(([a], [b]) => a.localeCompare(b)).map(([name, ids]) => {
+        const gn = mk(name, 1, { parent: g, group: name, id: `@${name}`, badge: `${ids.length}` });
+        gn.virtualKids = ids.filter((id) => reg.has(id)).map((id) => ({ ...this.objNode(reg.get(id)!, 2, gn), label: id, memberOf: name }));
+        return gn;
+      });
+      this.roots.unshift(g);
+      this.open.add(g);
+    }
     if (cadRoots.length) {
       const cad = mk('CAD', 0);
       cad.virtualKids = cadRoots.map((o) => this.objNode(o, 1, cad));
@@ -203,7 +220,7 @@ export class TreePanel {
     const explicitL = n.id !== undefined && n.id in state.locked;
     const supp = n.obj?.userData.suppressedRoot;
     const r = document.createElement('div');
-    const sameAsSel = this.selected && (n === this.selected || (n.id && n.id === this.selected.id));
+    const sameAsSel = this.sel.some((x) => x === n || (n.id && x.id === n.id && !x.group === !n.group));
     r.className = 'row' + (sameAsSel ? ' sel' : '') + (hidden ? ' hidden' : '') + (supp ? ' supp' : '');
     r.style.top = `${i * ROW}px`;
     r.style.paddingLeft = `${n.depth * 12}px`;
@@ -216,7 +233,7 @@ export class TreePanel {
     caret.onclick = (e) => { e.stopPropagation(); this.toggleOpen(n); };
     eye.onclick = (e) => { e.stopPropagation(); this.setFlag(n, 'hidden', !hidden); };
     lock.onclick = (e) => { e.stopPropagation(); this.setFlag(n, 'locked', !locked); };
-    r.onclick = () => this.select(n, false);
+    r.onclick = (e) => this.select(n, false, e.metaKey || e.ctrlKey || e.shiftKey);
     r.ondblclick = () => this.toggleOpen(n);
     return r;
   }
@@ -239,10 +256,13 @@ export class TreePanel {
   }
 
   // ---------- selection ----------
-  select(n: Node | undefined, reveal: boolean) {
-    this.selected = n;
-    this.highlight(n);
-    this.hooks.onSelect?.(n?.obj);
+  select(n: Node | undefined, reveal: boolean, additive = false) {
+    if (additive && n) {
+      const i = this.sel.findIndex((x) => x === n || (n.id && x.id === n.id));
+      if (i >= 0) this.sel.splice(i, 1); else this.sel.push(n);
+    } else this.sel = n ? [n] : [];
+    this.highlight();
+    this.hooks.onSelect?.(this.sel.length === 1 ? n?.obj : undefined);
     if (n && reveal) {
       this.search.value = '';
       for (let p = n.parent; p; p = p.parent) this.open.add(p);
@@ -256,7 +276,7 @@ export class TreePanel {
   }
 
   /** Currently selected real object (single object nodes only). */
-  get selectedObject(): THREE.Object3D | undefined { return this.selected?.obj; }
+  get selectedObject(): THREE.Object3D | undefined { return this.sel.length === 1 ? this.selected?.obj : undefined; }
   /** Redraw rows + info (after external state changes). */
   redraw() { this.refresh(); this.updateInfo(); }
 
@@ -264,8 +284,8 @@ export class TreePanel {
   selectId(id: string) { const o = this.scene.registry.get(id); if (o) this.pick(o); }
 
   /** Select the registered object containing this 3D object (from a 3D pick). */
-  pick(obj: THREE.Object3D | undefined) {
-    if (!obj) return this.select(undefined, false);
+  pick(obj: THREE.Object3D | undefined, additive = false) {
+    if (!obj) return additive ? undefined : this.select(undefined, false);
     // chain of registered ancestors, root first
     const chain: THREE.Object3D[] = [];
     for (let o: THREE.Object3D | null = obj; o; o = o.parent) if (this.scene.registry.get((o.userData.id ?? o.name) as string) === o) chain.unshift(o);
@@ -285,15 +305,14 @@ export class TreePanel {
       found = n;
       level = this.kids(n);
     }
-    this.select(found, true);
+    this.select(found, true, additive);
   }
 
   /** Colour the selected meshes; restore the previous selection's materials. */
-  private highlight(n: Node | undefined) {
+  private highlight() {
     for (const m of this.lit) { m.material = m.userData.origMat; delete m.userData.origMat; }
     this.lit = [];
-    if (!n) return;
-    for (const o of this.objsOf(n)) o.traverse((x) => {
+    for (const o of this.sel.flatMap((n) => this.objsOf(n))) o.traverse((x) => {
       const m = x as THREE.Mesh;
       if (!m.isMesh || m.userData.origMat) return;
       const orig = m.material as THREE.Material;
@@ -313,7 +332,13 @@ export class TreePanel {
 
   private updateInfo() {
     const n = this.selected;
-    if (!n) { this.info.textContent = 'Click a part in the tree or the 3D view.'; return; }
+    if (!n) { this.info.textContent = 'Click a part in the tree or the 3D view. ⌘/Ctrl-click to select several.'; return; }
+    if (this.sel.length > 1) {
+      this.info.innerHTML = `<div>${this.sel.length} items selected</div>
+        <div style="margin-top:4px"><button data-a="group">Group…</button></div>`;
+      this.wireGroupButtons();
+      return;
+    }
     const box = new THREE.Box3();
     this.objsOf(n).forEach((o) => box.expandByObject(o));
     const size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
@@ -321,8 +346,51 @@ export class TreePanel {
     const locked = objs.every(isLocked);
     this.info.innerHTML = `<div>${esc(n.label)}${n.badge ? ` <span class="badge">${n.badge}</span>` : ''} · ${locked ? '🔒 locked' : '🔓 movable'}</div>
       ${n.id ? `<code>${esc(n.id)}</code><button data-a="copy">Copy id</button>` : '<div><i>group (not scriptable by id)</i></div>'}
-      ${box.isEmpty() ? '' : `<div style="margin-top:4px">size ${fmt(size)} m · centre ${fmt(c)}</div>`}`;
+      ${box.isEmpty() ? '' : `<div style="margin-top:4px">size ${fmt(size)} m · centre ${fmt(c)}</div>`}
+      <div style="margin-top:4px">${n.group ? `<button data-a="ungroup">Delete group</button> <button data-a="rename">Rename</button>`
+        : n.memberOf ? `<button data-a="unmember">Remove from ${esc(n.memberOf)}</button>`
+        : n.id ? `<button data-a="group">Group…</button>` : ''}</div>`;
     this.info.querySelector<HTMLElement>('[data-a=copy]')?.addEventListener('click', () => navigator.clipboard?.writeText(n.id!));
+    this.wireGroupButtons();
+  }
+
+  // ---------- user groups ----------
+  private wireGroupButtons() {
+    const on = (a: string, f: () => void) => this.info.querySelector<HTMLElement>(`[data-a=${a}]`)?.addEventListener('click', f);
+    on('group', () => {
+      const ids = [...new Set(this.sel.flatMap((n) => this.objsOf(n)).map((o) => (o.userData.id ?? o.name) as string))];
+      const existing = Object.keys(store.groups).join(', ');
+      const name = prompt(`Group name (new, or existing to add to)${existing ? `\nExisting: ${existing}` : ''}`)?.trim().replace(/\s+/g, '-');
+      if (!name) return;
+      const set = new Set([...(store.groups[name] ?? []), ...ids]);
+      // drop members already covered by an ancestor member
+      const objs = [...set].map((id) => this.scene.registry.get(id)).filter(Boolean) as THREE.Object3D[];
+      const covered = (o: THREE.Object3D) => { for (let p = o.parent; p; p = p.parent) if (objs.includes(p)) return true; return false; };
+      store.groups[name] = objs.filter((o) => !covered(o)).map((o) => (o.userData.id ?? o.name) as string);
+      this.groupsChanged();
+    });
+    on('ungroup', () => {
+      const g = this.selected?.group;
+      if (g && confirm(`Delete group "${g}"? (its parts are not affected)`)) { delete store.groups[g]; this.sel = []; this.groupsChanged(); }
+    });
+    on('rename', () => {
+      const g = this.selected?.group;
+      const name = g && prompt('New group name', g)?.trim().replace(/\s+/g, '-');
+      if (g && name && name !== g) { store.groups[name] = store.groups[g]; delete store.groups[g]; this.sel = []; this.groupsChanged(); }
+    });
+    on('unmember', () => {
+      const n = this.selected!;
+      store.groups[n.memberOf!] = store.groups[n.memberOf!].filter((id) => id !== n.id);
+      this.sel = []; this.groupsChanged();
+    });
+  }
+
+  private groupsChanged() {
+    markDirty();
+    this.highlight();
+    this.rebuild();
+    this.updateInfo();
+    this.hooks.onGroups?.();
   }
 
   /** Per frame: keep selection box on animated objects; refresh stats occasionally. */
