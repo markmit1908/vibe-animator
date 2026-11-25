@@ -1,0 +1,104 @@
+# Animation script. Edit and save - the viewer hot-reloads.
+#
+# Actions run in sequence. Each is a map; the action is the first known key
+# (or `do: <action>`). Common options: dur (seconds), at (absolute start time).
+#
+#   label:     "Text"            sub: "smaller line"      -> chapter title (+ chapter button)
+#   cutaway:   none|half|quarter                           -> instant section-view change
+#   camera:    {pos: [x,y,z], look: [x,y,z]}  dur          -> camera move
+#   move:      target: id|[ids]|glob   to: <point> | by: [dx,dy,dz]   carry: [ids]
+#   pick:      <block id>                                  -> machine fetches block (travels at clearance)
+#   place:     <slot id> | {loc: name, dx, dy, dz}         -> machine puts held block down
+#   highlight: <target>  color: spent|fresh|fuel|#hex
+#   fade:      <target>  to: 0..1
+#   wait:      seconds
+#   parallel:  [action, action, ...]                       -> start together
+#   repeat:    {var: i, from: 9, to: 2, steps: [...]}      -> loop; use {expr} in strings
+#   call:      <macro name>   args: {...}                  -> run a macro defined under `macros`
+#
+# <point>: [x,y,z] or {loc: name} {slot: blockId} {over: columnId} {of: objectId}
+#          plus optional x/y/z overrides and dx/dy/dz offsets.
+# Expressions in {braces} can use loop vars, macro args, bh (block height),
+# floorY (operating floor height), clear (machine travel height) and Math (floor, min...).
+# Ids: columns R<ring>-<i> (R0-0 = centre); blocks R1-1/L0..L11 (L0 bottom);
+#      fresh/0..7; vessel, head, bolts, barrel, machine.
+
+camera: {pos: [12, 16, 14], look: [0, 5, 0]}
+
+macros:
+  # move block {b} out of the core to stack position {k} on rack {rack}
+  remove_block:
+    - {highlight: "{b}", color: spent}
+    - {pick: "{b}", dur: 4}
+    - {place: {loc: "{rack}", dx: "{(k % 4) * 0.5}", dz: "{floor(k / 4) * 0.5}"}, dur: 4}
+
+timeline:
+  - label: "Reactor at shutdown"
+    sub: "Hex-block core inside the reactor vessel"
+  - wait: 2
+  - camera: {pos: [9, 14, 10], look: [0, 6, 0]}
+    dur: 2
+  - label: "Section view"
+    sub: "Quarter cutaway exposes the core"
+  - cutaway: quarter
+  - wait: 2
+
+  - label: "Remove closure head"
+  - {move: bolts, by: [0, 0.4, 0], dur: 1.5}
+  - {fade: bolts, dur: 0.8}
+  - {move: head, by: [0, 3, 0], dur: 2.5}
+  - {move: head, to: {loc: head_park}, dur: 3}
+
+  - label: "Remove top reflector"
+    sub: "Column R1-1"
+  - camera: {pos: [7, 15, 8], look: [0, 8, 0]}
+    dur: 2
+  - repeat:
+      var: i
+      from: 11
+      to: 10
+      steps:
+        - {pick: "R1-1/L{i}", dur: 4}
+        - {place: {loc: temp_rack, dx: "{(11 - i) * 0.5}"}, dur: 4}
+
+  - label: "Discharge spent fuel"
+    sub: "8 fuel blocks to the spent rack"
+  - repeat:
+      var: i
+      from: 9
+      to: 2
+      steps:
+        - call: remove_block
+          args: {b: "R1-1/L{i}", k: "{9 - i}", rack: spent_rack}
+
+  - label: "Load fresh fuel"
+  - camera: {pos: [6, 12, 9], look: [0, 4, 0]}
+    dur: 2
+  - repeat:
+      var: k
+      from: 0
+      to: 7
+      steps:
+        - {pick: "fresh/{k}", dur: 4}
+        - {place: "R1-1/L{2 + k}", dur: 4}
+
+  - label: "Replace top reflector"
+  - repeat:
+      var: i
+      from: 10
+      to: 11
+      steps:
+        - {pick: "R1-1/L{i}", dur: 4}
+        - {place: "R1-1/L{i}", dur: 4}
+
+  - label: "Reinstall closure head"
+  - {move: machine, to: {x: 0, z: -4}, dur: 2}
+  - {move: head, to: {x: 0, z: 0, y: "{floorY + 3}"}, dur: 3}
+  - {move: head, to: {y: "{floorY}"}, dur: 2.5}
+  - parallel:
+      - {fade: bolts, to: 1, dur: 0.8}
+      - {move: bolts, by: [0, -0.4, 0], dur: 1.5}
+  - cutaway: none
+  - camera: {pos: [12, 16, 14], look: [0, 5, 0]}
+    dur: 3
+  - label: "Refuelling complete"

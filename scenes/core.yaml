@@ -1,0 +1,62 @@
+# Scene / model setup. All dimensions in metres. PLACEHOLDER values - replace with real data.
+# Coordinates: y is up, core base at y = 0.
+
+core:
+  rings: 5              # hex rings incl. centre (5 -> 61 columns). Column ids: R<ring>-<index>, e.g. R0-0, R1-1
+  pitch: 0.36           # block flat-to-flat
+  gap: 0.01             # visual gap between columns
+  fuel_rings: 3         # rings 0..2 fuelled, outer rings are side reflector
+  block_height: 0.8
+  layers:               # bottom -> top. Block ids: <column>/L<n>, n = 0 at bottom
+    bottom_reflector: 2
+    fuel: 8
+    top_reflector: 2
+
+vessel:
+  inner_radius: 2.2
+  wall: 0.12
+  bottom_gap: 1.0       # space below the core support plate
+  top_gap: 0.6          # space above the core to the flange
+
+head:
+  height: 1.1           # dome rise
+  flange: 0.25
+  bolts: 24
+
+machine:
+  mast_length: 12
+  # clearance: 14       # grapple-tip travel height; default = vessel top + 3 blocks
+
+# Named positions used by scripts: [x, y, z] where y is height above the operating floor
+# (the floor sits at the vessel flange). Items placed at a location rest on it.
+locations:
+  spent_rack: [4.5, 0, 1.5]
+  fresh_rack: [-1.5, 0, 4.5]
+  temp_rack:  [4.5, 0, -1.5]
+  head_park:  [-5.0, 0, -3.0]
+
+# Fresh blocks staged on fresh_rack at start, ids fresh/0 .. fresh/N-1
+fresh:
+  count: 8
+  location: fresh_rack
+  per_row: 4
+  spacing: 0.5
+
+palette:                # cel-shaded: off-white structure, copper accent, black outlines
+  background: "#050607"
+  fuel: "#d98a3a"
+  reflector: "#c8d0d9"
+  spent: "#b8322a"
+  fresh: "#3aa58a"
+  vessel: "#e6ebf0"
+  head: "#d5dde6"
+  bolts: "#a5551f"
+  barrel: "#bfc8d2"
+  floor: "#1b2530"
+  machine: "#a5551f"
+  edge: "#000000"
+
+# Swap generated geometry for CAD (glTF/.glb in public/cad/). Works for group objects:
+# vessel, head, bolts, barrel, machine.
+overrides: {}
+#  vessel: cad/vessel.glb
