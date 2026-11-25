@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.venv/
+.dev-vault/
+engine/build/
+engine/build-wasm/
+desktop/build/
+__pycache__/
+test-results/
+.pytest_cache/

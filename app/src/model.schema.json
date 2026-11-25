@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://solverkit.local/schema/refuel-anim/1",
+  "title": "Refuel animation model (format 1)",
+  "description": "An animation of a CAD model: scene setup, .anim script, snapshots, groups. Shares SolverKit's model-file envelope (name, uuid, solver, format, description). Unknown keys are preserved.",
+  "type": "object",
+  "required": ["solver", "script"],
+  "properties": {
+    "solver": { "const": "refuel-anim" },
+    "format": { "type": "integer", "minimum": 1, "maximum": 1 },
+    "scene": {
+      "type": "object",
+      "properties": {
+        "generated": { "type": "boolean", "description": "Show the parametric placeholder reactor." },
+        "cad_models": { "type": "array", "items": {
+          "type": "object", "required": ["id", "file"],
+          "properties": {
+            "id": { "type": "string" },
+            "file": { "type": "string", "description": "Vault-relative path of a .glb, shared between animations." },
+            "up": { "enum": ["z", "x", "-x", "y", "-y"] },
+            "ground": { "type": "boolean" },
+            "position": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+            "rotation_deg": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+            "scale": { "type": "number" },
+            "clip": { "type": "boolean" }
+          } } }
+      },
+      "additionalProperties": true
+    },
+    "script": { "type": "object", "required": ["text"], "properties": {
+      "language": { "const": "anim" },
+      "text": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }] } } },
+    "snapshots": { "type": "object", "properties": {
+      "active": { "type": "string" },
+      "items": { "type": "object", "additionalProperties": { "type": "object", "properties": {
+        "locked": { "type": "object", "additionalProperties": { "type": "boolean" } },
+        "hidden": { "type": "object", "additionalProperties": { "type": "boolean" } },
+        "camera": { "type": "object" },
+        "placements": { "type": "object" } } } } } },
+    "groups": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } },
+    "view": { "type": "object" },
+    "chat": { "type": "array" }
+  },
+  "additionalProperties": true
+}

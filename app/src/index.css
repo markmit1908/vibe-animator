@@ -1,0 +1,12 @@
+/* RefuelAnim's stylesheet: Tailwind with SolverKit's tokens; the packages' built classes are scanned. */
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@solverkit/tokens/tokens.css";
+@import "@solverkit/report/report.css";
+@source "../node_modules/@solverkit/ui/dist";
+@source "../node_modules/@solverkit/charts/dist";
+@source "../node_modules/@solverkit/editor/dist";
+@source "../node_modules/@solverkit/app/dist";
+@source "../node_modules/@solverkit/report/dist";
+@source "./";

@@ -1,0 +1,51 @@
+{
+  "requires": [
+    {
+      "path": ".venv/bin/uvicorn",
+      "cmd": [
+        "sh",
+        "-c",
+        "uv venv -q -p 3.12 .venv && uv pip install -q -p .venv -e '/Users/markmit/dev/vibe-solverkit/python[api,test]'"
+      ],
+      "hint": "creating .venv with SolverKit's Python package"
+    },
+    {
+      "path": "node_modules/.bin/vite",
+      "cmd": [
+        "npx",
+        "-y",
+        "pnpm@9.15.9",
+        "install"
+      ],
+      "hint": "installing packages"
+    }
+  ],
+  "server": {
+    "cmd": [
+      "{root}/.venv/bin/uvicorn",
+      "refuelanim_server.app:app",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "{port}",
+      "--app-dir",
+      "server",
+      "--reload",
+      "--reload-dir",
+      "server",
+      "--timeout-graceful-shutdown",
+      "2"
+    ],
+    "port": 8100,
+    "ready": "/api/about"
+  },
+  "web": {
+    "cmd": [
+      "npx",
+      "vite",
+      "--host",
+      "127.0.0.1"
+    ],
+    "port": 5173
+  }
+}
