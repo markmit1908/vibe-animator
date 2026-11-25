@@ -15,8 +15,53 @@
  },
  {
   "role": "assistant",
-  "content": "",
-  "proposals": [],
-  "tools": []
+  "content": "I haven't changed the script yet. When I checked the new lines, they failed: the parts in `@head` are locked, so the script can't move them. I've sent a card that unlocks `@head`, and you'll need to accept it first.\n\nThese are the new lines. Lines 1–12 stay as they are:\n\n```\nlabel \"Remove lid\"\nwait 2s\nmove @head by [0,3,0] 20s\nfade @head to 0 2s\n```\n\n- The label shows for 2 s, then the head rises 3 m over 20 s, then fades out over 2 s. The whole animation is 24 s.\n- The move uses the default ease. Add `linear` after `20s` if you want a steady crane-like lift.\n- If you'd rather the lift start straight away, delete the `wait 2s` line.\n\nOnce you accept the unlock, say so and I'll check this again and send it as a script edit.\n\n**Something to check:** your snapshot lists `head` as hidden. If that's the same thing as the `@head` group, the head won't be visible while it moves. Tell me if I should add `show @head` before the move, or unhide it in the snapshot.",
+  "proposals": [
+   {
+    "kind": "state",
+    "summary": "Unlock @head so the script can animate it",
+    "check": {
+     "ok": true,
+     "label": "✓ 22 parts"
+    },
+    "changes": [
+     {
+      "targets": [
+       "@head"
+      ],
+      "ids": [
+       "plant/model/root/V-010001-511_A/V-010001-521_A/V-010001-531_A/V-005223-501_05/V-005196-501_04/V-005193-001_03",
+       "plant/model/root/V-010001-511_A/V-010001-521_A/V-010001-531_A/V-005223-501_05/V-005196-501_04/V-005195-001_03",
+       "plant/model/root/V-010001-511_A/V-010001-521_A/V-010001-531_A/V-005223-501_05/V-005196-501_04/V-005197-001_02",
+       "plant/model/root/V-010001-511_A/V-010001-521_A/V-010001-531_A/V-005223-501_05/V-005196-501_04/V-005197-001_02_3",
+       "plant/model/root/V-010001-511_A/V-010001-521_A/V-010001-531_A/V-005223-501_05/V-005196-501_04/V-005345-001_01",
+       "plant/model/root/V-010001-511_A/V-010001-521_A/V-010001-531_A/V-005223-501_05/V-005196-501_04/V-005345-001_01_3",
+       "plant/model/root/V-010001-511_A/V-010001-521_A/V-010001-531_A/V-005223-501_05/V-005196-501_04/V-005345-001_01_2",
+       "plant/model/root/V-010001-511_A/V-010001-521_A/V-010001-531_A/V-005223-501_05/V-005196-501_04/V-005345-001_01_1",
+       "plant/model/root/V-010001-511_A/V-010001-521_A/V-010001-531_A/V-005226-501_01",
+       "plant/model/root/V-010001-511_A/V-010001-521_A/V-010001-531_A/V-005226-501_01_1",
+       "plant/model/root/V-010001-511_A/V-010001-521_A/V-010001-531_A/V-005226-501_01_2",
+       "plant/model/root/V-010001-511_A/V-010001-521_A/V-010001-531_A/V-005226-501_01_3",
+       "plant/model/root/V-010001-511_A/V-010001-521_A/V-010001-531_A/V-005226-501_01_4",
+       "plant/model/root/V-010001-511_A/V-010001-521_A/V-010001-531_A/V-005226-501_01_5",
+       "plant/model/root/V-010001-511_A/V-010001-521_A/V-010001-531_A/V-005226-501_01_6",
+       "plant/model/root/V-010001-511_A/V-010001-521_A/V-010001-531_A/V-005223-501_05/V-005196-501_04/V-005197-001_02_6",
+       "plant/model/root/V-010001-511_A/V-010001-521_A/V-010001-531_A/V-005223-501_05/V-005196-501_04/V-005197-001_02_2",
+       "plant/model/root/V-010001-511_A/V-010001-521_A/V-010001-531_A/V-005223-501_05/V-005196-501_04/V-005197-001_02_1",
+       "plant/model/root/V-010001-511_A/V-010001-521_A/V-010001-531_A/V-005223-501_05/V-005196-501_04/V-005197-001_02_4",
+       "plant/model/root/V-010001-511_A/V-010001-521_A/V-010001-531_A/V-005223-501_05/V-005196-501_04/V-005197-001_02_5",
+       "plant/model/root/V-010001-511_A/V-010001-521_A/V-010001-531_A/V-005223-501_05/V-005196-501_04/V-005356-001_01",
+       "plant/model/root/V-010001-511_A/V-010001-521_A/V-010001-531_A/V-005223-501_05/V-005196-501_04/V-005350-001_01"
+      ],
+      "lock": false
+     }
+    ],
+    "problems": [],
+    "state": "accepted"
+   }
+  ],
+  "tools": [
+   "checked a draft script"
+  ]
  }
 ]

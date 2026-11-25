@@ -12,3 +12,7 @@
 
 label "Plant overview"
 wait 2s
+label "Remove lid"
+wait 2s
+move @head by [0,3,0] 20s
+fade @head to 0 2s

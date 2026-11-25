@@ -42,7 +42,7 @@ export interface AnimStep {
   endLine?: number;         // closing brace line of a block
 }
 
-export interface ParseError { line: number; from: number; to: number; message: string }
+export interface ParseError { line: number; from: number; to: number; message: string; fix?: { label: string; run: () => void } }
 export interface AnimDoc { steps: AnimStep[]; errors: ParseError[] }
 
 const VERBS = ['move', 'rotate', 'hide', 'show', 'fade', 'highlight', 'label', 'camera', 'cutaway', 'wait', 'pivot', 'parallel'];

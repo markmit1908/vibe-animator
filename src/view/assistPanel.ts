@@ -12,6 +12,8 @@ export interface AssistHooks {
   tools(): AssistTool[];
   /** Render a proposal card's body (diff etc.) and wire Accept/Reject. */
   renderProposal?(p: Proposal, el: HTMLElement, decide: (s: 'accepted' | 'rejected') => void): void;
+  /** Insert a code block from a reply into the script (after the cursor line). */
+  insertCode?(code: string): void;
   /** History changed (persist it). */
   saveHistory?(h: ChatMessage[]): void;
 }
@@ -29,6 +31,7 @@ const CSS = `
 #assist .msg.user { background: #1d2a38; align-self: flex-end; max-width: 90%; }
 #assist .msg.assistant { background: #14191f; border: 1px solid #222a33; }
 #assist .msg pre { background: #0a0c0f; padding: 6px; border-radius: 4px; overflow: auto; white-space: pre; font: 11.5px ui-monospace, monospace; margin: 4px 0; }
+#assist .code { position: relative; } #assist .code .ins { position: absolute; top: 4px; right: 4px; font-size: 10px; padding: 0 5px; opacity: .85; }
 #assist .msg code { font: 11.5px ui-monospace, monospace; background: #0a0c0f; padding: 0 3px; border-radius: 3px; }
 #assist .note { color: #7b8794; font-size: 11px; font-style: italic; }
 #assist .acts { display: none; gap: 4px; margin-top: 4px; }
@@ -57,7 +60,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 /** Minimal markdown: fenced code, inline code, bold. */
 function md(text: string) {
   return esc(text)
-    .replace(/```[\w-]*\n?([\s\S]*?)```/g, (_, c) => `<pre>${c.replace(/\n$/, '')}</pre>`)
+    .replace(/```[\w-]*\n?([\s\S]*?)```/g, (_, c) => `<div class="code"><pre>${c.replace(/\n$/, '')}</pre><button class="ins" title="Insert into the script after the cursor line">⤓ Insert into script</button></div>`)
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
 }
@@ -216,6 +219,10 @@ export class AssistPanel {
         this.render();
       });
     }
+    el.querySelectorAll<HTMLElement>('.code .ins').forEach((b) => (b.onclick = () => {
+      const pre = b.previousElementSibling as HTMLElement;
+      this.hooks.insertCode?.(pre.textContent ?? '');
+    }));
     const act = (a: string, f: () => void) => el.querySelector<HTMLElement>(`[data-a=${a}]`)?.addEventListener('click', f);
     act('copy', () => navigator.clipboard?.writeText(m.content));
     act('edit', () => {

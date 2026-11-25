@@ -225,7 +225,8 @@ export class ScriptPanel {
       const line = doc.line(Math.min(Math.max(e.line, 1), doc.lines));
       const from = e.from >= line.from && e.from <= line.to ? e.from : line.from;
       const to = Math.max(from + 1, Math.min(e.to >= from ? e.to : line.to, line.to));
-      return { from, to: Math.min(to, doc.length), severity: 'error', message: e.message };
+      return { from, to: Math.min(to, doc.length), severity: 'error', message: e.message,
+        actions: e.fix ? [{ name: e.fix.label, apply: () => e.fix!.run() }] : undefined };
     });
     this.view.dispatch(setDiagnostics(this.view.state, diags));
     this.status.className = 'status ' + (errs.length ? 'err' : 'ok');

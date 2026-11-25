@@ -120,12 +120,13 @@ const frameAll = () => {
   return { pos: c.clone().addScaledVector(dir, d).toArray(), look: c.toArray() };
 };
 const defaultCam = script.camera ?? frameAll();
+let previewUnlocked = new Set<string>(); // parts a previewed assist proposal would unlock
 /** Compile the current script. On error the previous timeline keeps playing. */
 function buildTimeline(): boolean {
   const t = player?.time ?? 0, playing = player?.playing ?? false;
   player?.seek(0); // compile from the start pose (positions, colours) – not the animated one
   try {
-    const tl = compile(script, built, script.camera ?? defaultCam, isLocked, store.groups);
+    const tl = compile(script, built, script.camera ?? defaultCam, (o) => isLocked(o) && !previewUnlocked.has(idOfObj(o)), store.groups);
     player = new Player(built, tl);
     player.playing = playing;
     player.seek(Math.min(t, tl.duration));
@@ -136,7 +137,18 @@ function buildTimeline(): boolean {
   } catch (e: any) {
     player?.seek(t);
     if (scriptPanel && e instanceof ScriptError && e.line) {
-      scriptPanel.setErrors([...scriptErrors, { line: e.line, from: -1, to: -1, message: e.message }]);
+      // locked target: offer a one-click unlock of everything that line moves
+      let fix: ParseError['fix'];
+      if (/is locked/.test(e.message)) {
+        const find = (steps: any[]): any => { for (const st of steps) { if (st.line === e.line) return st; const c = st.children && find(st.children); if (c) return c; } };
+        const tg = find(parseAnim(scriptPanel.text).steps)?.target?.value as string | undefined;
+        if (tg) {
+          const ids = resolveIds([tg]).ids.filter((x) => isLocked(built.registry.get(x)!));
+          fix = { label: `Unlock ${tg}${ids.length > 1 ? ` (${ids.length} parts)` : ''}`, run: () => { applyStateChanges([{ ids, lock: false }]); } };
+          e.message = `${tg} is locked (${ids.length} part${ids.length === 1 ? '' : 's'}) – unlock it to animate it`;
+        }
+      }
+      scriptPanel.setErrors([...scriptErrors, { line: e.line, from: -1, to: -1, message: e.message, fix }]);
     } else { chapterEl.textContent = 'Script error'; subEl.textContent = e.message; }
     console.error(e);
     return false;
@@ -201,6 +213,7 @@ if (isAnim) {
     cameraLine: () => cameraLine(probe),
   });
   scriptPanel.setErrors(scriptErrors);
+  buildTimeline(); // again now the panel exists, so compile errors (e.g. locked parts) show in the editor with their fix
 }
 // ---------- [Script | Assist] tabs ----------
 const tabs = document.createElement('div'); tabs.className = 'rtabs';
@@ -229,9 +242,20 @@ const toolDeps: ToolDeps = {
     player.seek(0); // compile reads the start pose
     try {
       const acts = toActions(doc.steps);
-      const tl = compile(acts, built, acts.camera ?? defaultCam, isLocked, store.groups);
+      // locked targets are reported, not errors: accepting a proposal unlocks them
+      const locked = new Set<string>();
+      const walk = (steps: any[]) => steps.forEach((st) => {
+        const tg = st.target?.value;
+        if (tg && ['move', 'rotate', 'hide', 'show', 'fade', 'highlight', 'pivot'].includes(st.verb)) {
+          const r = resolveIds([tg]);
+          if (r.ids.some((x) => isLocked(built.registry.get(x)!))) locked.add(tg);
+        }
+        if (st.children) walk(st.children);
+      });
+      walk(doc.steps);
+      const tl = compile(acts, built, acts.camera ?? defaultCam, () => false, store.groups);
       const src = text.split('\n');
-      return { errors: [], duration: tl.duration, steps: [...tl.lines].sort((a, b) => a[0] - b[0]).map(([line, x]) => ({ line, ...x, text: src[line - 1].trim() })) };
+      return { errors: [], locked: [...locked], duration: tl.duration, steps: [...tl.lines].sort((a, b) => a[0] - b[0]).map(([line, x]) => ({ line, ...x, text: src[line - 1].trim() })) };
     } catch (e: any) {
       return { errors: [{ line: e.line ?? 0, message: e.message }] };
     } finally { player.seek(t); }
@@ -317,6 +341,7 @@ previewBanner.style.cssText = 'position:fixed;top:12px;left:50%;transform:transl
 document.body.appendChild(previewBanner);
 function previewProposal(p: Proposal | undefined) {
   previewing = p;
+  previewUnlocked = new Set(p ? resolveIds((p.unlock as string[] | undefined) ?? []).ids : []);
   const src = p ? String(p.text) : scriptPanel?.text ?? '';
   const doc = parseAnim(src);
   if (!doc.errors.length) { script = toActions(doc.steps); buildTimeline(); }
@@ -339,6 +364,12 @@ const assist = new AssistPanel(right, {
   system: () => ASSIST_SYSTEM,
   context: async () => [{ type: 'text', text: await assistContext() }],
   tools: () => tools,
+  insertCode: (code) => {
+    if (!scriptPanel) return;
+    const v = scriptPanel.view, l = v.state.doc.line(scriptPanel.cursorLine);
+    v.dispatch({ changes: { from: l.to, insert: `\n${code.replace(/\n$/, '')}` } });
+    showTab('script'); v.focus();
+  },
   renderProposal: (p, el, decide) => {
     if (p.kind === 'groups' || p.kind === 'state') {
       const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;');
@@ -372,13 +403,15 @@ const assist = new AssistPanel(right, {
       ${errs.length ? `<div class="err">${errs.map((e) => `line ${e.line}: ${e.message}`).join('<br>').replace(/</g, '&lt;').replace(/&lt;br>/g, '<br>')}</div>` : ''}
       ${p.state ? '' : `<div style="display:flex;gap:6px;margin-top:4px">
         ${p.check.ok ? `<button data-a="preview">${previewing === p ? '■ End preview' : '▶ Preview'}</button>` : ''}
-        <button data-a="accept" ${p.check.ok ? '' : 'title="It does not compile – you can still accept and fix it in the editor"'}>Accept</button>
+        <button data-a="accept" ${p.check.ok ? '' : 'title="It does not compile – you can still accept and fix it in the editor"'}>${(p.unlock as string[] | undefined)?.length ? `Accept + unlock ${(p.unlock as string[]).join(', ')}` : 'Accept'}</button>
         <button data-a="reject">Reject</button></div>`}`;
     el.querySelector<HTMLElement>('[data-a=preview]')?.addEventListener('click', () => previewProposal(previewing === p ? undefined : p));
-    el.querySelector<HTMLElement>('[data-a=accept]')?.addEventListener('click', () => {
+    el.querySelector<HTMLElement>('[data-a=accept]')?.addEventListener('click', async () => {
       if (!scriptPanel) return;
       if (scriptPanel.text !== p.base && !confirm('The script has changed since this was proposed. Replace it with the proposal anyway?')) return;
       if (previewing) previewProposal(undefined);
+      const unlock = (p.unlock as string[] | undefined) ?? [];
+      if (unlock.length) await applyStateChanges([{ ids: resolveIds(unlock).ids, lock: false }]); // the script needs these movable
       scriptPanel.setText(String(p.text));
       decide('accepted');
       showTab('script');
@@ -983,4 +1016,16 @@ function showBanner(html: string) {
   addEventListener('click', () => (menu.hidden = true));
   const act: Record<string, () => void> = { export: () => exportProject(false), zip: () => exportProject(true), import: importProject, cad: reimportCad };
   menu.querySelectorAll<HTMLElement>('[data-f]').forEach((b) => (b.onclick = () => { menu.hidden = true; act[b.dataset.f!](); }));
+}
+
+// ?debug=locked-proposal: a proposal that moves a locked part (headless check)
+if (new URLSearchParams(location.search).get('debug') === 'locked-proposal' && scriptPanel) {
+  state.locked['head'] = true;
+  const g = tools.find((x) => x.name === 'propose_script_edit')!.run({ text: scriptPanel.text + 'label "Remove lid"\nmove head by [0,3,0] 20s\nfade head to 0 2s\n', summary: 'Lift and fade the head' });
+  let p: any, r = await g.next();
+  for (; !r.done; r = await g.next()) if (r.value.type === 'proposal') p = r.value.proposal;
+  const pre = document.createElement('pre'); pre.id = 'debug3'; pre.style.display = 'none';
+  pre.textContent = JSON.stringify({ check: p.check, unlock: p.unlock, result: r.value.content }); document.body.appendChild(pre);
+  assist.history.push({ role: 'user', content: 'lift the head' }, { role: 'assistant', content: 'Here:\n```\nmove head by [0,3,0] 20s\n```', proposals: [p] });
+  assist.refreshCards();
 }

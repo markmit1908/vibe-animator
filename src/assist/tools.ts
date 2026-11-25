@@ -11,7 +11,8 @@ export interface ToolDeps {
   isLocked: (o: THREE.Object3D) => boolean;
   isHidden: (o: THREE.Object3D) => boolean;
   /** Parse + compile a draft script without changing anything. */
-  checkScript: (text: string) => { errors: { line: number; message: string }[]; duration?: number; steps?: { line: number; start: number; end: number; text: string }[] };
+  /** Parse + compile without applying. Locked parts are not errors here; they are listed in `locked` (targets the script moves that are locked). */
+  checkScript: (text: string) => { errors: { line: number; message: string }[]; duration?: number; steps?: { line: number; start: number; end: number; text: string }[]; locked?: string[] };
   /** Render a view to a JPEG (base64), optionally framing a target. */
   screenshot: (view: string, target?: string) => { data: string; width: number; height: number; note: string };
   /** Top-level roots of the assembly (CAD model wrappers / generated parts). */
@@ -127,7 +128,8 @@ export function readTools(d: ToolDeps): AssistTool[] {
         yield { type: 'tool', name: 'check_script', label: 'checked a draft script' };
         const r = d.checkScript(i.text);
         if (r.errors.length) return { content: `${r.errors.length} error(s):\n${r.errors.map((e) => `line ${e.line}: ${e.message}`).join('\n')}` };
-        return { content: `OK – duration ${r.duration?.toFixed(1)} s\n${(r.steps ?? []).map((s) => `line ${s.line} [${s.start.toFixed(1)}–${s.end.toFixed(1)}s] ${s.text}`).join('\n')}` };
+        const lockNote = r.locked?.length ? `\nLocked targets (fine – propose_script_edit unlocks them when the user accepts): ${r.locked.join(', ')}` : '';
+        return { content: `OK – duration ${r.duration?.toFixed(1)} s${lockNote}\n${(r.steps ?? []).map((s) => `line ${s.line} [${s.start.toFixed(1)}–${s.end.toFixed(1)}s] ${s.text}`).join('\n')}` };
       },
     },
     {
@@ -175,11 +177,12 @@ export function proposeTools(d: ProposeDeps): AssistTool[] {
         if (text === base) return { content: 'That is identical to the current script – nothing to propose.', is_error: true };
         const r = d.checkScript(text);
         const ok = r.errors.length === 0;
-        const label = ok ? `✓ compiles · ${r.duration?.toFixed(1)} s` : `${r.errors.length} error${r.errors.length > 1 ? 's' : ''}`;
-        yield { type: 'proposal', proposal: { kind: 'script edit', summary: i.summary, check: { ok, label }, base, text, errors: r.errors } };
+        const unlock = r.locked ?? [];
+        const label = ok ? `✓ compiles · ${r.duration?.toFixed(1)} s${unlock.length ? ` · unlocks ${unlock.join(', ')}` : ''}` : `${r.errors.length} error${r.errors.length > 1 ? 's' : ''}`;
+        yield { type: 'proposal', proposal: { kind: 'script edit', summary: i.summary, check: { ok, label }, base, text, errors: r.errors, unlock } };
         return {
           content: ok
-            ? `Proposed (${label}). The user will preview/accept or reject it; don't repeat the script in your reply – summarise the change in a sentence or two.`
+            ? `Proposed (${label}).${unlock.length ? ` Accepting it also unlocks ${unlock.join(', ')}, so don't propose a separate unlock.` : ''} The user will preview/accept or reject it; don't repeat the script in your reply – summarise the change in a sentence or two.`
             : `Proposed, but it does not compile:\n${r.errors.map((e) => `line ${e.line}: ${e.message}`).join('\n')}\nFix it with check_script and propose again.`,
         };
       },

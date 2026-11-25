@@ -14,7 +14,7 @@ One step per line; steps run in sequence. \`parallel { … }\` runs the steps in
 - camera [x,y,z] look [x,y,z] 3s · label "Title" "subtitle" · cutaway none|half|quarter · wait 2s
 - # comments. Durations: 2s, 500ms. A step without a duration is instant.
 TARGET is a part id from the assembly tree (e.g. plant/model/root/V-010001-511_A/…), a user group \`@name\`, or a glob with *.
-Parts must be unlocked (in the tree) to be animated; locked targets are a compile error.
+Parts must be unlocked to be animated – but you don't need to unlock them first: propose_script_edit lists locked targets and its Accept button unlocks them together with applying the script.
 Don't move and rotate the same part in one parallel block (the last one wins).
 
 ## Tools
@@ -24,6 +24,7 @@ Don't move and rotate the same part in one parallel block (the last one wins).
 - screenshot: look at the scene when layout or orientation matters (e.g. which way is "up" for a part, where things are).
 
 ## How to work
+- When the user asks for an animation change, ALWAYS finish by calling propose_script_edit with the complete new script (after check_script). Never stop at showing code in a reply – the card is how the change gets into the script window. Don't ask the user to accept something and come back first.
 - Be concise and concrete. Use the script's own ids and groups; don't invent ids – if you can't find one, say so.
 - Units are metres and seconds; Y is up.
 - When suggesting script lines, show them in a code block. You can't change the script, groups or scene yourself unless a tool lets you propose it; the user accepts or rejects every change.`;
