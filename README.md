@@ -55,6 +55,23 @@ Set `script: plant.anim` in `core.yaml`. The panel sits on the right, under the 
 
 Syntax reference: see the header of `scripts/plant.anim`.
 
+## AI assist (Assist tab)
+
+The **Assist** tab is a chat with Claude (`claude-opus-5-5`) that knows the script, the assembly tree, your groups,
+selection and current time. It can look things up (find parts, read bounding boxes, browse the tree, compile a draft,
+take a screenshot) and **propose** changes:
+- **script edits:** a diff with a compile check, plus ▶ Preview (plays it without touching the editor), Accept and Reject
+- **group changes**
+- **lock / hide changes**
+
+Nothing changes without **Accept**.
+Chat controls: Stop (Esc), Edit a sent message, Regenerate, Copy, plus effort (low → xhigh) and New.
+The conversation is saved beside the script as `scripts/<name>.chat.json`.
+
+**Setup:** put a key from console.anthropic.com in `.env` as `ANTHROPIC_API_KEY=…` (git-ignored) and restart `npm run dev`.
+The dev server proxies `/__assist` and adds the key server-side, so the key never reaches the page.
+Don't prefix it `VITE_`: Vite can expose `VITE_` variables to browser code.
+
 ## Files
 
 | Path | What it is |

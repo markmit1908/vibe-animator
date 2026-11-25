@@ -320,7 +320,15 @@ function previewProposal(p: Proposal | undefined) {
   assist.refreshCards();
 }
 
+// conversation is saved beside the script (scripts/<name>.chat.json)
+const chatUrl = `/__chat?name=${encodeURIComponent(isAnim ? scriptName : 'default.anim')}`;
+const savedChat = await fetch(chatUrl).then((r) => (r.ok ? r.json() : [])).catch(() => []);
+let chatTimer: number | undefined;
 const assist = new AssistPanel(right, {
+  saveHistory: (h) => {
+    clearTimeout(chatTimer);
+    chatTimer = window.setTimeout(() => fetch(chatUrl, { method: 'POST', body: JSON.stringify(h, null, 1) }).catch(() => {}), 300);
+  },
   system: () => ASSIST_SYSTEM,
   context: async () => [{ type: 'text', text: await assistContext() }],
   tools: () => tools,
@@ -370,7 +378,7 @@ const assist = new AssistPanel(right, {
     });
     el.querySelector<HTMLElement>('[data-a=reject]')?.addEventListener('click', () => { if (previewing === p) previewProposal(undefined); decide('rejected'); });
   },
-});
+}, Array.isArray(savedChat) ? savedChat : []);
 const showTab = (t: string) => {
   tabs.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
   if (scriptPanel) scriptPanel.el.style.display = t === 'script' ? '' : 'none';

@@ -33,6 +33,24 @@ function snapshots(): Plugin {
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify(data ?? {}));
       });
+      // GET/POST /__chat?name=x.anim – the assist conversation, saved beside the script as x.chat.json
+      server.middlewares.use('/__chat', (req, res) => {
+        const name = new URL(req.url ?? '', 'http://x').searchParams.get('name') ?? '';
+        if (!/^[\w.-]+\.anim$/.test(name)) { res.statusCode = 400; res.end('bad name'); return; }
+        const file = `scripts/${name.replace(/\.anim$/, '')}.chat.json`;
+        server.watcher.unwatch(file);
+        if (req.method === 'POST') {
+          let body = '';
+          req.on('data', (c) => (body += c));
+          req.on('end', () => {
+            try { JSON.parse(body); } catch { res.statusCode = 400; res.end('bad json'); return; }
+            writeFileSync(file, body); res.end('ok');
+          });
+          return;
+        }
+        res.setHeader('content-type', 'application/json');
+        res.end(existsSync(file) ? readFileSync(file, 'utf8') : '[]');
+      });
       // GET/POST /__script?name=x.anim – the Script panel's file in scripts/
       server.middlewares.use('/__script', (req, res) => {
         const name = new URL(req.url ?? '', 'http://x').searchParams.get('name') ?? '';
