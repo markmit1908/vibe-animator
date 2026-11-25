@@ -652,3 +652,21 @@ test("cutaway sections: which side, and centred on a point or a target", async (
   expect(p3[0].slice(0, 3)).toEqual([0, -1, 0]);
   expect(p3[0][3]).toBeGreaterThan(1);
 });
+
+test("set origin moves the CAD and the saved cameras so the point is (0,0,0)", async ({ page }) => {
+  await page.goto("/");
+  const { readFileSync } = await import("node:fs");
+  await api(page).put("/api/files/CAD/small.glb?overwrite=true", { data: readFileSync(new URL("./fixtures/small.glb", import.meta.url)) });
+  const m = { name: "Origin", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [{ id: "plant", file: "CAD/small.glb", position: [1, 0, 0] }] },
+    script: { language: "anim", text: 'label "O"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {}, camera: { pos: [5, 5, 5], look: [1, 2, 3] } } } }, groups: {},
+    views: { side: { pos: [10, 2, 0], look: [1, 2, 3] } } };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Origin");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  await expect(page.locator("#toolsbar [data-t=origin]")).toBeVisible();
+  await page.evaluate(() => { const s = (window as any).__studio; s.setOrigin(new s.camera.position.constructor(1, 2, 3)); });
+  await expect.poll(async () => (await model(page, a.id)).scene.cad_models[0].position).toEqual([0, -2, -3]);
+  const saved = await model(page, a.id);
+  expect(saved.views.side).toEqual({ pos: [9, 0, -3], look: [0, 0, 0] });
+  expect(saved.snapshots.items.default.camera).toEqual({ pos: [4, 3, 2], look: [0, 0, 0] });
+});

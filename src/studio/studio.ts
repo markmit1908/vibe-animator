@@ -6,6 +6,7 @@ import GUI from 'lil-gui';
 import { buildScene } from '../scene/build';
 import { compile } from '../timeline/compile';
 import { Player } from '../timeline/player';
+import { fitVerticalCylinder, planeHeight } from '../scene/origin';
 import { applyCutaway, cutLine, DEFAULT_SIDES, type Cut, type CutMode, type CutSide } from '../view/cutaway';
 import { CadManager } from '../scene/cad';
 import { setStore, setStoreWriter, store, useSnapshot, captureSnapshot, writeStore, markDirty, isDirty, onDirtyChange,
@@ -700,6 +701,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   raycaster.setFromCamera(ndc, camera);
   const hits = raycaster.intersectObject(built.root, true).filter((h) =>
     (h.object as THREE.Mesh).isMesh && isShown(h.object) && !clipped(h.point));
+  if (originPick) { if (hits[0]) originClick(hits[0]); return; }   // Set origin: the click picks geometry, not parts
   tree.pick(hits[0]?.object, e.metaKey || e.ctrlKey || e.shiftKey);
 });
 const isShown = (o: THREE.Object3D | null): boolean => !o || (o.visible && isShown(o.parent));
@@ -865,6 +867,7 @@ on('keydown', (e: any) => {
   if (e.key === 'h' && !e.metaKey && !e.ctrlKey) { tree.toggleHiddenSelected(); updateTools(); }
   if (e.key === 'g' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); tree.groupSelected(); updateTools(); }
   if (e.key === 'e') gizmo.setMode('rotate');
+  if (e.key === 'Escape' && originPick) { endOrigin(); return; }
   if (e.key === 'Escape') { gizmo.detach(); tree.select(undefined, false); }
   if (e.key === 'r' && gizmo.object && player.time === 0) { // reset selection to its original placement
     for (const o of gSel.objs) { delete state.placements[idOfObj(o)]; o.position.fromArray(o.userData.homeP); o.quaternion.fromArray(o.userData.homeQ); }
@@ -1080,6 +1083,7 @@ toolbar.innerHTML = `<button data-t="blank" title="Blank / unblank the selected 
   <button data-t="find" title="Select by name: every part whose name contains the text (or matches a glob with *), e.g. V-005202-001 – then Blank, Group, colour… (F)"><span class="i">⌕</span><span class="l">Select by name</span></button>
   <div class="fpop" hidden><input placeholder="Part of a name, e.g. V-005202-001" spellcheck="false"><div class="hint"></div><button data-f="go">Select</button></div>
   <button data-t="showall" title="Show all: unblank every part (removed parts stay removed)"><span class="i">●</span><span class="l">Show all</span></button>
+  <button data-t="origin" title="Set the model origin: click a cylindrical face (its axis), then a flat face (its height); the model moves so that point is (0,0,0)"><span class="i">⊕</span><span class="l">Set origin</span></button>
   <button data-t="views" title="Camera views: save the current view (position and target), go to one, or put it in the script (camera <name> 2s)"><span class="i">📷</span><span class="l">Views</span></button>
   <div class="vpop" hidden></div>
   <button data-t="group" title="Create a group from the selected parts, or add them to one (G)"><span class="i">⊞</span><span class="l">Group</span></button>`;
@@ -1145,6 +1149,62 @@ function partsNamed(q: string): THREE.Object3D[] {
   }
   return out;
 }
+// ---- model origin: the axis of a cylindrical face at the height of a flat face → (0,0,0) ----
+let originPick: { step: 1 | 2; centre?: THREE.Vector3; radius?: number } | undefined;
+const originBanner = document.createElement('div');
+originBanner.style.cssText = 'position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:7;background:#14202c;color:#d7dde4;border:1px solid #f2b705;border-radius:6px;padding:6px 10px;font:12px system-ui;display:none;gap:8px;align-items:center';
+host().appendChild(originBanner);
+const originMarker = new THREE.Group();
+{
+  const m = new THREE.LineBasicMaterial({ color: 0xf2b705, depthTest: false });
+  const ring = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(Array.from({ length: 64 }, (_, i) => new THREE.Vector3(Math.cos(i / 32 * Math.PI), 0, Math.sin(i / 32 * Math.PI)))), m);
+  const axis = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, -1, 0), new THREE.Vector3(0, 1, 0)]), m);
+  originMarker.add(ring, axis); originMarker.renderOrder = 999; originMarker.visible = false;
+  scene3.add(originMarker);
+}
+function originStatus(text: string) {
+  originBanner.innerHTML = `⊕ ${text} <button data-o="cancel">Cancel</button>`;
+  originBanner.style.display = 'flex';
+  originBanner.querySelector<HTMLElement>('[data-o=cancel]')!.onclick = () => endOrigin();
+}
+function endOrigin() {
+  originPick = undefined; originBanner.style.display = 'none'; originMarker.visible = false;
+  toolbar.querySelector('[data-t=origin]')!.classList.remove('on');
+}
+function startOrigin() {
+  if (!cfg.cad_models?.length) { alert('Set origin moves the CAD model – this animation has none.'); return; }
+  originPick = { step: 1 };
+  toolbar.querySelector('[data-t=origin]')!.classList.add('on');
+  originStatus('1 / 2: click a <b>cylindrical face</b> (e.g. the vessel wall) – its axis is the origin in plan.');
+}
+function originClick(hit: THREE.Intersection) {
+  if (!originPick) return;
+  if (originPick.step === 1) {
+    const fit = fitVerticalCylinder(hit);
+    if (!fit) { originStatus('That isn\'t a vertical cylindrical face – click the curved wall of a vertical cylinder.'); return; }
+    originPick = { step: 2, centre: fit.centre, radius: fit.radius };
+    originMarker.position.copy(fit.centre); originMarker.scale.set(fit.radius, Math.max(fit.radius, 0.5), fit.radius); originMarker.visible = true;
+    originStatus(`Axis at x ${fit.centre.x.toFixed(3)}, z ${fit.centre.z.toFixed(3)} (Ø ${(fit.radius * 2).toFixed(3)} m). 2 / 2: click a <b>flat face</b> at the origin's height.`);
+    return;
+  }
+  const y = planeHeight(hit);
+  if (y === undefined) { originStatus('That face isn\'t horizontal – click a flat (horizontal) face for the height.'); return; }
+  const o = new THREE.Vector3(originPick.centre!.x, y, originPick.centre!.z);
+  originMarker.position.y = y;
+  if (!confirm(`Set the origin to this point?\n[${o.toArray().map((v) => v.toFixed(3)).join(', ')}] becomes (0, 0, 0): the CAD moves by [${o.toArray().map((v) => (-v).toFixed(3)).join(', ')}].\n\nSaved views and snapshot cameras move with it. Absolute numbers in the script (move … to, camera [..], cutaway at [..]) are not changed.`)) { endOrigin(); return; }
+  setOrigin(o);
+  endOrigin();
+}
+/** Move every CAD model (and the saved cameras) so the point o is the world origin; the studio reloads. */
+function setOrigin(o: THREE.Vector3) {
+  const shift = (v: number[]) => v.map((x, i) => +(x - o.getComponent(i)).toFixed(6));
+  const scene = clone(model.scene ?? {});
+  scene.cad_models = (cfg.cad_models ?? []).map((m: any) => ({ ...m, position: shift(m.position ?? [0, 0, 0]) }));
+  for (const v of Object.values(views)) { v.pos = shift(v.pos); v.look = shift(v.look); }
+  const items = clone(store.snapshots);
+  for (const sn of Object.values(items) as any[]) if (sn.camera) sn.camera = { pos: shift(sn.camera.pos), look: shift(sn.camera.look) };
+  edit({ scene, views: clone(views), snapshots: { active: store.active, items }, view: { ...(model.view ?? {}), camera: { pos: shift(camView().pos), look: shift(camView().look) } } });
+}
 /** Show all: clear every hide flag. */
 async function showAll() {
   if (!Object.values(state.hidden).some(Boolean)) return;
@@ -1162,6 +1222,7 @@ function updateTools() {
 toolbar.querySelector<HTMLElement>('[data-t=blank]')!.onclick = () => { tree.toggleHiddenSelected(); updateTools(); };
 toolbar.querySelector<HTMLElement>('[data-t=others]')!.onclick = () => void blankOthers();
 toolbar.querySelector<HTMLElement>('[data-t=showall]')!.onclick = () => void showAll();
+toolbar.querySelector<HTMLElement>('[data-t=origin]')!.onclick = () => (originPick ? endOrigin() : startOrigin());
 // select by name
 const fpop = toolbar.querySelector<HTMLElement>('.fpop')!, finput = fpop.querySelector('input')!, fhint = fpop.querySelector<HTMLElement>('.hint')!;
 const findCount = () => {
@@ -1324,7 +1385,7 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 }
 
 // read-only handle for tests and debugging
-(window as any).__studio = { built, state, store, cad, tree, tools, camera, controls, ui, assist: { host: assistHost, mount: assist }, get player() { return player; } };
+(window as any).__studio = { built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, assist: { host: assistHost, mount: assist }, get player() { return player; } };
 
 return {
   dispose() {

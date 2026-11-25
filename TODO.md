@@ -14,6 +14,9 @@
 - [ ] Simple combinations: group shapes into an assembly, and linear / circular arrays (e.g. bolt circles)
 - [ ] Optional later: extrude a 2D sketch, boolean cut (for markers, tools and stand-ins for missing CAD)
 
+## Origin
+- [ ] Set origin: cylinders with a non-vertical axis; also shift absolute script coordinates (offer to)
+
 ## Output
 - [ ] Video export (frame-by-frame render of the timeline)
 - [ ] PNG export: option for a solid background / chosen size
