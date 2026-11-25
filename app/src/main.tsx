@@ -7,7 +7,8 @@ import { Clapperboard as Icon } from "lucide-react";
 import { ModelEditor, SolverApp, configureApp } from "@solverkit/app";
 import { blankModel, services, store } from "./run";
 import type { Model } from "./run";
-import { downloadModel, parseModelFile } from "./module";   // registers the modules
+import { downloadModel } from "./module";
+import { readImport } from "./importOld";   // registers the modules
 import schema from "./model.schema.json";
 import helpText from "./help.md?raw";
 import "./index.css";
@@ -32,11 +33,12 @@ configureApp({
   store,
   home: {
     newModel: () => ({ name: "Untitled", problem: blankModel("Untitled") }),
-    importAccept: ".json,application/json",
+    importAccept: ".json,application/json,.zip,application/zip",
     importers: [{
-      match: (f) => /\.json$/i.test(f.name),
+      // an animation model file, or the old app's project (.json, or .zip with its 3D model)
+      match: (f) => /\.(json|zip)$/i.test(f.name),
       run: async (f, c) => {
-        const m = parseModelFile(await f.text());
+        const m = await readImport(f);
         return { open: (await store.createProject({ folder: c.folder, name: m.name ?? f.name, problem: m, on_conflict: c.onConflict })).id };
       },
     }],
