@@ -15,6 +15,13 @@ npm run build      # static site in dist/ (typecheck + bundle)
 Controls: **Space** play/pause, drag to orbit (turns off the scripted camera),
 GUI panel for speed, scrubbing, cutaway mode, X-ray shells and chapter jumps.
 
+**View toolbar** (floating, top right of the viewport):
+- **Shaded / Hidden line:** hidden line draws visible edges only, black on white. It's screen-space edge detection, so it works on the full plant, follows animation and cutaway, and the gizmo stays on top.
+- **Iso / Front / Top / Side / Fit:** frame everything visible.
+- **⤓ PNG:** saves the current view at 2× resolution.
+
+URL: `?mode=hidden&view=iso`.
+
 **Assembly tree** (left, ☰ toggles it): browse the generated model and loaded CAD,
 search by name, and click a row or the part in 3D to select it (its script id is shown with a copy button).
 Children are built when you expand a node and only on-screen rows are drawn, so trees of any size work.

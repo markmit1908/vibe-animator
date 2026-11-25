@@ -13,6 +13,7 @@ import { loadStore, store, useSnapshot, captureSnapshot, writeStore, markDirty, 
   isLocked, isHidden, isCad, state, type Snapshot } from './scene/state';
 import { TreePanel } from './view/tree';
 import { Triad } from './view/triad';
+import { DrawingMode } from './view/drawing';
 import { ScriptPanel } from './view/scriptPanel';
 import { AssistPanel } from './view/assistPanel';
 import { ASSIST_SYSTEM } from './assist/system';
@@ -205,7 +206,13 @@ if (isAnim) {
 const tabs = document.createElement('div'); tabs.className = 'rtabs';
 tabs.innerHTML = `<button data-t="script" class="on">Script</button><button data-t="assist">Assist</button>`;
 const tabCss = document.createElement('style');
-tabCss.textContent = `#right .rtabs { display: flex; border-top: 1px solid #222a33; } #right .rtabs button { flex: 1; background: transparent; color: #7b8794; border: 0; border-bottom: 2px solid transparent; padding: 6px; cursor: pointer; font: 600 12px system-ui; }
+tabCss.textContent = `#right { position: fixed; top: 0; right: 0; bottom: 0; width: 420px; display: flex; flex-direction: column; z-index: 5;
+  background: rgba(14,17,21,.95); border-left: 1px solid #222a33; }
+#right.collapsed { transform: translateX(420px); }
+#right .lil-gui.root { width: 100% !important; --width: 100%; max-height: 45vh; overflow: auto; flex: none; }
+#right-toggle { position: fixed; top: 8px; right: 428px; z-index: 6; background:#222a33; color:#d7dde4; border:1px solid #2b3540; border-radius:4px; padding:3px 8px; cursor:pointer; }
+body.right-collapsed #right-toggle { right: 8px; }
+#right .rtabs { display: flex; border-top: 1px solid #222a33; } #right .rtabs button { flex: 1; background: transparent; color: #7b8794; border: 0; border-bottom: 2px solid transparent; padding: 6px; cursor: pointer; font: 600 12px system-ui; }
   #right .rtabs button.on { color: #f2b705; border-bottom-color: #f2b705; } #script, #assist { border-top: 0 !important; }`;
 document.head.appendChild(tabCss);
 right.insertBefore(tabs, scriptPanel?.el ?? null);
@@ -624,6 +631,75 @@ window.addEventListener('resize', () => {
 
 const triad = new Triad();
 
+// ---------- view toolbar (floating, top right of the viewport): style, standard views, PNG export ----------
+const drawing = new DrawingMode(renderer, built.clipPlanes);
+const viewDirs: Record<string, [number, number, number]> = { iso: [1, 0.8, 1.1], front: [0, 0, 1], top: [0, 1, 0.0001], side: [1, 0, 0] };
+function viewFrom(dir: [number, number, number]) {
+  const b = new THREE.Box3();
+  built.root.traverse((o) => { if ((o as THREE.Mesh).isMesh && isShown(o) && (o as THREE.Mesh).geometry?.attributes?.position) b.expandByObject(o); });
+  if (b.isEmpty()) return;
+  const c = b.getCenter(new THREE.Vector3()), r = b.getSize(new THREE.Vector3()).length() / 2;
+  ui.followCamera = false; gui.controllersRecursive().forEach((x) => x.updateDisplay());
+  camera.position.copy(c).addScaledVector(new THREE.Vector3(...dir).normalize(), r / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.05);
+  camera.up.set(0, 1, 0);
+  controls.target.copy(c);
+  camera.near = Math.max(0.01, r / 500); camera.far = r * 20; camera.updateProjectionMatrix();
+  controls.update();
+}
+let lastView = 'view';
+function exportPng() {
+  const pr = renderer.getPixelRatio();
+  renderer.setPixelRatio(Math.min(4, pr * 2)); // 2× resolution
+  renderer.setSize(innerWidth, innerHeight, false);
+  drawFrame();
+  const url = renderer.domElement.toDataURL('image/png');
+  renderer.setPixelRatio(pr); renderer.setSize(innerWidth, innerHeight, false);
+  const a = document.createElement('a');
+  a.href = url; a.download = `${scriptName.replace(/\.\w+$/, '')}-${drawing.enabled ? 'hidden-line' : 'shaded'}-${lastView}-t${player.time.toFixed(1)}s.png`;
+  a.click();
+}
+{
+  const css = document.createElement('style');
+  css.textContent = `#viewbar { position: fixed; top: 8px; right: 468px; z-index: 6; display: flex; gap: 4px; padding: 4px; background: rgba(14,17,21,.9); border: 1px solid #2b3540; border-radius: 6px; font: 12px system-ui; }
+    body.right-collapsed #viewbar { right: 48px; }
+    body.paper #chapter { color: #111 !important; } body.paper #sub, body.paper #clock { color: #555 !important; }
+    #viewbar .grp { display: flex; } #viewbar .sep { width: 1px; background: #2b3540; margin: 0 4px; }
+    #viewbar button { background: #1b222a; color: #d7dde4; border: 1px solid #2b3540; padding: 3px 8px; cursor: pointer; font: inherit; }
+    #viewbar .grp button + button { border-left: 0; } #viewbar .grp button:first-child { border-radius: 4px 0 0 4px; } #viewbar .grp button:last-child { border-radius: 0 4px 4px 0; }
+    #viewbar button.on { background: #f2b705; color: #111; border-color: #f2b705; } #viewbar button:hover:not(.on) { background: #26303a; }`;
+  document.head.appendChild(css);
+  const bar = document.createElement('div'); bar.id = 'viewbar';
+  bar.innerHTML = `<div class="grp"><button data-m="shaded" class="on" title="Shaded (cel) view">Shaded</button><button data-m="hidden" title="Hidden line: visible edges only, black on white">Hidden line</button></div>
+    <div class="sep"></div>
+    <div class="grp"><button data-v="iso">Iso</button><button data-v="front">Front</button><button data-v="top">Top</button><button data-v="side">Side</button><button data-v="fit" title="Fit everything visible in the current direction">Fit</button></div>
+    <div class="sep"></div>
+    <button data-a="png" title="Save the view as a PNG at 2× resolution">⤓ PNG</button>`;
+  document.body.appendChild(bar);
+  const setMode = (m: string) => {
+    drawing.enabled = m === 'hidden';
+    document.body.classList.toggle('paper', drawing.enabled);
+    if (drawing.enabled) drawing.collectDecor(scene3, [gizmo.getHelper()]);
+    bar.querySelectorAll<HTMLElement>('[data-m]').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
+  };
+  bar.querySelectorAll<HTMLElement>('[data-m]').forEach((b) => (b.onclick = () => setMode(b.dataset.m!)));
+  bar.querySelectorAll<HTMLElement>('[data-v]').forEach((b) => (b.onclick = () => {
+    const v = b.dataset.v!;
+    if (v === 'fit') viewFrom(camera.position.clone().sub(controls.target).normalize().toArray() as [number, number, number]);
+    else { lastView = v; viewFrom(viewDirs[v]); }
+  }));
+  bar.querySelector<HTMLElement>('[data-a=png]')!.onclick = exportPng;
+  const m = new URLSearchParams(location.search).get('mode'); if (m) setMode(m);
+  const v = new URLSearchParams(location.search).get('view'); if (v && viewDirs[v]) { lastView = v; requestAnimationFrame(() => viewFrom(viewDirs[v])); }
+}
+
+/** One frame of the main view in the current style (+ gizmo on top in drawing mode). */
+function drawFrame() {
+  if (!drawing.enabled) { renderer.render(scene3, camera); return; }
+  drawing.render(scene3, camera);
+  const h = gizmo.getHelper();
+  if (gizmo.object) { renderer.autoClear = false; renderer.clearDepth(); renderer.render(h, camera); renderer.autoClear = true; }
+}
+
 // ---------- loop ----------
 const clock = new THREE.Clock();
 player.seek(Number(new URLSearchParams(location.search).get('t') ?? 0));
@@ -646,7 +722,7 @@ renderer.setAnimationLoop(() => {
 
   tree.update();
   scriptPanel?.setTiming(player.tl.lines, player.time);
-  renderer.render(scene3, camera);
+  drawFrame();
   triad.render(renderer, camera, document.body.classList.contains('tree-collapsed') ? 12 : 352);
 });
 

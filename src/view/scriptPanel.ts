@@ -107,10 +107,6 @@ export interface ScriptHooks {
 }
 
 const CSS = `
-#right { position: fixed; top: 0; right: 0; bottom: 0; width: 420px; display: flex; flex-direction: column; z-index: 5;
-  background: rgba(14,17,21,.95); border-left: 1px solid #222a33; }
-#right.collapsed { transform: translateX(420px); }
-#right .lil-gui.root { width: 100% !important; --width: 100%; max-height: 45vh; overflow: auto; flex: none; }
 #script { flex: 1; min-height: 0; display: flex; flex-direction: column; color: #d7dde4; font: 12px system-ui, sans-serif; }
 #script .bar { display: flex; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid #222a33; }
 #script .bar b { flex: 1; font-size: 12px; }
@@ -118,8 +114,6 @@ const CSS = `
 #script .bar .ok { color: #46a758; font-size: 11px; } #script .bar .err { color: #e5484d; font-size: 11px; }
 #script button, #script select { background: #222a33; color: inherit; border: 1px solid #2b3540; border-radius: 4px; padding: 2px 7px; cursor: pointer; font-size: 11px; }
 #script .host { flex: 1; min-height: 0; overflow: auto; }
-#right-toggle { position: fixed; top: 8px; right: 428px; z-index: 6; background:#222a33; color:#d7dde4; border:1px solid #2b3540; border-radius:4px; padding:3px 8px; cursor:pointer; }
-body.right-collapsed #right-toggle { right: 8px; }
 .cm-activeStep { background: rgba(242,183,5,.10) !important; }
 .cm-stepTime { font: 10px ui-monospace, monospace; color: #7b8794; padding: 0 6px 0 4px; cursor: pointer; position: relative; min-width: 42px; }
 .cm-stepTime:hover { color: #f2b705; }
