@@ -2,3 +2,8 @@ node_modules
 dist
 data/
 public/cad/*.glb
+
+# secrets (API keys)
+.env
+.env.*
+.dev
