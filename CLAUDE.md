@@ -15,6 +15,9 @@ used to illustrate the concept. Delivered live in a browser.
 - The compiler simulates a "virtual state" so each tween knows its from-value. `pick`/`place` expand into machine moves; the machine carries whatever it `held`s.
 - Cutaway: shells are clipped with the shared `clipPlanes` (each material needs `clippingPlanes` and `clipIntersection: true`). Core blocks inside the cut region are hidden whole. This is reapplied after `seek` each frame.
 
+- CAD (`cad_models` in core.yaml) is loaded **before** compiling (top-level await), so scripts can target CAD node ids (`<model>/<child>/…`).
+- Player resets only `tl.touched` ids each frame. Visibility = not faded (script) AND not cut (cutaway) AND not `userData.userHidden` (tree toggle). Keep all three when touching `.visible`.
+
 ## Conventions
 - Y is up, units are metres, and the core base is at y = 0. The operating floor sits at the vessel flange (`floorY`), and locations are relative to it.
 - The machine's origin is the grapple tip.

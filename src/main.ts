@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import GUI from 'lil-gui';
 import { parse } from 'yaml';
 import coreYaml from '../scenes/core.yaml?raw';
@@ -9,6 +8,8 @@ import { buildScene } from './scene/build';
 import { compile } from './timeline/compile';
 import { Player } from './timeline/player';
 import { applyCutaway, type CutMode } from './view/cutaway';
+import { loadCad } from './scene/cad';
+import { TreePanel } from './view/tree';
 
 const cfg = parse(coreYaml);
 const script = parse(refuelYaml);
@@ -33,6 +34,17 @@ const chapterEl = document.getElementById('chapter')!;
 const subEl = document.getElementById('sub')!;
 const clockEl = document.getElementById('clock')!;
 
+// ---------- CAD models (glTF in public/) – loaded before compiling so scripts can target them ----------
+try {
+  if (cfg.cad_models?.length) {
+    chapterEl.textContent = 'Loading CAD…';
+    await loadCad(cfg.cad_models, built);
+  }
+} catch (e: any) {
+  console.error(e);
+  subEl.textContent = `CAD load failed: ${e.message}`;
+}
+
 let player: Player;
 try {
   const tl = compile(script, built, script.camera ?? { pos: [12, 16, 14], look: [0, 5, 0] });
@@ -45,13 +57,6 @@ try {
 camera.position.copy(player.tl.camera.pos);
 controls.target.copy(player.tl.camera.look);
 
-// ---------- CAD overrides (glTF in public/) ----------
-const loader = new GLTFLoader();
-for (const [id, path] of Object.entries<string>(cfg.overrides ?? {})) {
-  const target = built.registry.get(id);
-  if (!target || (target as THREE.Mesh).isMesh) { console.warn(`override: "${id}" is not a group object`); continue; }
-  loader.load(`/${path}`, (gltf) => { target.clear(); target.add(gltf.scene); }, undefined, (err) => console.error(`override ${id}:`, err));
-}
 
 // ---------- UI ----------
 const ui = {
@@ -81,6 +86,27 @@ const chapters = gui.addFolder('Chapters');
 player.tl.steps.filter((s) => s.kind === 'label').forEach((s) =>
   chapters.add({ go: () => { player.seek(s.t); player.playing = true; } }, 'go').name(`${s.t.toFixed(0).padStart(3)}s  ${s.value}`));
 
+// ---------- assembly tree + 3D picking ----------
+const tree = new TreePanel(built, scene3);
+const sel = new URLSearchParams(location.search).get('select');
+if (sel) tree.selectId(sel);
+const raycaster = new THREE.Raycaster();
+let down = { x: 0, y: 0 };
+renderer.domElement.addEventListener('pointerdown', (e) => (down = { x: e.clientX, y: e.clientY }));
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return; // was a drag
+  const ndc = new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+  const hits = raycaster.intersectObject(built.root, true).filter((h) =>
+    (h.object as THREE.Mesh).isMesh && isShown(h.object) && !clipped(h.point));
+  tree.pick(hits[0]?.object);
+});
+const isShown = (o: THREE.Object3D | null): boolean => !o || (o.visible && isShown(o.parent));
+const clipped = (p: THREE.Vector3) => {
+  const [a, b] = built.clipPlanes;
+  return a.distanceToPoint(p) < 0 && b.distanceToPoint(p) < 0;
+};
+
 window.addEventListener('keydown', (e) => { if (e.code === 'Space') { e.preventDefault(); ui.play(); } });
 controls.addEventListener('start', () => { ui.followCamera = false; gui.controllersRecursive().forEach((c) => c.updateDisplay()); });
 window.addEventListener('resize', () => {
@@ -108,5 +134,6 @@ renderer.setAnimationLoop(() => {
   clockEl.textContent = `${player.time.toFixed(1)} / ${player.duration.toFixed(1)} s${player.playing ? '' : '  (paused)'}`;
   if (ui.time !== player.time) { ui.time = player.time; timeCtl.updateDisplay(); }
 
+  tree.update();
   renderer.render(scene3, camera);
 });

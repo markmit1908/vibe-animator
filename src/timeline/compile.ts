@@ -9,7 +9,7 @@ import type { BuiltScene } from '../scene/build';
 
 export interface Tween { start: number; dur: number; apply: (p: number) => void }
 export interface StepEvent { t: number; kind: 'label' | 'cutaway'; value: any; sub?: string }
-export interface Timeline { tweens: Tween[]; steps: StepEvent[]; duration: number; camera: CameraRig }
+export interface Timeline { tweens: Tween[]; steps: StepEvent[]; duration: number; camera: CameraRig; touched: string[] }
 export interface CameraRig { pos: THREE.Vector3; look: THREE.Vector3; initPos: THREE.Vector3; initLook: THREE.Vector3 }
 
 interface VState { pos: THREE.Vector3; color: THREE.Color; opacity: number }
@@ -231,7 +231,7 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
   const duration = runList(script.timeline ?? [], 0, baseVars);
   tweens.sort((x, y) => x.start - y.start);
   steps.sort((x, y) => x.t - y.t);
-  return { tweens, steps, duration, camera };
+  return { tweens, steps, duration, camera, touched: [...vs.keys()] };
 }
 
 export function bodyMaterials(obj: THREE.Object3D): THREE.MeshLambertMaterial[] {
@@ -247,7 +247,8 @@ function firstColor(obj: THREE.Object3D) {
 }
 
 export function setOpacity(obj: THREE.Object3D, o: number) {
-  obj.visible = o > 0.01;
+  obj.userData.faded = o <= 0.01;
+  obj.visible = !obj.userData.faded && !obj.userData.userHidden;
   obj.traverse((c) => {
     const m = (c as THREE.Mesh).material as THREE.Material | undefined;
     if (!m) return;

@@ -10,8 +10,11 @@ export class Player {
   private initial = new Map<THREE.Object3D, { pos: THREE.Vector3; colors: THREE.Color[] }>();
 
   constructor(public scene: BuiltScene, public tl: Timeline) {
-    for (const obj of scene.registry.values())
+    // only objects the script animates are reset each frame (CAD can add thousands of nodes)
+    for (const id of tl.touched) {
+      const obj = scene.registry.get(id)!;
       this.initial.set(obj, { pos: obj.position.clone(), colors: bodyMaterials(obj).map((m) => m.color.clone()) });
+    }
   }
 
   get duration() { return this.tl.duration; }

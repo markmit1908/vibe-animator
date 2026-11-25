@@ -15,17 +15,24 @@ npm run build      # static site in dist/ (typecheck + bundle)
 Controls: **Space** play/pause, drag to orbit (turns off the scripted camera),
 GUI panel for speed, scrubbing, cutaway mode, X-ray shells and chapter jumps.
 
+**Assembly tree** (left, ☰ toggles it): browse the generated model and loaded CAD,
+show or hide parts with ●, search by name, and click a row or the part in 3D to select it.
+The selected part's script id is shown with a copy button.
+URL params: `?t=42` opens at 42 s, `?select=R1-1/L5` selects a part.
+
 ## Files
 
 | Path | What it is |
 |---|---|
 | `scenes/core.yaml` | Model setup: core lattice, block sizes, vessel, head, machine, named locations, fresh-fuel staging, palette, CAD overrides |
 | `scripts/refuel.yaml` | Animation script (timeline + macros). Action reference is in the file header |
-| `public/cad/` | Drop `.glb` files here and reference them under `overrides:` |
+| `public/cad/` | Converted `.glb` files (git-ignored), listed under `cad_models:` in core.yaml |
 | `src/scene/build.ts` | Generates geometry from `core.yaml` |
 | `src/timeline/compile.ts` | Turns the script into tweens |
 | `src/timeline/player.ts` | Deterministic playback and seeking |
 | `src/view/cutaway.ts` | Section views |
+| `src/view/tree.ts` | Assembly tree panel, selection, visibility |
+| `src/scene/cad.ts` | Loads `cad_models`, restyles them, registers node ids |
 | `src/main.ts` | Renderer, UI, main loop |
 
 ## Object ids (for scripts)
@@ -74,11 +81,14 @@ Reading a large STEP is slow: the 757 MB plant model takes about 3 minutes and 6
 `audit` lists names shared by geometrically different parts, identical parts stored
 as separate copies instead of instances, and unnamed, empty or surface-only parts.
 
-1. Convert as above.
-2. Put the `.glb` in `public/cad/` and add an entry like `overrides: { vessel: cad/vessel.glb }` in `core.yaml`.
-3. The generated geometry for that group is replaced by the glTF. The pivot is the group's origin: the vessel's origin is the core base, and the head's origin is the flange face.
-
-Group objects can be overridden today. Per-block CAD overrides aren't supported yet.
+1. Convert as above into `public/cad/`.
+2. Add it to `core.yaml`:
+   ```yaml
+   cad_models:
+     - {id: plant, file: cad/plant.glb, position: [0, 0, 0], rotation_deg: [0, 0, 0]}
+   ```
+3. Every node appears in the assembly tree and can be used in scripts as `plant/<child>/<grandchild>…`.
+   Duplicate sibling names get a `#2`, `#3`… suffix. GPU-instanced parts (`×N`) move as one object.
 
 ## Visual style
 
