@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { mountStudio } from "../../src/studio/studio";
 import { joinLines } from "../../src/model/file";
 import type { Context } from "./module";
+import { mountAssist } from "./assist";
 import type { Model } from "./run";
 
 const fileUrl = (path: string) => `/api/files/${path.split("/").map(encodeURIComponent).join("/")}`;
@@ -54,6 +55,7 @@ export function StudioView({ c }: { c: Context }) {
         },
         fileUrl,
         assist: { base: "/api/assist/proxy", status: "/api/assist" },
+        mountAssist,
       });
       if (gone) s.dispose(); else studio = s;
     }).catch((e) => console.error("studio:", e));

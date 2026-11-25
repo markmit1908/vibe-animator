@@ -10,3 +10,15 @@
 @source "../node_modules/@solverkit/app/dist";
 @source "../node_modules/@solverkit/report/dist";
 @source "./";
+
+/* Assist replies (SolverKit's AssistPanel renders Markdown into .assist-reply without styles of its own). solverkit-candidate */
+.assist-reply { line-height: 1.5; }
+.assist-reply > * + * { margin-top: .5rem; }
+.assist-reply ul { list-style: disc; padding-left: 1.25rem; }
+.assist-reply ol { list-style: decimal; padding-left: 1.25rem; }
+.assist-reply h1, .assist-reply h2, .assist-reply h3 { font-weight: 600; }
+.assist-reply a { text-decoration: underline; }
+.assist-reply code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; background: var(--muted); padding: 0 .25rem; border-radius: .25rem; }
+.assist-reply pre { background: var(--muted); padding: .5rem .6rem; border-radius: .375rem; overflow-x: auto; }
+.assist-reply pre code { background: none; padding: 0; }
+.assist-reply pre + [data-insert] { margin-top: .25rem; }

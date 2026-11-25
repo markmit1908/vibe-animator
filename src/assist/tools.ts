@@ -180,7 +180,7 @@ export function proposeTools(d: ProposeDeps): AssistTool[] {
         const ok = r.errors.length === 0;
         const unlock = r.locked ?? [];
         const label = ok ? `✓ compiles · ${r.duration?.toFixed(1)} s${unlock.length ? ` · unlocks ${unlock.join(', ')}` : ''}` : `${r.errors.length} error${r.errors.length > 1 ? 's' : ''}`;
-        yield { type: 'proposal', proposal: { kind: 'script edit', summary: i.summary, check: { ok, label }, base, text, errors: r.errors, unlock } };
+        yield { type: 'proposal', kind: 'script edit', summary: i.summary, check: { ok, label }, base, text, errors: r.errors, unlock };
         return {
           content: ok
             ? `Proposed (${label}).${unlock.length ? ` Accepting it also unlocks ${unlock.join(', ')}, so don't propose a separate unlock.` : ''} The user will preview/accept or reject it; don't repeat the script in your reply – summarise the change in a sentence or two.`
@@ -251,7 +251,7 @@ export function modelProposeTools(d: ModelProposeDeps): AssistTool[] {
         });
         const ok = !problems.length;
         const label = ok ? `✓ ${changes.length} change${changes.length > 1 ? 's' : ''}` : `${problems.length} problem${problems.length > 1 ? 's' : ''}`;
-        yield { type: 'proposal', proposal: { kind: 'groups', summary: i.summary, check: { ok, label }, changes, problems } };
+        yield { type: 'proposal', kind: 'groups', summary: i.summary, check: { ok, label }, changes, problems };
         return { content: ok ? `Proposed (${label}); waiting for the user.` : `Proposed with problems:\n${problems.join('\n')}\nFix them and propose again.` };
       },
     },
@@ -285,7 +285,7 @@ export function modelProposeTools(d: ModelProposeDeps): AssistTool[] {
         });
         const ok = !problems.length;
         const n = changes.reduce((a: number, c: any) => a + c.ids.length, 0);
-        yield { type: 'proposal', proposal: { kind: 'state', summary: i.summary, check: { ok, label: ok ? `✓ ${n} part${n === 1 ? '' : 's'}` : `${problems.length} problem(s)` }, changes, problems } };
+        yield { type: 'proposal', kind: 'state', summary: i.summary, check: { ok, label: ok ? `✓ ${n} part${n === 1 ? '' : 's'}` : `${problems.length} problem(s)` }, changes, problems };
         return { content: ok ? `Proposed (${n} parts); waiting for the user.` : `Problems:\n${problems.join('\n')}` };
       },
     },

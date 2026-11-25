@@ -10,6 +10,8 @@ export class DrawingMode {
   enabled = false;
   lineColor = new THREE.Color(0x111111);
   paperColor = new THREE.Color(0xffffff);
+  /** Leave the background transparent (PNG export). */
+  set transparentBg(on: boolean) { this.mat.uniforms.clearBg.value = on ? 1 : 0; }
   /** line width in device pixels */
   thickness = 1.0;
   /** crease sensitivity: 1 - cos(angle) between neighbour normals */
@@ -36,13 +38,13 @@ export class DrawingMode {
         tNormal: { value: this.rt.texture }, tDepth: { value: this.rt.depthTexture },
         texel: { value: new THREE.Vector2() }, near: { value: 0.1 }, far: { value: 100 },
         thickness: { value: 1 }, nThr: { value: 0.25 }, dThr: { value: 0.004 },
-        lineColor: { value: this.lineColor }, paper: { value: this.paperColor },
+        lineColor: { value: this.lineColor }, paper: { value: this.paperColor }, clearBg: { value: 0 },
       },
       vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
       fragmentShader: `
         uniform sampler2D tNormal; uniform sampler2D tDepth; uniform vec2 texel;
         uniform float near; uniform float far; uniform float thickness; uniform float nThr; uniform float dThr;
-        uniform vec3 lineColor; uniform vec3 paper; varying vec2 vUv;
+        uniform vec3 lineColor; uniform vec3 paper; uniform float clearBg; varying vec2 vUv;
         float lin(float d){ return (near * far) / (far - d * (far - near)); }
         void main(){
           float d0 = texture2D(tDepth, vUv).r;
@@ -62,7 +64,9 @@ export class DrawingMode {
             vec3 n1 = texture2D(tNormal, uv).xyz * 2.0 - 1.0;
             if (1.0 - dot(n0, n1) > nThr) edge = max(edge, 1.0);                          // crease
           }
-          gl_FragColor = vec4(mix(paper, lineColor, edge), 1.0);
+          // transparent background (PNG export): empty space clear, parts keep their paper fill (premultiplied)
+          float a = (clearBg > 0.5 && d0 >= 0.9999) ? edge : 1.0;
+          gl_FragColor = vec4(mix(paper, lineColor, edge) * a, a);
         }`,
       depthTest: false, depthWrite: false,
     });

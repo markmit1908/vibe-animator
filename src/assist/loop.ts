@@ -20,14 +20,27 @@ export interface Proposal {
   state?: 'accepted' | 'rejected';
   [field: string]: unknown;
 }
-export interface ChatMessage { role: 'user' | 'assistant'; content: string; proposals?: Proposal[]; tools?: string[] }
+/** One message per proposal (SolverKit's ChatMessage); a reply's text goes with its last message. */
+export interface ChatMessage { role: 'user' | 'assistant'; content: string; proposal?: Proposal }
+/** Chats saved before the SolverKit panel kept a reply's proposals in one message (`proposals[]`, `tools[]`). */
+export function migrateChat(c: unknown): ChatMessage[] {
+  if (!Array.isArray(c)) return [];
+  return c.flatMap((m: any): ChatMessage[] => {
+    if (!m || (m.role !== 'user' && m.role !== 'assistant')) return [];
+    const ps: Proposal[] = m.proposal ? [m.proposal] : Array.isArray(m.proposals) ? m.proposals : [];
+    if (!ps.length) return [{ role: m.role, content: String(m.content ?? '') }];
+    const out: ChatMessage[] = ps.map((p) => ({ role: 'assistant', content: '', proposal: p }));
+    out[out.length - 1].content = String(m.content ?? '');
+    return out;
+  });
+}
 export interface AssistUsage { input: number; output: number; cache_read: number; cache_write: number }
 export type AssistEvent =
   | { type: 'text'; text: string }
   | { type: 'tool'; name: string; label: string }
   | { type: 'round'; round: number; of: number }
   | { type: 'writing'; what: string; chars: number }
-  | { type: 'proposal'; proposal: Proposal }
+  | ({ type: 'proposal'; kind: string; summary: string; check: Proposal['check'] } & Record<string, unknown>)
   | { type: 'done'; model: string; usage: AssistUsage; stop_reason?: string | null }
   | { type: 'error'; message: string };
 
@@ -56,7 +69,7 @@ export function assistClient(base = '/api/assist/proxy') {
 /** Earlier assistant turns as the model sees them: text plus what became of each proposal. */
 function noteFor(m: ChatMessage) {
   let t = m.content || '';
-  for (const p of m.proposals ?? []) {
+  for (const p of m.proposal ? [m.proposal] : []) {
     const s = p.state === 'accepted' ? 'accepted it' : p.state === 'rejected' ? 'rejected it' : 'has not decided yet';
     t += `\n\n[I proposed a ${p.kind}: ${p.summary}. The user ${s}.]`;
   }
@@ -67,7 +80,7 @@ function noteFor(m: ChatMessage) {
 export function messagesFor(history: ChatMessage[], context: Anthropic.ContentBlockParam[]): Anthropic.MessageParam[] {
   const out: { role: 'user' | 'assistant'; content: string }[] = [];
   for (const m of history) {
-    if (!m.content && !m.proposals?.length) continue;
+    if (!m.content && !m.proposal) continue;
     const c = m.role === 'assistant' ? noteFor(m) : m.content;
     const last = out[out.length - 1];
     if (last && last.role === m.role) last.content += `\n\n${c}`;

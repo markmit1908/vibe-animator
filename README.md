@@ -32,7 +32,7 @@ use the **Import old project (.zip)…** link on Home; the model goes into `CAD/
 **View toolbar:**
 - **Shaded / Hidden line:** hidden line draws visible edges only, black on white. ⚙ sets line weight, crease angle, sensitivity and colours.
 - **Iso / Front / Top / Side / Fit:** frame everything visible.
-- **⤓ PNG:** saves the view at 2× resolution.
+- **⤓ PNG:** saves the view at 2× resolution with a transparent background (no grid). In hidden-line mode the parts keep their white fill.
 
 URL options: `?t=12` (open at 12 s), `?select=<id>`, `?mode=hidden`, `?view=iso`, `?tab=assist`.
 
@@ -123,7 +123,7 @@ groups, lock/hide state and the top of the assembly tree.
 - **groups:** create, add, remove, delete.
 - **part state:** lock/unlock, hide/show, base colours, remove/restore.
 
-Every code block in a reply also has **Insert into script**. Chat controls: Stop (Esc), Edit, Regenerate, Copy, effort, New.
+The panel is SolverKit's Assist panel: Send/Stop (Esc gives the prompt back), Edit in place, Regenerate, Copy, **Clear**, and an **Accept all / Reject all** queue of waiting changes. Every code block in a reply has **Insert into script**; **Effort** sets how hard the model thinks.
 The conversation is saved in the animation file.
 
 **Setup:** put the key in the repo's `.env` (git-ignored) as `ANTHROPIC_API_KEY=…` (or `VITE_ANTHROPIC_API_KEY`) and

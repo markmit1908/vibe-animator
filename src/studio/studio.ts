@@ -17,9 +17,11 @@ import type { AnimModel } from '../model/file';
 import { joinLines } from '../model/file';
 import { DrawingMode } from '../view/drawing';
 import { ScriptPanel } from '../view/scriptPanel';
-import { AssistPanel } from '../view/assistPanel';
+import type { AssistHost, AssistMount } from '../assist/host';
+import { assistClient, migrateChat, runAssist, type ChatMessage } from '../assist/loop';
+import type Anthropic from '@anthropic-ai/sdk';
 import { ASSIST_SYSTEM } from '../assist/system';
-import { readTools, proposeTools, modelProposeTools, lineDiff, type ToolDeps } from '../assist/tools';
+import { readTools, proposeTools, modelProposeTools, type ToolDeps } from '../assist/tools';
 import type { Proposal } from '../assist/loop';
 import { parseAnim, toActions, type ParseError } from '../script/anim';
 import { ScriptError } from '../timeline/compile';
@@ -33,6 +35,8 @@ export interface StudioIO {
   fileUrl(path: string): string;
   /** The assist key proxy. */
   assist: { base: string; status: string };
+  /** Mount the assist panel (SolverKit's AssistPanel) into `el`. */
+  mountAssist?(el: HTMLElement, host: AssistHost): AssistMount;
 }
 
 /**
@@ -65,7 +69,7 @@ const animText: string = joinLines(model.script?.text);
 let script: any = toActions(parseAnim(animText).steps);
 let scriptErrors: ParseError[] = parseAnim(animText).errors;
 // ---------- renderer / scene ----------
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); // alpha: PNG export with a transparent background
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(W(), H());
 renderer.localClippingEnabled = true;
@@ -354,7 +358,7 @@ tabCss.textContent = `#right { position: absolute; top: 0; right: 0; bottom: 0; 
 #right-toggle { position: absolute; top: 8px; right: 428px; z-index: 6; background:#222a33; color:#d7dde4; border:1px solid #2b3540; border-radius:4px; padding:3px 8px; cursor:pointer; }
 .studio-root.right-collapsed #right-toggle { right: 8px; }
 #right .rtabs { display: flex; border-top: 1px solid #222a33; } #right .rtabs button { flex: 1; background: transparent; color: #7b8794; border: 0; border-bottom: 2px solid transparent; padding: 6px; cursor: pointer; font: 600 12px system-ui; }
-  #right .rtabs button.on { color: #f2b705; border-bottom-color: #f2b705; } #script, #assist { border-top: 0 !important; }`;
+  #right .rtabs button.on { color: #f2b705; border-bottom-color: #f2b705; } #script, #assist { border-top: 0 !important; } #assist { flex: 1; min-height: 0; display: flex; flex-direction: column; }`;
 document.head.appendChild(tabCss);
 right.insertBefore(tabs, scriptPanel?.el ?? null);
 // ---------- assist tools (read-only) ----------
@@ -488,80 +492,52 @@ function previewProposal(p: Proposal | undefined) {
   previewBanner.style.display = p ? 'flex' : 'none';
   previewBanner.innerHTML = p ? `▶ Previewing proposal: ${p.summary.replace(/</g, '&lt;')} <button style="margin-left:8px">End preview</button>` : '';
   previewBanner.querySelector('button')?.addEventListener('click', () => previewProposal(undefined));
-  assist.refreshCards();
+  assist?.refresh();
 }
 
-// conversation is saved beside the script (scripts/<name>.chat.json)
-const savedChat = (model.chat ?? []) as any[];
+// ---------- AI assist: SolverKit's AssistPanel, mounted by the app (io.mountAssist) ----------
+let chat: ChatMessage[] = migrateChat(model.chat);
 let chatTimer: number | undefined;
-const assist = new AssistPanel(right, {
-  saveHistory: (h) => {
+const assistEl = document.createElement('div'); assistEl.id = 'assist';
+right.appendChild(assistEl);
+const client = assistClient(io.assist.base);
+const assistHost: AssistHost = {
+  status: io.assist.status,
+  chat: () => chat,
+  onChat: (c) => {
+    chat = c;
     clearTimeout(chatTimer);
-    chatTimer = window.setTimeout(() => edit({ chat: JSON.parse(JSON.stringify(h)) }), 300);
+    chatTimer = window.setTimeout(() => edit({ chat: JSON.parse(JSON.stringify(c)) }), 300);
   },
-  endpoints: io.assist,
-  system: () => ASSIST_SYSTEM,
-  context: async () => [{ type: 'text', text: await assistContext() }],
-  tools: () => tools,
+  start: (history, signal, effort) => (async function* () {
+    const context: Anthropic.ContentBlockParam[] = [{ type: 'text', text: await assistContext() }];
+    yield* runAssist({ client, system: ASSIST_SYSTEM, history, context, tools, effort, signal });
+  })(),
+  script: () => scriptPanel?.text ?? '',
+  previewing: () => (previewing ? String(previewing.text) : undefined),
+  preview: (p) => previewProposal(p),
   insertCode: (code) => {
     if (!scriptPanel) return;
     const v = scriptPanel.view, l = v.state.doc.line(scriptPanel.cursorLine);
     v.dispatch({ changes: { from: l.to, insert: `\n${code.replace(/\n$/, '')}` } });
     showTab('script'); v.focus();
   },
-  renderProposal: (p, el, decide) => {
-    if (p.kind === 'groups' || p.kind === 'state') {
-      const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;');
-      const lines = p.kind === 'groups'
-        ? (p.changes as any[]).map((c) => `${c.action} <b>@${esc(c.name)}</b>${c.ids.length ? ` – ${c.ids.length} part${c.ids.length > 1 ? 's' : ''}: ${esc(c.ids.slice(0, 4).map((x: string) => x.split('/').pop()).join(', '))}${c.ids.length > 4 ? ' …' : ''}` : ''}`)
-        : (p.changes as any[]).map((c) => `${[c.lock === true ? '🔒 lock' : c.lock === false ? '🔓 unlock' : '', c.hide === true ? 'hide' : c.hide === false ? 'show' : '', c.color ? `colour <span style="display:inline-block;width:9px;height:9px;background:${c.color}"></span> ${c.color}` : c.color === null ? 'reset colour' : '', c.remove === true ? 'remove from assembly' : c.remove === false ? 'restore' : ''].filter(Boolean).join(' + ')} – ${esc((c.targets as string[]).join(', '))} (${c.ids.length} part${c.ids.length === 1 ? '' : 's'})`);
-      const probs = (p.problems as string[] | undefined) ?? [];
-      el.innerHTML = `<ul style="margin:6px 0;padding-left:18px">${lines.map((l) => `<li>${l}</li>`).join('')}</ul>
-        ${probs.length ? `<div class="err">${probs.map(esc).join('<br>')}</div>` : ''}
-        ${p.state ? '' : `<div style="display:flex;gap:6px"><button data-a="accept" ${p.check.ok ? '' : 'disabled'}>Accept</button><button data-a="reject">Reject</button></div>`}`;
-      el.querySelector<HTMLElement>('[data-a=accept]')?.addEventListener('click', async () => {
-        if (p.kind === 'groups') applyGroupChanges(p.changes as any); else await applyStateChanges(p.changes as any);
-        decide('accepted');
-      });
-      el.querySelector<HTMLElement>('[data-a=reject]')?.addEventListener('click', () => decide('rejected'));
-      return;
-    }
-    if (p.kind !== 'script edit') return;
-    const diff = lineDiff(String(p.base ?? ''), String(p.text));
-    // show changes with 2 lines of context
-    const keep = diff.map((_, i) => diff.slice(Math.max(0, i - 2), i + 3).some(([k]) => k !== ' '));
-    let html = '', gap = false;
-    diff.forEach(([k, l], i) => {
-      if (!keep[i]) { if (!gap) html += '<div style="color:#5b6670">⋯</div>'; gap = true; return; }
-      gap = false;
-      const c = k === '+' ? 'background:#16301c;color:#9be9a8' : k === '-' ? 'background:#3a1a1a;color:#ffaaaa;text-decoration:line-through' : 'color:#7b8794';
-      html += `<div style="${c}">${k} ${l.replace(/&/g, '&amp;').replace(/</g, '&lt;') || '&nbsp;'}</div>`;
-    });
-    const errs = (p.errors as any[] | undefined) ?? [];
-    el.innerHTML = `<pre style="max-height:260px;overflow:auto;margin:6px 0;padding:4px 6px;background:#0a0c0f;border-radius:4px;font:11px ui-monospace,monospace;white-space:pre">${html}</pre>
-      ${errs.length ? `<div class="err">${errs.map((e) => `line ${e.line}: ${e.message}`).join('<br>').replace(/</g, '&lt;').replace(/&lt;br>/g, '<br>')}</div>` : ''}
-      ${p.state ? '' : `<div style="display:flex;gap:6px;margin-top:4px">
-        ${p.check.ok ? `<button data-a="preview">${previewing === p ? '■ End preview' : '▶ Preview'}</button>` : ''}
-        <button data-a="accept" ${p.check.ok ? '' : 'title="It does not compile – you can still accept and fix it in the editor"'}>${(p.unlock as string[] | undefined)?.length ? `Accept + unlock ${(p.unlock as string[]).join(', ')}` : 'Accept'}</button>
-        <button data-a="reject">Reject</button></div>`}`;
-    el.querySelector<HTMLElement>('[data-a=preview]')?.addEventListener('click', () => previewProposal(previewing === p ? undefined : p));
-    el.querySelector<HTMLElement>('[data-a=accept]')?.addEventListener('click', async () => {
-      if (!scriptPanel) return;
-      if (scriptPanel.text !== p.base && !confirm('The script has changed since this was proposed. Replace it with the proposal anyway?')) return;
-      if (previewing) previewProposal(undefined);
-      const unlock = (p.unlock as string[] | undefined) ?? [];
-      if (unlock.length) await applyStateChanges([{ ids: resolveIds(unlock).ids, lock: false }]); // the script needs these movable
-      scriptPanel.setText(String(p.text));
-      decide('accepted');
-      showTab('script');
-    });
-    el.querySelector<HTMLElement>('[data-a=reject]')?.addEventListener('click', () => { if (previewing === p) previewProposal(undefined); decide('rejected'); });
+  accept: async (p) => {
+    if (p.kind === 'groups') { applyGroupChanges(p.changes as any); return; }
+    if (p.kind === 'state') { await applyStateChanges(p.changes as any); return; }
+    if (p.kind !== 'script edit' || !scriptPanel) return;
+    if (previewing) previewProposal(undefined);
+    const unlock = (p.unlock as string[] | undefined) ?? [];
+    if (unlock.length) await applyStateChanges([{ ids: resolveIds(unlock).ids, lock: false }]); // the script needs these movable
+    scriptPanel.setText(String(p.text));
+    showTab('script');
   },
-}, Array.isArray(savedChat) ? savedChat : []);
+};
+const assist = io.mountAssist?.(assistEl, assistHost);
 const showTab = (t: string) => {
   tabs.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
   if (scriptPanel) scriptPanel.el.style.display = t === 'script' ? '' : 'none';
-  assist.el.style.display = t === 'assist' ? '' : 'none';
+  assistEl.style.display = t === 'assist' ? '' : 'none';
 };
 tabs.querySelectorAll('button').forEach((b) => (b.onclick = () => showTab(b.dataset.t!)));
 showTab(new URLSearchParams(location.search).get('tab') ?? (scriptPanel ? 'script' : 'assist'));
@@ -851,8 +827,13 @@ function exportPng() {
   const pr = renderer.getPixelRatio();
   renderer.setPixelRatio(Math.min(4, pr * 2)); // 2× resolution
   renderer.setSize(W(), H(), false);
+  // transparent background: no scene background or ground grid, clear to alpha 0
+  const bg = scene3.background, grids: THREE.Object3D[] = [];
+  scene3.traverse((o) => { if ((o as THREE.GridHelper).type === 'GridHelper' && o.visible) { grids.push(o); o.visible = false; } });
+  scene3.background = null; renderer.setClearColor(0x000000, 0); drawing.transparentBg = true;
   drawFrame();
   const url = renderer.domElement.toDataURL('image/png');
+  scene3.background = bg; grids.forEach((o) => (o.visible = true)); drawing.transparentBg = false;
   renderer.setPixelRatio(pr); renderer.setSize(W(), H(), false);
   const a = document.createElement('a');
   a.href = url; a.download = `${scriptName.replace(/\.\w+$/, '')}-${drawing.enabled ? 'hidden-line' : 'shaded'}-${lastView}-t${player.time.toFixed(1)}s.png`;
@@ -882,7 +863,7 @@ function exportPng() {
     <div class="sep"></div>
     <div class="grp"><button data-v="iso">Iso</button><button data-v="front">Front</button><button data-v="top">Top</button><button data-v="side">Side</button><button data-v="fit" title="Fit everything visible in the current direction">Fit</button></div>
     <div class="sep"></div>
-    <button data-a="png" title="Save the view as a PNG at 2× resolution">⤓ PNG</button>
+    <button data-a="png" title="Save the view as a PNG at 2× resolution, with a transparent background">⤓ PNG</button>
     <button data-a="cfg" title="Hidden-line settings">⚙</button>
     <div class="pop" hidden>
       <label>Line weight <input type="range" data-k="thickness" min="0.5" max="4" step="0.25"><span></span></label>
@@ -1017,17 +998,17 @@ if (new URLSearchParams(location.search).get('debug') === 'proposal' && scriptPa
   const t = tools.find((x) => x.name === 'propose_script_edit')!;
   const draft = scriptPanel.text.replace(/^wait 2s$/m, 'wait 1s\nmove head by [0,3,0] 4s\nhighlight head spent 1s');
   const g = t.run({ text: draft, summary: 'Lift the head 3 m and mark it' });
-  const msg: any = { role: 'assistant', content: 'Here is a change that lifts the head.', proposals: [] };
-  for (let r = await g.next(); !r.done; r = await g.next()) if (r.value.type === 'proposal') msg.proposals.push(r.value.proposal);
-  assist.history.push({ role: 'user', content: 'Lift the head 3 m' }, msg);
-  assist.refreshCards();
+  let prop: any;
+  for (let r = await g.next(); !r.done; r = await g.next()) if (r.value.type === 'proposal') { const { type: _t, ...p } = r.value; prop = p; }
+  assistHost.onChat([...chat, { role: 'user', content: 'Lift the head 3 m' }, { role: 'assistant', content: 'Here is a change that lifts the head.', proposal: prop }]);
+  assist?.refresh();
 }
 
 // ?debug=model-proposals: run propose_groups / propose_state and apply them (headless check; nothing is saved)
 if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
   const run = async (name: string, input: any) => {
     const g = tools.find((x) => x.name === name)!.run(input); let p: any, r = await g.next();
-    for (; !r.done; r = await g.next()) if (r.value.type === 'proposal') p = r.value.proposal;
+    for (; !r.done; r = await g.next()) if (r.value.type === 'proposal') p = r.value;
     return { p, result: r.value.content };
   };
   const out: any = {};
@@ -1045,13 +1026,14 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 }
 
 // read-only handle for tests and debugging
-(window as any).__studio = { built, state, store, cad, tree, get player() { return player; } };
+(window as any).__studio = { built, state, store, cad, tree, tools, assist: { host: assistHost, mount: assist }, get player() { return player; } };
 
 return {
   dispose() {
     disposed = true;
     scriptPanel?.destroy();
     clearTimeout(chatTimer);
+    assist?.dispose();
     renderer.setAnimationLoop(null);
     ac.abort(); ro.disconnect();
     gizmo.dispose?.(); controls.dispose();

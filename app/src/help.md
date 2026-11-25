@@ -20,7 +20,7 @@ New, Duplicate, Rename, Delete (to the trash), folders and versions for your ani
 **View toolbar:**
 - **Shaded / Hidden line:** ⚙ sets the line style.
 - **Iso / Front / Top / Side / Fit**
-- **⤓ PNG**
+- **⤓ PNG:** 2× resolution, transparent background
 
 # Assembly tree
 

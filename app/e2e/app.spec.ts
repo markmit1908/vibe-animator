@@ -136,7 +136,7 @@ test("the studio fills the editor area: nothing under the header or status bar",
   const main = await box("main"), host = await box("main > div");
   expect(host).toEqual(main);
   await page.getByRole("button", { name: "Assist", exact: true }).click();
-  const input = await box("#assist .input"), footer = await box("footer");
+  const input = await box("#assist form"), footer = await box("footer");
   expect(input.y + input.height).toBeLessThanOrEqual(footer.y + 0.5);
   await expect(page.getByRole("button", { name: "Send", exact: true })).toBeInViewport();
 });
@@ -363,4 +363,63 @@ test("the colour picker offers the colours already in the model", async ({ page 
   await page.locator('#tree .info [data-a=palkey]').evaluate((e: HTMLInputElement) => { e.value = "#c0392b"; e.dispatchEvent(new Event("change")); });
   await expect.poll(async () => (await model(page, a.id)).view?.paletteKey).toBe("#c0392b");
   await expect(page.locator('#tree .info [data-row=palette] [data-swatch]').first()).toHaveAttribute("data-swatch", "#c0392b");
+});
+
+test("assist is SolverKit's panel: a proposal card previews, accepts into the script, and the chat clears", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Assist", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "A"\nwait 2s' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Assist");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  await page.locator("#right [data-t=assist]").click();
+  await expect(page.getByRole("button", { name: "Send" })).toBeDisabled();       // icon button, disabled while empty
+  // a proposal made by the real tool, as the loop would deliver it
+  await page.evaluate(async () => {
+    const s = (window as any).__studio;
+    const g = s.tools.find((t: any) => t.name === "propose_script_edit").run({ text: 'label "A"\nmove head by [0,3,0] 4s', summary: "Lift the head" });
+    let p: any; for (let r = await g.next(); !r.done; r = await g.next()) if (r.value.type === "proposal") { const { type, ...x } = r.value; p = x; }
+    s.assist.host.onChat([{ role: "user", content: "Lift the head" }, { role: "assistant", content: "Here you go.", proposal: p }]);
+    s.assist.mount.refresh();
+  });
+  const card = page.getByTestId("proposal");
+  await expect(card).toContainText("Lift the head");
+  await expect(page.getByTestId("proposal-queue")).toContainText("1 change waiting");
+  await page.getByRole("button", { name: "Preview" }).click();
+  await expect(page.getByTestId("assistant").getByRole("button", { name: "End preview" })).toBeVisible();
+  await card.getByRole("button", { name: "Accept" }).click();
+  await expect(page.locator("#script .cm-content")).toContainText("move head by [0,3,0] 4s");
+  await expect.poll(async () => (await model(page, a.id)).chat?.[1]?.proposal?.state).toBe("accepted");
+  await page.locator("#right [data-t=assist]").click();
+  await page.getByRole("button", { name: "Clear conversation" }).click();
+  await expect.poll(async () => (await model(page, a.id)).chat).toEqual([]);
+});
+
+test("PNG export has a transparent background (shaded and hidden line)", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Png", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "P"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Png");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const alphaAt = async () => {
+    const dl = page.waitForEvent("download");
+    await page.locator("#viewbar [data-a=png]").click();
+    const f = await (await dl).path(); const b64 = (await import("node:fs")).readFileSync(f).toString("base64");
+    return page.evaluate(async (src) => {
+      const img = new Image(); img.src = src; await img.decode();
+      const c = document.createElement("canvas"); c.width = img.width; c.height = img.height;
+      const g = c.getContext("2d")!; g.drawImage(img, 0, 0);
+      const px = (x: number, y: number) => g.getImageData(x, y, 1, 1).data[3];
+      let opaque = 0; for (let x = 0; x < img.width; x += 7) opaque += px(x, img.height >> 1) > 0 ? 1 : 0;
+      return { corner: px(2, 2), opaque };
+    }, `data:image/png;base64,${b64}`);
+  };
+  const shaded = await alphaAt();
+  expect(shaded.corner).toBe(0);           // empty space is transparent
+  expect(shaded.opaque).toBeGreaterThan(0); // the model is drawn
+  await page.locator("#viewbar button", { hasText: "Hidden line" }).click();
+  const hidden = await alphaAt();
+  expect(hidden.corner).toBe(0);
+  expect(hidden.opaque).toBeGreaterThan(0);
 });
