@@ -44,7 +44,7 @@ The panel sits on the right, under the controls:
   At t = 0 the gizmo sets the start pose instead (snapshot placements).
 - **📷** inserts the current camera view as a step. Script edits autosave into the animation file.
 
-Syntax reference: see the header of `scripts/plant.anim`.
+Syntax reference: `src/script/anim.ts` (file header) and the assistant's system prompt (`src/assist/system.ts`).
 
 ## AI assist (Assist tab)
 
@@ -109,7 +109,7 @@ Reading a large STEP is slow: the 757 MB plant model takes about 3 minutes and 6
 as separate copies instead of instances, and unnamed, empty or surface-only parts.
 
 1. Convert as above into `public/cad/`.
-2. Add it to `core.yaml`:
+2. Reference it in the animation's `scene.cad_models` (vault path, e.g. `CAD/plant.glb`):
    ```yaml
    cad_models:
      - {id: plant, file: cad/plant.glb, up: x, ground: true, position: [16, 0, 0]}
@@ -122,7 +122,7 @@ as separate copies instead of instances, and unnamed, empty or surface-only part
 
 Cel-shaded "technical illustration" look: black background, three-band toon
 shading, black outlines, off-white structure and a copper accent. Colours live
-in `palette:` in `core.yaml`.
+in the animation's `scene.palette`.
 
 ## Status / roadmap
 
@@ -131,7 +131,7 @@ in `palette:` in `core.yaml`.
 - [x] Cutaway (half/quarter), X-ray, chapters, scrubbing
 - [ ] Real dimensions (all current values are **placeholders**)
 - [ ] Section caps on clipped shells, 3D callout labels
-- [x] Thick outlines on blocks and shells (inverted hull; `outline_width` in core.yaml)
+- [x] Thick outlines on blocks and shells (inverted hull; `scene.outline_width`)
 - [ ] Outlines for imported CAD
 - [ ] Video export
 - [x] STEP→glTF conversion script (`tools/step2gltf.py`)
