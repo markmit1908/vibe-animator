@@ -42,7 +42,8 @@ export async function mountStudio(root: HTMLElement, model: AnimModel, io: Studi
 const ac = new AbortController();
 const on = (t: string, f: any) => window.addEventListener(t, f, { signal: ac.signal });
 root.replaceChildren();
-root.style.position = 'relative'; root.style.overflow = 'hidden';
+if (getComputedStyle(root).position === 'static') root.style.position = 'relative'; // keep a host's own positioning
+root.style.overflow = 'hidden';
 setHost(root);
 const mk = (id: string, css: string) => { const d = document.createElement('div'); d.id = id; d.style.cssText = css; root.appendChild(d); return d; };
 mk('app', 'position:absolute;inset:0;background:#050607');
@@ -147,6 +148,10 @@ const frameAll = () => {
   return { pos: c.clone().addScaledVector(dir, d).toArray(), look: c.toArray() };
 };
 const defaultCam = script.camera ?? frameAll();
+// gizmo selection / drag state (declared early: buildTimeline → onTimeline reads them)
+let gSel: { spec?: string; objs: THREE.Object3D[] } = { objs: [] };
+let drag: { members: { o: THREE.Object3D; world: THREE.Matrix4; p: THREE.Vector3; q: THREE.Quaternion }[]; pivot: THREE.Matrix4 } | undefined;
+let gizmoReady = false; // set once the gizmo exists (timeline refreshes before that skip it)
 let previewUnlocked = new Set<string>(); // parts a previewed assist proposal would unlock
 /** Compile the current script. On error the previous timeline keeps playing. */
 function buildTimeline(): boolean {
@@ -222,7 +227,7 @@ function rebuildChapters() {
   timeCtl.max(player.duration);
 }
 rebuildChapters();
-onTimeline = () => { rebuildChapters(); if (!drag) gizmoFor?.(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs); };
+onTimeline = () => { rebuildChapters(); if (!drag && gizmoReady) gizmoFor?.(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs); };
 
 // ---------- script panel (.anim) ----------
 if (isAnim) {
@@ -594,8 +599,7 @@ const gizmo = new TransformControls(camera, renderer.domElement);
 gizmo.setSize(0.8);
 scene3.add(gizmo.getHelper());
 const proxy = new THREE.Object3D(); proxy.name = '__gizmo_pivot'; scene3.add(proxy);
-let gSel: { spec?: string; objs: THREE.Object3D[] } = { objs: [] };
-let drag: { members: { o: THREE.Object3D; world: THREE.Matrix4; p: THREE.Vector3; q: THREE.Quaternion }[]; pivot: THREE.Matrix4 } | undefined;
+gizmoReady = true;
 
 const worldBox = (objs: THREE.Object3D[]) => { const b = new THREE.Box3(); objs.forEach((o) => b.expandByObject(o)); return b; };
 const resolveSpec = (spec: string): THREE.Object3D[] => spec.startsWith('@')

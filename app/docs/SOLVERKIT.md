@@ -27,3 +27,12 @@ generated stub leaves to do; `grep -rn "TODO(" .` finds them in the code.
 - TODO(examples): the solver's examples in `src/examples/` (each opens as a copy).
 - TODO(help): `src/help.md`, one topic per heading.
 - TODO(e2e): `e2e/app.spec.ts`.
+
+## SolverKit candidates found during the migration (propose in the SolverKit repo)
+1. **Home: app importers can't claim a `.zip`.** `Home.tsx` `importFile` sends every `.zip` to the built-in archive
+   import before `opts.importers`. Proposal: try `importers.find(match)` first (or an importer flag `claimsZip`).
+   Until then: `src/oldImportSection.tsx` (a Home section, `// solverkit-candidate`).
+2. **Home: "New model" ignores `manifest.noun`** (shows "New model" in an app whose noun is "animation").
+3. **create-solver template:** with modules that exclude `runs`, the generated `src/module.tsx` still calls
+   `runsModule(...)` without importing it.
+4. **Views without runs:** works (`ModelEditor` `run` optional); nothing to change, noted for apps without an engine.

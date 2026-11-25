@@ -2,6 +2,7 @@
 import { defineModule, saveModelFile, modelFileModule, helpModule } from "@solverkit/app";
 import { Clapperboard } from "lucide-react";
 import { StudioView } from "./studio";
+import { OldImportSection } from "./oldImportSection";
 import type { EditorContext } from "@solverkit/app";
 import type { Model } from "./run";
 import { canonical, readModel } from "../../src/model/file";
@@ -22,3 +23,4 @@ defineModule(helpModule());
 
 // The studio: 3D view, assembly tree, script editor and the animation assistant, edge to edge.
 defineModule({ name: "studio", views: [{ id: "studio", label: "Studio", icon: Clapperboard, order: 0, fill: true, render: (c: Context) => <StudioView c={c} /> }] });
+defineModule({ name: "old-import", homeSections: [{ id: "old-import", order: 90, render: () => <OldImportSection /> }] });

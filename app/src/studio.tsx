@@ -23,19 +23,26 @@ export function StudioView({ c }: { c: Context }) {
     if (content(c.model) !== mine.current) { mine.current = content(c.model); setGeneration((g) => g + 1); }
   }, [c.model]);
 
+  // mounts run one after another: a studio still loading when its effect is cleaned up (React StrictMode mounts
+  // twice; a remount after an outside change) must not tear down its successor, which shares the container
+  const chain = useRef<Promise<void>>(Promise.resolve());
   useEffect(() => {
     let studio: { dispose(): void } | undefined, gone = false;
-    const model = ctx.current.current();
-    mine.current = content(model);
-    mountStudio(host.current!, model, {
-      edit: (patch) => {
-        mine.current = content({ ...ctx.current.current(), ...(patch as Partial<Model>) });
-        ctx.current.edit(patch as Partial<Model>);
-      },
-      fileUrl,
-      assist: { base: "/api/assist/proxy", status: "/api/assist" },
-    }).then((s) => { if (gone) s.dispose(); else studio = s; }, (e) => console.error("studio:", e));
-    return () => { gone = true; studio?.dispose(); };
+    chain.current = chain.current.then(async () => {
+      if (gone) return;
+      const model = ctx.current.current();
+      mine.current = content(model);
+      const s = await mountStudio(host.current!, model, {
+        edit: (patch) => {
+          mine.current = content({ ...ctx.current.current(), ...(patch as Partial<Model>) });
+          ctx.current.edit(patch as Partial<Model>);
+        },
+        fileUrl,
+        assist: { base: "/api/assist/proxy", status: "/api/assist" },
+      });
+      if (gone) s.dispose(); else studio = s;
+    }).catch((e) => console.error("studio:", e));
+    return () => { gone = true; studio?.dispose(); studio = undefined; };
   }, [c.id, generation]);
   return <div ref={host} style={{ position: "absolute", inset: 0 }} />;
 }
