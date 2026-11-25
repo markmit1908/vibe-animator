@@ -179,11 +179,12 @@ export function proposeTools(d: ProposeDeps): AssistTool[] {
         const r = d.checkScript(text);
         const ok = r.errors.length === 0;
         const unlock = r.locked ?? [];
-        const label = ok ? `✓ compiles · ${r.duration?.toFixed(1)} s${unlock.length ? ` · unlocks ${unlock.join(', ')}` : ''}` : `${r.errors.length} error${r.errors.length > 1 ? 's' : ''}`;
+        const names = unlock.slice(0, 4).map((x) => x.split('/').pop()).join(', ') + (unlock.length > 4 ? ` … ${unlock.length - 4} more` : '');
+        const label = ok ? `✓ compiles · ${r.duration?.toFixed(1)} s${unlock.length ? ` · unlocks ${unlock.length} part${unlock.length === 1 ? '' : 's'}` : ''}` : `${r.errors.length} error${r.errors.length > 1 ? 's' : ''}`;
         yield { type: 'proposal', kind: 'script edit', summary: i.summary, check: { ok, label }, base, text, errors: r.errors, unlock };
         return {
           content: ok
-            ? `Proposed (${label}).${unlock.length ? ` Accepting it also unlocks ${unlock.join(', ')}, so don't propose a separate unlock.` : ''} The user will preview/accept or reject it; don't repeat the script in your reply – summarise the change in a sentence or two.`
+            ? `Proposed (${label}).${unlock.length ? ` Accepting it also unlocks the ${unlock.length} locked part(s) it animates (${names}), so don't propose a separate unlock.` : ''} The user will preview/accept or reject it; don't repeat the script in your reply – summarise the change in a sentence or two.`
             : `Proposed, but it does not compile:\n${r.errors.map((e) => `line ${e.line}: ${e.message}`).join('\n')}\nFix it with check_script and propose again.`,
         };
       },

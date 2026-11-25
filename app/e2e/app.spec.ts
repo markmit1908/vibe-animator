@@ -423,3 +423,33 @@ test("PNG export has a transparent background (shaded and hidden line)", async (
   expect(hidden.corner).toBe(0);
   expect(hidden.opaque).toBeGreaterThan(0);
 });
+
+test("locked parts: the error has an Unlock button for every locked part the script moves; AI Accept unlocks them too", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Locks", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "L"\nlist @two = head, bolts\neach @two stagger 0.5s {\n  move $ by [0,1,0] 1s\n}' },
+    snapshots: { active: "default", items: { default: { locked: { head: true, bolts: true, vessel: true }, hidden: {} } } }, groups: {} };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Locks");
+  await expect(page.locator("#script .status")).toHaveText("1 error", { timeout: 15_000 });
+  const fix = page.locator("#script .bar button.fix");
+  await expect(fix).toHaveText("🔓 Unlock 2 parts");             // both loop items, not just the first
+  await fix.click();
+  await expect(page.locator("#script .status")).toHaveText("✓");
+  await expect(fix).toBeHidden();
+  await expect.poll(async () => (await model(page, a.id)).snapshots.items.default.locked).toEqual({ head: false, bolts: false, vessel: true });
+  // AI proposal moving the locked vessel inside a parallel block, several targets per line
+  await page.locator("#right [data-t=assist]").click();
+  await page.evaluate(async () => {
+    const s = (window as any).__studio;
+    const text = 'label "L"\nparallel {\n  move vessel, head by [0,1,0] 1s\n  color bolts #ff0000 1s\n}';
+    const g = s.tools.find((t: any) => t.name === "propose_script_edit").run({ text, summary: "Lift all" });
+    let p: any; for (let r = await g.next(); !r.done; r = await g.next()) if (r.value.type === "proposal") { const { type, ...x } = r.value; p = x; }
+    s.assist.host.onChat([{ role: "user", content: "Lift all" }, { role: "assistant", content: "", proposal: p }]);
+    s.assist.mount.refresh();
+  });
+  await expect(page.getByTestId("assistant")).toContainText("Accept also unlocks vessel");
+  await page.getByTestId("proposal").getByRole("button", { name: "Accept" }).click();
+  await expect(page.locator("#script .status")).toHaveText("✓");
+  await expect.poll(async () => (await model(page, a.id)).snapshots.items.default.locked.vessel).toBe(false);
+});

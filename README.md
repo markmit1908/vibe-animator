@@ -105,7 +105,7 @@ each @layer3 stagger 0.2s order ring {   # $ = the item, $i = its index (0, 1, 2
 - **Order:** `order x|-x|y|-y|z|-z|ring|-ring|random` sorts the items (default: as listed). `ring` goes from the centre outwards.
 
 **Editing the script:**
-- **Live:** each change recompiles. Errors are underlined (hover for the message and quick-fixes: **Unlock**, **Restore part**, **Undo delete**), and the last good version keeps playing.
+- **Live:** each change recompiles. Errors are underlined (hover for the message), and the last good version keeps playing. A fixable error puts its fix as a button in the script bar: **🔓 Unlock** (every locked part the script animates, loops included), **Restore part**, **Undo delete**. Click the error count to jump to the error.
 - **Step times** in the left gutter: **click** to run to the end of a step, **drag** to scrub within it, **⌘↵** runs to the cursor's step.
 - **🎯 Picking:** type a command (`move `, `fade `, `each `, `list @x = `…), then click parts in the tree or 3D view to insert them (⌘/Ctrl-click adds another, **Esc** stops).
 - **Gizmo edits at t > 0:** they update the `move`/`rotate` line for that target in the step at t, or add one (the step becomes `parallel { }`). If t is mid-step, the step is **split** first. **edit: by | to** chooses relative or absolute values. Inside a loop, the edit becomes a new step after it.
@@ -119,7 +119,7 @@ groups, lock/hide state and the top of the assembly tree.
 **What it can look up:** search parts, read bounding boxes and positions, browse the tree, compile a draft script, and take a screenshot.
 
 **What it can propose,** always as a card you **Accept** or **Reject**:
-- **script edits:** a diff with a compile check and **▶ Preview**. Accept also unlocks any parts the script needs.
+- **script edits:** a diff with a compile check and **▶ Preview**. Accept also unlocks every locked part the new script animates (listed on the card).
 - **groups:** create, add, remove, delete.
 - **part state:** lock/unlock, hide/show, base colours, remove/restore.
 

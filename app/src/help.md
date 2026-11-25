@@ -83,7 +83,7 @@ each @layer3 stagger 0.2s order ring {
 
 # Editing the script
 
-- **Errors:** underlined. Hover for quick-fixes (**Unlock**, **Restore part**, **Undo delete**).
+- **Errors:** underlined; click the error count to jump to it. A fix appears as a button in the script bar: **🔓 Unlock** (all locked parts the script moves), **Restore part**, **Undo delete**.
 - **Step times** in the gutter: **click** to run to a step, **drag** to scrub within it, **⌘↵** runs to the cursor's step.
 - **🎯 Picking:** type `move ` (or `fade `, `each `, `list @x = `…), then click parts in the tree or 3D view to insert them. ⌘-click adds another; **Esc** stops.
 - **📷** inserts the current camera view.

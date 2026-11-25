@@ -224,6 +224,16 @@ let gSel: { spec?: string; objs: THREE.Object3D[] } = { objs: [] };
 let drag: { members: { o: THREE.Object3D; world: THREE.Matrix4; p: THREE.Vector3; q: THREE.Quaternion }[]; pivot: THREE.Matrix4 } | undefined;
 let gizmoReady = false; // set once the gizmo exists (timeline refreshes before that skip it)
 let previewUnlocked = new Set<string>(); // parts a previewed assist proposal would unlock
+/** Every locked part a script animates (compiled with locks ignored, recording what it touches). */
+function lockedIn(acts: ReturnType<typeof toActions>): string[] {
+  const ids = new Set<string>();
+  const t = player?.time ?? 0;
+  player?.seek(0);
+  try {
+    compile(acts, built, acts.camera ?? defaultCam, (o) => { if (isLocked(o)) ids.add(idOfObj(o)); return false; }, store.groups, isRemoved);
+  } catch { /* other errors are reported elsewhere */ } finally { player?.seek(t); }
+  return [...ids];
+}
 /** Compile the current script. On error the previous timeline keeps playing. */
 function buildTimeline(o: { atStart?: boolean } = {}): boolean {
   const t = player?.time ?? 0, playing = player?.playing ?? false;
@@ -251,12 +261,11 @@ function buildTimeline(o: { atStart?: boolean } = {}): boolean {
         const g = tree.lastDeletedGroup;
         fix = { label: `Undo delete @${g.name}`, run: () => { store.groups[g.name] = g.ids; tree.lastDeletedGroup = undefined; tree.rebuild(); buildTimeline(); edit({ groups: JSON.parse(JSON.stringify(store.groups)) }); } };
       } else if (/is locked/.test(e.message)) {
-        const find = (steps: any[]): any => { for (const st of steps) { if (st.line === e.line) return st; const c = st.children && find(st.children); if (c) return c; } };
-        const tg = find(parseAnim(scriptPanel.text).steps)?.target?.value as string | undefined;
-        if (tg) {
-          const ids = resolveIds([tg]).ids.filter((x) => isLocked(built.registry.get(x)!));
-          fix = { label: `Unlock ${tg}${ids.length > 1 ? ` (${ids.length} parts)` : ''}`, run: () => { applyStateChanges([{ ids, lock: false }]); } };
-          e.message = `${tg} is locked (${ids.length} part${ids.length === 1 ? '' : 's'}) – unlock it to animate it`;
+        const ids = lockedIn(script);
+        const n = ids.length, name = n === 1 ? (labels[ids[0]] ?? ids[0].split('/').pop()) : `${n} parts`;
+        if (n) {
+          fix = { label: `🔓 Unlock ${name}`, run: () => { applyStateChanges([{ ids, lock: false }]); } };
+          e.message = `${e.message.replace(/ – unlock it.*$/, '')}. The script animates ${n} locked part${n === 1 ? '' : 's'} – unlock ${n === 1 ? 'it' : 'them'} to play it.`;
         }
       }
       scriptPanel.setErrors([...scriptErrors, { line: e.line, from: -1, to: -1, message: e.message, fix }]);
@@ -374,20 +383,11 @@ const toolDeps: ToolDeps = {
     player.seek(0); // compile reads the start pose
     try {
       const acts = toActions(doc.steps);
-      // locked targets are reported, not errors: accepting a proposal unlocks them
-      const locked = new Set<string>();
-      const walk = (steps: any[]) => steps.forEach((st) => {
-        const tg = st.target?.value;
-        if (tg && ['move', 'rotate', 'hide', 'show', 'fade', 'highlight', 'pivot'].includes(st.verb)) {
-          const r = resolveIds([tg]);
-          if (r.ids.some((x) => isLocked(built.registry.get(x)!))) locked.add(tg);
-        }
-        if (st.children) walk(st.children);
-      });
-      walk(doc.steps);
+      // locked parts are reported, not errors: accepting a proposal unlocks them (every one the script animates)
+      const locked = lockedIn(acts);
       const tl = compile(acts, built, acts.camera ?? defaultCam, () => false, store.groups, isRemoved);
       const src = text.split('\n');
-      return { errors: [], locked: [...locked], duration: tl.duration, steps: [...tl.lines].sort((a, b) => a[0] - b[0]).map(([line, x]) => ({ line, ...x, text: src[line - 1].trim() })) };
+      return { errors: [], locked, duration: tl.duration, steps: [...tl.lines].sort((a, b) => a[0] - b[0]).map(([line, x]) => ({ line, ...x, text: src[line - 1].trim() })) };
     } catch (e: any) {
       return { errors: [{ line: e.line ?? 0, message: e.message }] };
     } finally { player.seek(t); }

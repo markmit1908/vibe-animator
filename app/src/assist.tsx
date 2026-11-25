@@ -65,7 +65,7 @@ function registerKinds() {
                 <Button size="xs" variant="outline" onClick={() => v.host.preview(on ? undefined : (p as unknown as Proposal))}>
                   {on ? <><Pause /> End preview</> : <><Play /> Preview</>}
                 </Button>)}
-              {unlock.length > 0 && <span>Accept also unlocks {unlock.join(", ")}.</span>}
+              {unlock.length > 0 && <span title={unlock.join("\n")}>🔓 Accept also unlocks {short(unlock)}{unlock.length > 1 ? ` (${unlock.length} parts)` : ""}.</span>}
               {errs.length > 0 && <span className="text-destructive">{errs.map((e) => `line ${e.line}: ${e.message}`).join(" · ")}</span>}
             </div>)}
         </div>

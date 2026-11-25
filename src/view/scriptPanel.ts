@@ -143,6 +143,8 @@ const CSS = `
 #script .bar b { flex: 1; font-size: 12px; }
 #script .bar .dirty { color: #ff8c1a; font-size: 11px; }
 #script .bar .ok { color: #46a758; font-size: 11px; }
+#script .bar .status.err { cursor: pointer; text-decoration: underline dotted; }
+#script .bar button.fix { background: #3a2a14; border-color: #f2b705; color: #f2b705; }
 #script .bar .pick { color: #f2b705; font-size: 11px; } #script .bar .err { color: #e5484d; font-size: 11px; }
 #script button, #script select { background: #222a33; color: inherit; border: 1px solid #2b3540; border-radius: 4px; padding: 2px 7px; cursor: pointer; font-size: 11px; }
 #script .host { flex: 1; min-height: 0; overflow: auto; }
@@ -171,7 +173,7 @@ export class ScriptPanel {
   constructor(public right: HTMLElement, public name: string, text: string, public hooks: ScriptHooks) {
     const style = document.createElement('style'); style.textContent = CSS; document.head.appendChild(style);
     this.el = document.createElement('div'); this.el.id = 'script';
-    this.el.innerHTML = `<div class="bar"><b>Script · ${name}</b><span class="status"></span><span class="dirty"></span><span class="pick" title="Click parts in the tree or the 3D view to insert them (⌘/Ctrl-click: add another). Esc: stop."></span>
+    this.el.innerHTML = `<div class="bar"><b>Script · ${name}</b><span class="status" title="Click: go to the error"></span><button data-a="fix" class="fix" style="display:none"></button><span class="dirty"></span><span class="pick" title="Click parts in the tree or the 3D view to insert them (⌘/Ctrl-click: add another). Esc: stop."></span>
       <select title="How edits made with the gizmo are written"><option value="by">edit: by</option><option value="to">edit: to</option></select>
       <button data-a="cam" title="Insert the current camera view after the cursor line">📷</button>
       <button data-a="run" title="Run to end of the cursor's step (⌘↵)">▶ here</button>
@@ -183,6 +185,11 @@ export class ScriptPanel {
     const modeSel = this.el.querySelector('select')!;
     modeSel.onchange = () => (this.mode = modeSel.value as 'by' | 'to');
     this.el.querySelector<HTMLElement>('[data-a=save]')!.onclick = () => this.save();
+    this.status.onclick = () => {
+      const e = this.errs[0]; if (!e) return;
+      const l = this.view.state.doc.line(Math.min(Math.max(e.line, 1), this.view.state.doc.lines));
+      this.view.dispatch({ selection: { anchor: l.from }, scrollIntoView: true }); this.view.focus();
+    };
     this.el.querySelector<HTMLElement>('[data-a=run]')!.onclick = () => this.runToCursor();
     this.el.querySelector<HTMLElement>('[data-a=cam]')!.onclick = () => {
       const l = this.view.state.doc.line(this.cursorLine);
@@ -321,8 +328,16 @@ export class ScriptPanel {
     this.view.dispatch(setDiagnostics(this.view.state, diags));
     this.status.className = 'status ' + (errs.length ? 'err' : 'ok');
     this.status.textContent = errs.length ? `${errs.length} error${errs.length > 1 ? 's' : ''}` : '✓';
+    this.errs = errs;
+    // a fixable error (locked parts, a removed part, a deleted group): its fix as a button in the bar
+    const f = errs.find((e) => e.fix)?.fix;
+    const btn = this.el.querySelector<HTMLButtonElement>('[data-a=fix]')!;
+    btn.style.display = f ? '' : 'none';
+    btn.textContent = f?.label ?? '';
+    btn.onclick = () => f?.run();
   }
 
+  private errs: ParseError[] = [];
   /** Update step times (after a compile) and the active step (each frame; cheap when unchanged). */
   private lastKey = '';
   setTiming(lines: Map<number, LineTiming>, t: number) {
