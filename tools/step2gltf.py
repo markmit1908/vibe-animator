@@ -487,8 +487,8 @@ def reinstance(st, tol):
     q = lambda v: round(v / tol) if tol else v
     for i, l in enumerate(simple):
         f = frames[l.Tag()] = _frame(ST.GetShape_s(l))
-        key = (f["faces"], len(f["pts"]), round(f["vol"] ** (1 / 3) * 1000) if f["vol"] > 0 else 0,
-               round(f["area"] ** 0.5 * 100))
+        # abs(): inverted/degenerate bodies can report negative volume or area
+        key = (f["faces"], len(f["pts"]), round(abs(f["vol"]) ** (1 / 3) * 1000), round(abs(f["area"]) ** 0.5 * 100))
         groups.setdefault(key, []).append(l)
         if (i + 1) % 1000 == 0:
             log(f"  {i + 1}/{len(simple)}")
