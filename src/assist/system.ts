@@ -12,6 +12,10 @@ One step per line; steps run in sequence. \`parallel { … }\` runs the steps in
 - hide TARGET [1s] · show TARGET [1s] · fade TARGET to 0.3 2s
 - highlight TARGET #c0392b 1s                          – or a palette name (spent, fresh, fuel)
 - color TARGET #2e86de 1s · color TARGET reset 1s      – change a colour over time / back to the part's base colour
+- list @layer3 = F1-*-3, F1-14-3, @bolts                 – a list (names, globs over part names, @groups); usable as @layer3 after this line
+- each @layer3 stagger 0.2s order ring { … }             – loop: inside, $ is the item and $i its index (vectors may use $i: [0, 1 + $i*0.05, 0]);
+                                                          item i starts at i × stagger (no stagger: one after another); the loop ends when the last item ends;
+                                                          order x|-x|y|-y|z|-z|ring|-ring|random (default: as listed)
 - camera [x,y,z] look [x,y,z] 3s · label "Title" "subtitle" · cutaway none|half|quarter · wait 2s
 - # comments. Durations: 2s, 500ms. A step without a duration is instant.
 TARGET is a part id from the assembly tree, several comma-separated (\`move a, b, @g by …\`); a part may also be named by the last segment of its id (e.g. F1-14-3) or its display name when that is unique, (e.g. plant/model/root/V-010001-511_A/…), a user group \`@name\`, or a glob with *.

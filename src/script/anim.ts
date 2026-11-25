@@ -12,6 +12,11 @@
  *   highlight @spent #c0392b 1s                    # or palette name
  *   color @lid #2e86de 1s · color @lid reset 1s    # change colour / back to its base colour
  *   cutaway quarter        wait 2s
+ *   list @layer3 = F1-*-3                       # a list: names, globs, @groups
+ *   each @layer3 stagger 0.2s order ring {      # loop: $ = item, $i = index; item i starts at i × stagger
+ *     move $ by [0, 1 + $i*0.05, 0] 1s
+ *     fade $ to 0 0.5s
+ *   }
  *   parallel {
  *     move @lid by [4,0,0] 5s
  *     camera [8,14,6] look [2,10,0] 5s
@@ -40,14 +45,16 @@ export interface AnimStep {
   word?: Arg<string>;
   dur?: Arg<number>;
   ease?: Arg<Ease>;
-  children?: AnimStep[];    // parallel block
+  children?: AnimStep[];    // parallel / each block
+  stagger?: Arg<number>;    // each: start of item i+1 after item i's start
+  items?: Arg<string>;      // list: the items text
   endLine?: number;         // closing brace line of a block
 }
 
 export interface ParseError { line: number; from: number; to: number; message: string; fix?: { label: string; run: () => void } }
 export interface AnimDoc { steps: AnimStep[]; errors: ParseError[] }
 
-const VERBS = ['move', 'rotate', 'hide', 'show', 'fade', 'highlight', 'color', 'label', 'camera', 'cutaway', 'wait', 'pivot', 'parallel'];
+const VERBS = ['list', 'each', 'move', 'rotate', 'hide', 'show', 'fade', 'highlight', 'color', 'label', 'camera', 'cutaway', 'wait', 'pivot', 'parallel'];
 export const ANIM_VERBS = VERBS;
 
 interface Tok { t: 'word' | 'str' | 'vec' | 'num' | 'dur' | 'color' | 'brace'; v: any; from: number; to: number }
@@ -69,9 +76,10 @@ function lex(src: string, base: number, line: number, errors: ParseError[]): Tok
       const j = src.indexOf(']', i);
       if (j < 0) { err(i, src.length, 'Unclosed [ ]'); return out; }
       const parts = src.slice(i + 1, j).split(',').map((p) => p.trim());
-      const nums = parts.map(Number);
-      if (parts.length !== 3 || nums.some((n) => !Number.isFinite(n))) err(i, j + 1, 'Expected [x, y, z] (three numbers)');
-      out.push({ t: 'vec', v: nums as Vec, from: base + s, to: base + j + 1 }); i = j + 1; continue;
+      // a component is a number, or an expression over $i (the loop index), e.g. 1 + $i*0.1
+      const vals = parts.map((p) => (Number.isFinite(Number(p)) && p !== '' ? Number(p) : /^[\d\s.+\-*/()$i]+$/.test(p) && p.includes('$i') ? `{${p}}` : NaN));
+      if (parts.length !== 3 || vals.some((n) => typeof n === 'number' && !Number.isFinite(n))) err(i, j + 1, 'Expected [x, y, z] (three numbers; inside each: expressions with $i)');
+      out.push({ t: 'vec', v: vals as unknown as Vec, from: base + s, to: base + j + 1 }); i = j + 1; continue;
     }
     if (c === '{' || c === '}') { out.push({ t: 'brace', v: c, from: base + i, to: base + i + 1 }); i++; continue; }
     let j = i;
@@ -184,6 +192,33 @@ export function parseAnim(text: string): AnimDoc {
         step.word = arg(x); tail(); break;
       }
       case 'wait': tail(); if (!step.dur) err(step.from, step.to, 'Expected a duration, e.g. wait 2s'); break;
+      case 'list': {
+        // list @name = a, b, F1-*-3, @group   (any spacing around "=" and ",")
+        const rest = toks.slice(1);
+        const joined = rest.map((x) => String(x.v)).join(' ');
+        const m = joined.match(/^(@[\w.-]+)\s*=\s*(.*)$/);
+        if (!m) { err((rest[0] ?? toks[0]).from, step.to, 'Expected: list @name = item, item, …'); k = toks.length; break; }
+        step.target = { value: m[1], from: rest[0].from, to: rest[0].from + m[1].length };
+        if (!m[2].trim()) err(step.from, step.to, 'Expected the list items after "="');
+        step.items = { value: m[2].replace(/\s*,\s*/g, ', ').trim(), from: rest[0].from, to: step.to };
+        k = toks.length;
+        break;
+      }
+      case 'each': {
+        // each TARGET [stagger 0.2s] [order x|-x|y|-y|z|-z|ring|-ring|random] {
+        target();
+        while (k < toks.length && !(toks[k].t === 'brace')) {
+          const x = toks[k];
+          if (x.t === 'word' && x.v === 'stagger') { k++; const d = toks[k]; if (d && (d.t === 'dur' || d.t === 'num')) { step.stagger = { value: d.v, from: d.from, to: d.to }; k++; } else err(x.from, x.to, 'Expected a time after stagger, e.g. stagger 0.2s'); continue; }
+          if (x.t === 'word' && x.v === 'order') { k++; const o = toks[k]; if (o?.t === 'word' && /^-?(x|y|z|ring)$|^random$/.test(o.v)) { step.word = arg(o); k++; } else err((o ?? x).from, (o ?? x).to, 'order is x, -x, y, -y, z, -z, ring, -ring or random'); continue; }
+          err(x.from, x.to, `Unexpected "${String(x.v)}" (each TARGET [stagger 0.2s] [order …] {)`); k++;
+        }
+        if (peek()?.t === 'brace' && peek()!.v === '{') k++; else err(step.from, step.to, 'Expected "{" to open the loop');
+        step.children = [];
+        into().push(step);
+        stack.push(step);
+        return;
+      }
       case 'parallel': {
         if (peek()?.t === 'brace' && peek()!.v === '{') k++;
         else err(step.from, step.to, 'Expected "parallel {"');
@@ -196,7 +231,7 @@ export function parseAnim(text: string): AnimDoc {
     }
     into().push(step);
   });
-  for (const b of stack) errors.push({ line: b.line, from: b.from, to: b.to, message: 'parallel { … } is not closed' });
+  for (const b of stack) errors.push({ line: b.line, from: b.from, to: b.to, message: `${b.verb} { … } is not closed` });
   return { steps: root, errors };
 }
 
@@ -223,6 +258,8 @@ export function toActions(steps: AnimStep[]): { camera?: any; timeline: any[] } 
       case 'cutaway': return { ...base, cutaway: s.word!.value };
       case 'wait': return { ...base, wait: s.dur!.value };
       case 'parallel': return { ...base, parallel: s.children!.map((c) => [conv(c)]) };
+      case 'list': return { ...base, list: tgt, items: (s.items?.value ?? '').split(',').map((x) => x.trim()).filter(Boolean) };
+      case 'each': return { ...base, each: tgt, stagger: s.stagger?.value, order: s.word?.value, steps: s.children!.map(conv) };
     }
   };
   const timeline = steps.map(conv);

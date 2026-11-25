@@ -44,6 +44,8 @@ used to illustrate the concept. Delivered live in a browser.
 
 - Targets: comma-separated lists (`a, b, @g`) parse to arrays; a target that isn't an id/glob/@group resolves by unique short name (last id segment) or label (`byName` in compile.ts; ambiguous → error). Pick mode: `ScriptPanel.updatePick` arms when the cursor is in a step's target position; tree `onSelect(…, clicked)` → `insertTarget(shortSpec(spec), add)`.
 
+- Lists/loops: `list @x = …` (compile.ts `lists`, checked against tree groups) and `each T [stagger d] [order o] { … }`: compiled per item with `$` swapped for the id and `$i` as an expression var (vector components may be `{… $i …}`); only the first item records `Timeline.lines` (`recordLines`). Globs without `/` also match short names, natural-sorted.
+
 ## Conventions
 - Y is up, units are metres, and the core base is at y = 0. The operating floor sits at the vessel flange (`floorY`), and locations are relative to it.
 - The machine's origin is the grapple tip.

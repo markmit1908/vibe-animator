@@ -27,7 +27,8 @@ const animLang = StreamLanguage.define({
     const w = stream.match(/^[^\s[\]{}",]+/) as RegExpMatchArray | null;
     if (!w) { stream.next(); return null; }
     if (stream.column() === stream.indentation() || ANIM_VERBS.includes(w[0]) && stream.string.slice(0, stream.start).trim() === '') return 'keyword';
-    if (['by', 'to', 'about', 'look'].includes(w[0])) return 'operator';
+    if (['by', 'to', 'about', 'look', 'stagger', 'order', '='].includes(w[0])) return 'operator';
+    if (w[0] === '$' || w[0] === '$i' || w[0].startsWith('$')) return 'variableName.special';
     if (['ease', 'linear', 'in', 'out', 'none', 'half', 'quarter', 'reset'].includes(w[0])) return 'atom';
     return 'variableName';
   },
@@ -133,7 +134,7 @@ export class ScriptPanel {
   private pick?: { from: number; to: number };
   private pickEl!: HTMLElement;
   /** Verbs whose next word is a target. */
-  private static TARGETED = /^(\s*)(move|rotate|hide|show|fade|highlight|color|pivot)\s+([^\s]*(?:,\s*[^\s]*)*)$/;
+  private static TARGETED = /^(\s*)(?:move|rotate|hide|show|fade|highlight|color|pivot|each|list\s+@[\w.-]+\s*=)\s+([^\s]*(?:,\s*[^\s]*)*)$/;
 
   constructor(public right: HTMLElement, public name: string, text: string, public hooks: ScriptHooks) {
     const style = document.createElement('style'); style.textContent = CSS; document.head.appendChild(style);
@@ -227,7 +228,7 @@ export class ScriptPanel {
     const line = state.doc.lineAt(sel.head);
     const before = line.text.slice(0, sel.head - line.from);
     const m = sel.empty ? before.match(ScriptPanel.TARGETED) : null;
-    this.pick = m ? { from: sel.head - m[3].length, to: sel.head } : undefined;
+    this.pick = m ? { from: sel.head - m[2].length, to: sel.head } : undefined;
     this.pickEl.textContent = this.pick ? '🎯 Pick parts…' : '';
   }
   get picking() { return !!this.pick; }

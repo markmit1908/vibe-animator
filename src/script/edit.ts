@@ -114,6 +114,8 @@ function splitLine(s: AnimStep, f: number, probe: Probe): [string?, string?] {
 export function applyEdit(text: string, doc: AnimDoc, lines: Map<number, LineTiming>, t: number, edit: Edit, probe: Probe): string | undefined {
   let found = stepAt(doc, lines, t);
   if (!found) return appendStep(text, edit, probe, 1);
+  // a loop is a template for many items: edits go into a new step after it
+  if (found.step.verb === 'each') return appendStep(text, edit, probe, 1, found.step.endLine ?? found.step.line);
 
   // ---- inside the step: split it at t ----
   if (t < found.end - EPS) {

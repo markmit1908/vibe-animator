@@ -46,7 +46,7 @@ function substitute(node: any, vars: Record<string, any>): any {
   return node;
 }
 
-const KINDS = ['pick', 'place', 'move', 'rotate', 'pivot', 'highlight', 'fade', 'label', 'cutaway', 'camera', 'wait', 'parallel', 'repeat', 'call'];
+const KINDS = ['list', 'each', 'pick', 'place', 'move', 'rotate', 'pivot', 'highlight', 'fade', 'label', 'cutaway', 'camera', 'wait', 'parallel', 'repeat', 'call'];
 
 export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]; look: number[] },
   isLocked: (o: THREE.Object3D) => boolean = () => false,
@@ -83,6 +83,8 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
   const vCam = { pos: camera.pos.clone(), look: camera.look.clone() };
 
   // ---- target / point resolution ----
+  /** script lists (list @x = …), defined in script order */
+  const lists = new Map<string, string[]>();
   let names: Map<string, string[]> | undefined;
   /** name → ids: the last segment of each id, and display names (labels) */
   const byName = () => {
@@ -101,13 +103,19 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
     const list: string[] = Array.isArray(spec) ? spec : [spec];
     const out: string[] = [];
     for (const s of list) {
-      if (String(s).startsWith('@')) {           // user group
+      if (String(s).startsWith('@') && lists.has(String(s))) {   // a script list (list @x = …)
+        out.push(...lists.get(String(s))!);
+      } else if (String(s).startsWith('@')) {           // user group
         const g = groups[String(s).slice(1)];
-        if (!g) throw new Error(`Unknown group "${s}" (create it in the assembly tree)`);
+        if (!g) throw new Error(`Unknown group "${s}" (create it in the assembly tree, or with list ${s} = …)`);
         for (const id of g) if (scene.registry.has(id) && !isRemoved(scene.registry.get(id)!)) out.push(id); // removed members are skipped
       } else if (String(s).includes('*')) {
+        // a glob over full ids, or over short names (the last id segment) when it has no "/"; natural order
         const re = new RegExp('^' + String(s).replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');
-        for (const id of scene.registry.keys()) if (re.test(id)) out.push(id);
+        const short = !String(s).includes('/');
+        const hits = [...scene.registry.keys()].filter((id) => !isRemoved(scene.registry.get(id)!) && (re.test(id) || (short && re.test(id.slice(id.lastIndexOf('/') + 1)))));
+        if (!hits.length) throw new Error(`No parts match "${s}"`);
+        out.push(...hits.sort((x, y) => x.localeCompare(y, undefined, { numeric: true })));
       } else if (scene.registry.has(String(s))) {
         out.push(String(s));
       } else {
@@ -229,20 +237,21 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
 
   // ---- action runner: returns end time ----
   const lines = new Map<number, LineTiming>();
+  let recordLines = true; // off for a loop's items after the first (the gutter shows the first item's times)
   const run = (raw: any, t: number, vars: Record<string, any>): number => {
     if (raw.at !== undefined) t = raw.at;
     const t0 = t;
     let end: number;
     try { end = runInner(raw, t, vars); }
     catch (e: any) { throw e instanceof ScriptError ? e : new ScriptError(e.message, raw.line); }
-    if (raw.line) lines.set(raw.line, { start: t0, end });
+    if (raw.line && recordLines) lines.set(raw.line, { start: t0, end });
     return end;
   };
   const runInner = (raw: any, t: number, vars: Record<string, any>): number => {
     const kind: string = raw.do ?? KINDS.find((k) => k in raw);
     if (!kind) throw new Error(`Can't tell what this action does: ${JSON.stringify(raw)}`);
     // bodies of repeat/parallel are substituted later, with their own loop vars
-    const a = kind === 'repeat' || kind === 'parallel' ? raw : substitute(raw, vars);
+    const a = kind === 'repeat' || kind === 'parallel' || kind === 'each' ? raw : substitute(raw, vars);
     const val = a[kind];
     const dur = (d: number) => a.dur ?? d;
     curEase = EASES[a.ease ?? 'ease'] ?? ease;
@@ -348,6 +357,45 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
         t = machineTo({ y: centre.y + bh / 2 }, t, d * 0.25);
         held = [];
         return machineTo({ y: scene.clearance }, t, d * 0.3);
+      }
+
+      case 'list': {
+        const name = String(a.list);
+        if (groups[name.slice(1)]) throw new Error(`${name} is already a group in the assembly tree – use another list name`);
+        const ids = [...new Set(resolveTargets(a.items ?? []))];
+        lists.set(name, ids);
+        return t;
+      }
+
+      case 'each': {
+        // item i starts at i × stagger (no stagger: after the previous item ends); $ = item, $i = index
+        const ids = [...new Set(resolveTargets(raw.each))];
+        const order = raw.order as string | undefined;
+        if (order) {
+          const p = new Map(ids.map((id) => [id, state(id).pos.clone()]));
+          if (order === 'random') {
+            let seed = ids.length * 2654435761 >>> 0;
+            const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+            for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
+          } else {
+            const neg = order.startsWith('-'), key = order.replace('-', '');
+            const c = [...p.values()].reduce((s, v) => s.add(v), new THREE.Vector3()).divideScalar(Math.max(1, ids.length));
+            const val = (id: string) => { const v = p.get(id)!; return key === 'ring' ? Math.hypot(v.x - c.x, v.z - c.z) : v[key as 'x' | 'y' | 'z']; };
+            ids.sort((x, y) => (val(x) - val(y)) * (neg ? -1 : 1));
+          }
+        }
+        const stagger = raw.stagger as number | undefined;
+        const swap = (node: any, item: string): any =>
+          node === '$' ? item : Array.isArray(node) ? node.map((n) => swap(n, item)) : node && typeof node === 'object' ? Object.fromEntries(Object.entries(node).map(([k, v]) => [k, swap(v, item)])) : node;
+        let end = t, start = t;
+        ids.forEach((id, i) => {
+          recordLines = i === 0;
+          const e = runList(swap(raw.steps, id), start, { ...vars, $i: i });
+          end = Math.max(end, e);
+          start = stagger === undefined ? e : start + stagger;
+        });
+        recordLines = true;
+        return end;
       }
 
       case 'parallel': {

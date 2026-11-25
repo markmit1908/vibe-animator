@@ -295,3 +295,32 @@ test("parts can be named by their short name, several in one step", async ({ pag
   await page.keyboard.type("\nmove L5 by [0,1,0] 1s");
   await expect(page.locator("#script .status")).toHaveText("1 error");
 });
+
+test("lists and staggered loops: lift 1 s, vanish 0.5 s, next item 0.2 s later", async ({ page }) => {
+  await page.goto("/");
+  const text = ['label "Layer"', "list @top = */L11", "each @top stagger 0.2s {", "  move $ by [0,1,0] 1s", "  fade $ to 0 0.5s", "}", "wait 1s"].join("\n");
+  const m = { name: "Loop", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Loop");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const tl = () => page.evaluate(() => { const p = (window as any).__studio.player; return { duration: p.duration, lines: Object.fromEntries([...p.tl.lines].map(([l, x]: any) => [l, [+x.start.toFixed(3), +x.end.toFixed(3)]])) }; });
+  const t = await tl();
+  expect(t.lines[3]).toEqual([0, 13.5]);           // the loop: 61 blocks, (61-1) × 0.2 + 1.5
+  expect(t.lines[4]).toEqual([0, 1]);              // the first item's lift
+  expect(t.lines[5]).toEqual([1, 1.5]);            //   and vanish
+  expect(t.duration).toBeCloseTo(14.5, 5);         // + wait 1s
+  const at = (time: number, id: string) => page.evaluate(([time, id]) => {
+    const s = (window as any).__studio; s.player.seek(time); const o = s.built.registry.get(id);
+    return { y: +o.position.y.toFixed(3), visible: o.visible };
+  }, [time, id] as const);
+  const ids: string[] = await page.evaluate(() => [...(window as any).__studio.built.registry.keys()].filter((k: string) => k.endsWith("/L11")).sort((a: string, b: string) => a.localeCompare(b, undefined, { numeric: true })));
+  const y0 = (await at(0, ids[5])).y;
+  expect((await at(1.0, ids[5])).y).toBe(y0);                 // item 5 starts at 5 × 0.2 = 1.0 s
+  expect((await at(2.0, ids[5])).y).toBe(+(y0 + 1).toFixed(3)); //   lifted by 2.0 s
+  for (const id of [ids[0], ids[30], ids[60]]) expect((await at(13.5, id)).visible).toBe(false); // all vanished, staying hidden
+  // order, $i expressions, and a list name clashing with a tree group
+  await page.locator("#script .cm-content").click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Meta+ArrowDown");
+  await page.keyboard.type("\neach @top stagger 0 order -ring {\nmove $ by [0, 1 + $i*0.1, 0] 1s\n}");
+  await expect(page.locator("#script .status")).toHaveText("✓");
+});

@@ -1021,7 +1021,7 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 }
 
 // read-only handle for tests and debugging
-(window as any).__studio = { built, state, store, cad, tree };
+(window as any).__studio = { built, state, store, cad, tree, get player() { return player; } };
 
 return {
   dispose() {
