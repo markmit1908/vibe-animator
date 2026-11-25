@@ -1,1 +1,22 @@
-[]
+[
+ {
+  "role": "user",
+  "content": "Next, change the label to \"Remove lid\" \nAnimate the head, move up 3m over 20 sec. then fade out in 2 sec."
+ },
+ {
+  "role": "assistant",
+  "content": "",
+  "proposals": [],
+  "tools": []
+ },
+ {
+  "role": "user",
+  "content": "Next, change the label to \"Remove lid\" \nAnimate the head, move up 3m over 20 sec. then fade out in 2 sec."
+ },
+ {
+  "role": "assistant",
+  "content": "",
+  "proposals": [],
+  "tools": []
+ }
+]
