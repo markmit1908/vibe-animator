@@ -42,6 +42,19 @@ Parts the script animates can only be placed at t = 0 (that sets their start pos
 The panel footer shows live GPU geometry, triangle and draw-call counts.
 URL params: `?t=42` opens at 42 s, `?select=R1-1/L5` selects a part, `?debug` dumps CAD ids/stats into a hidden `<pre id=debug>`.
 
+## Script panel (`.anim`)
+
+Set `script: plant.anim` in `core.yaml`. The panel sits on the right, under the controls:
+- **Edit live:** each change recompiles. Errors are underlined on their line, and the last good version keeps playing.
+- **Step times:** the left gutter shows when each step starts. **Click** a time to run to the end of that step, **drag** on it to scrub within the step, or press **⌘↵** to run to the cursor's step.
+- **Write by direct manipulation:** pause at a time t > 0, select a part, group or multi-selection, then move (W) or rotate (E) it with the gizmo. The change is written into the step at t:
+  an existing `move`/`rotate` line for that target is updated, otherwise a line is added (the step becomes `parallel { }`).
+  If t falls mid-step, the step is **split** at t first. The `edit: by | to` toggle chooses relative or absolute values (default `by`).
+  At t = 0 the gizmo sets the start pose instead (snapshot placements).
+- **📷** inserts the current camera view as a step. **⌘S** saves to `scripts/<name>.anim`.
+
+Syntax reference: see the header of `scripts/plant.anim`.
+
 ## Files
 
 | Path | What it is |

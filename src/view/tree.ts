@@ -62,7 +62,8 @@ export interface TreeHooks {
   /** Called after visibility/lock changes on these objects (suppression, recompile…). */
   onChange?: (objs: THREE.Object3D[], what: 'hidden' | 'locked') => void;
   stats?: () => string;
-  onSelect?: (obj: THREE.Object3D | undefined) => void;
+  /** Selection changed: single object, its script spec (@group / id) and all objects selected. */
+  onSelect?: (obj: THREE.Object3D | undefined, spec: string | undefined, objs: THREE.Object3D[]) => void;
   /** User groups were created/changed (recompile the script). */
   onGroups?: () => void;
 }
@@ -273,7 +274,8 @@ export class TreePanel {
       if (i >= 0) this.sel.splice(i, 1); else this.sel.push(n);
     } else this.sel = n ? [n] : [];
     this.highlight();
-    this.hooks.onSelect?.(this.sel.length === 1 ? n?.obj : undefined);
+    const one = this.sel.length === 1 ? this.sel[0] : undefined;
+    this.hooks.onSelect?.(one?.obj, one ? (one.group ? `@${one.group}` : one.id) : undefined, this.sel.flatMap((x) => this.objsOf(x)));
     if (n && reveal) {
       this.search.value = '';
       for (let p = n.parent; p; p = p.parent) this.open.add(p);

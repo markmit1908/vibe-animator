@@ -16,6 +16,7 @@ import { Triad } from './view/triad';
 import { ScriptPanel } from './view/scriptPanel';
 import { parseAnim, toActions, type ParseError } from './script/anim';
 import { ScriptError } from './timeline/compile';
+import { applyEdit, cameraLine, type Edit, type Probe } from './script/edit';
 
 const cfg = parse(coreYaml);
 const scripts = import.meta.glob('../scripts/*.yaml', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
@@ -177,7 +178,7 @@ function rebuildChapters() {
   timeCtl.max(player.duration);
 }
 rebuildChapters();
-onTimeline = () => { rebuildChapters(); gizmoFor?.(tree?.selectedObject); };
+onTimeline = () => { rebuildChapters(); if (!drag) gizmoFor?.(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs); };
 
 // ---------- script panel (.anim) ----------
 if (isAnim) {
@@ -190,8 +191,9 @@ if (isAnim) {
       buildTimeline();
     },
     save: async (text) => { await fetch(`/__script?name=${encodeURIComponent(scriptName)}`, { method: 'POST', body: text }); },
-    seek: (t) => { player.playing = false; player.seek(t); },
+    seek: (t) => { player.playing = false; player.seek(t); gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs); },
     ids: () => [...Object.keys(store.groups).map((g) => `@${g}`), ...built.registry.keys()],
+    cameraLine: () => cameraLine(probe),
   });
   scriptPanel.setErrors(scriptErrors);
 }
@@ -203,9 +205,9 @@ document.body.appendChild(rightToggle);
 const tree = new TreePanel(built, scene3, {
   onChange: async (objs, what) => {
     for (const o of objs) await reconcile(o);
-    if (what === 'locked') { buildTimeline(); gizmoFor(tree.selectedObject); }
+    if (what === 'locked') { buildTimeline(); gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs); }
   },
-  onSelect: (o) => gizmoFor(o),
+  onSelect: (o, spec, objs) => gizmoFor(o, spec, objs),
   onGroups: () => buildTimeline(),
   stats: () => {
     const c = cad.stats(), r = renderer.info;
@@ -246,7 +248,7 @@ async function loadSnapshot(name: string) {
     ui.followCamera = false; gui.controllersRecursive().forEach((c) => c.updateDisplay());
     camera.position.fromArray(snap.camera.pos); controls.target.fromArray(snap.camera.look);
   }
-  gizmoFor(tree.selectedObject);
+  gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs);
   tree.redraw();
   markDirty(false);
   renderSnapBar();
@@ -294,34 +296,100 @@ addEventListener('keydown', (e) => {
 });
 addEventListener('beforeunload', (e) => { if (isDirty()) e.preventDefault(); });
 
-// ---------- move / rotate gizmo for the selected unlocked part ----------
+// ---------- move / rotate gizmo: a part, a group (@name) or a multi-selection ----------
+// t = 0  -> sets the start pose (snapshot placements)
+// t > 0  -> written into the .anim script at the current step (split if mid-step)
 const gizmo = new TransformControls(camera, renderer.domElement);
 gizmo.setSize(0.8);
 scene3.add(gizmo.getHelper());
-gizmo.addEventListener('dragging-changed', (e: any) => {
-  controls.enabled = !e.value;
-  if (!e.value && gizmo.object) {           // drag finished: record placement
-    const o = gizmo.object;
-    state.placements[idOfObj(o)] = { p: o.position.toArray(), q: o.quaternion.toArray() };
-    markDirty();
-    buildTimeline();
+const proxy = new THREE.Object3D(); proxy.name = '__gizmo_pivot'; scene3.add(proxy);
+let gSel: { spec?: string; objs: THREE.Object3D[] } = { objs: [] };
+let drag: { members: { o: THREE.Object3D; world: THREE.Matrix4; p: THREE.Vector3; q: THREE.Quaternion }[]; pivot: THREE.Matrix4 } | undefined;
+
+const worldBox = (objs: THREE.Object3D[]) => { const b = new THREE.Box3(); objs.forEach((o) => b.expandByObject(o)); return b; };
+const resolveSpec = (spec: string): THREE.Object3D[] => spec.startsWith('@')
+  ? (store.groups[spec.slice(1)] ?? []).map((id) => built.registry.get(id)).filter(Boolean) as THREE.Object3D[]
+  : [built.registry.get(spec)].filter(Boolean) as THREE.Object3D[];
+const probe: Probe = {
+  centre: (spec) => worldBox(resolveSpec(spec)).getCenter(new THREE.Vector3()),
+  quat: (spec) => resolveSpec(spec)[0]?.getWorldQuaternion(new THREE.Quaternion()) ?? new THREE.Quaternion(),
+  opacity: (spec) => { let o = 1; resolveSpec(spec)[0]?.traverse((m) => { const mat = (m as THREE.Mesh).material as THREE.Material; if (mat && mat.userData.baseOpacity) o = mat.opacity / mat.userData.baseOpacity; }); return +o.toFixed(3); },
+  camera: () => ({ pos: camera.position.toArray(), look: controls.target.toArray() }),
+};
+
+function gizmoFor(o?: THREE.Object3D, spec?: string, objs?: THREE.Object3D[]) {
+  gSel = { spec, objs: objs ?? (o ? [o] : []) };
+  const ok = gSel.objs.length > 0 && gSel.objs.every((x) => !isLocked(x)) && (player.time === 0 || isAnim);
+  if (!ok) { gizmo.detach(); return; }
+  if (gSel.objs.length === 1 && o && !spec?.startsWith('@')) { gizmo.attach(o); return; }
+  // groups / multi-selection: gizmo on a pivot at the bounding-box centre
+  scene3.updateMatrixWorld(true);
+  proxy.position.copy(worldBox(gSel.objs).getCenter(new THREE.Vector3()));
+  proxy.quaternion.identity();
+  proxy.updateMatrixWorld(true);
+  gizmo.attach(proxy);
+}
+gizmo.addEventListener('objectChange', () => {
+  if (!drag || gizmo.object !== proxy) return;
+  proxy.updateMatrixWorld(true);
+  const D = proxy.matrixWorld.clone().multiply(drag.pivot.clone().invert());
+  for (const m of drag.members) {
+    const w = D.clone().multiply(m.world);
+    const local = m.o.parent ? m.o.parent.matrixWorld.clone().invert().multiply(w) : w;
+    local.decompose(m.o.position, m.o.quaternion, new THREE.Vector3());
   }
 });
-function gizmoFor(o: THREE.Object3D | undefined) {
-  const id = o && idOfObj(o);
-  // script-animated parts can only be placed at t = 0 (their start position)
-  const ok = o && id && built.registry.get(id) === o && !isLocked(o) && (player.time === 0 || !player.tl.touched.includes(id));
-  if (ok) gizmo.attach(o!); else gizmo.detach();
-}
+gizmo.addEventListener('dragging-changed', (e: any) => {
+  controls.enabled = !e.value;
+  if (e.value) {                                     // drag start: remember the pre-drag pose
+    scene3.updateMatrixWorld(true);
+    drag = {
+      members: gSel.objs.map((o) => ({ o, world: o.matrixWorld.clone(), p: o.position.clone(), q: o.quaternion.clone() })),
+      pivot: (gizmo.object === proxy ? proxy : gSel.objs[0]).matrixWorld.clone(),
+    };
+    return;
+  }
+  if (!drag) return;
+  const d = drag; drag = undefined;
+  scene3.updateMatrixWorld(true);
+  const now = (gizmo.object === proxy ? proxy : gSel.objs[0]).matrixWorld;
+  const p0 = new THREE.Vector3(), q0 = new THREE.Quaternion(), p1 = new THREE.Vector3(), q1 = new THREE.Quaternion();
+  d.pivot.decompose(p0, q0, new THREE.Vector3()); now.decompose(p1, q1, new THREE.Vector3());
+
+  if (player.time > 1e-4 && isAnim && scriptPanel) {
+    // script edit: put the parts back, describe the change as a step, recompile
+    for (const m of d.members) { m.o.position.copy(m.p); m.o.quaternion.copy(m.q); }
+    const target = gSel.spec ?? idOfObj(gSel.objs[0]);
+    const edit: Edit = gizmo.mode === 'rotate'
+      ? { target, kind: 'rotate', rot: q1.clone().multiply(q0.clone().invert()), mode: scriptPanel.mode }
+      : { target, kind: 'move', delta: p1.clone().sub(p0), mode: scriptPanel.mode };
+    const t = player.time;
+    let doc = parseAnim(scriptPanel.text);
+    let out: any = applyEdit(scriptPanel.text, doc, player.tl.lines, t, edit, probe);
+    if (out?.pending) {                              // mid-step: split first, recompile, then edit the first half
+      scriptPanel.setText(out.text);
+      doc = parseAnim(out.text);
+      player.seek(t);
+      out = applyEdit(out.text, doc, player.tl.lines, t, edit, probe);
+    }
+    if (typeof out === 'string') scriptPanel.setText(out);
+    player.seek(t);
+    gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs);
+    return;
+  }
+  // start pose: record placements for every member
+  for (const m of d.members) state.placements[idOfObj(m.o)] = { p: m.o.position.toArray(), q: m.o.quaternion.toArray() };
+  markDirty();
+  buildTimeline();
+});
 addEventListener('keydown', (e) => {
   if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).closest?.('.cm-editor')) return;
   if (e.key === 'w') gizmo.setMode('translate');
   if (e.key === 'e') gizmo.setMode('rotate');
   if (e.key === 'Escape') { gizmo.detach(); tree.select(undefined, false); }
-  if (e.key === 'r' && gizmo.object) {      // reset selected part to its original placement
-    const o = gizmo.object; delete state.placements[idOfObj(o)];
-    o.position.fromArray(o.userData.homeP); o.quaternion.fromArray(o.userData.homeQ);
-    markDirty(); buildTimeline();
+  if (e.key === 'r' && gizmo.object && player.time === 0) { // reset selection to its original placement
+    for (const o of gSel.objs) { delete state.placements[idOfObj(o)]; o.position.fromArray(o.userData.homeP); o.quaternion.fromArray(o.userData.homeQ); }
+    markDirty(); buildTimeline(); gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs);
   }
 });
 

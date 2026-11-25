@@ -102,6 +102,8 @@ export interface ScriptHooks {
   seek(t: number): void;
   /** Completion candidates: part ids and @groups. */
   ids(): string[];
+  /** `camera … look …` line for the current view. */
+  cameraLine(): string;
 }
 
 const CSS = `
@@ -138,6 +140,7 @@ export class ScriptPanel {
     this.el = document.createElement('div'); this.el.id = 'script';
     this.el.innerHTML = `<div class="bar"><b>Script · ${name}</b><span class="status"></span><span class="dirty"></span>
       <select title="How edits made with the gizmo are written"><option value="by">edit: by</option><option value="to">edit: to</option></select>
+      <button data-a="cam" title="Insert the current camera view after the cursor line">📷</button>
       <button data-a="run" title="Run to end of the cursor's step (⌘↵)">▶ here</button>
       <button data-a="save" title="Save (⌘S)">Save</button></div><div class="host"></div>`;
     right.appendChild(this.el);
@@ -147,6 +150,11 @@ export class ScriptPanel {
     modeSel.onchange = () => (this.mode = modeSel.value as 'by' | 'to');
     this.el.querySelector<HTMLElement>('[data-a=save]')!.onclick = () => this.save();
     this.el.querySelector<HTMLElement>('[data-a=run]')!.onclick = () => this.runToCursor();
+    this.el.querySelector<HTMLElement>('[data-a=cam]')!.onclick = () => {
+      const l = this.view.state.doc.line(this.cursorLine);
+      const ind = l.text.match(/^\s*/)![0];
+      this.view.dispatch({ changes: { from: l.to, insert: `\n${ind}${this.hooks.cameraLine()}` }, selection: { anchor: l.to + 1 } });
+    };
     this.saved = text;
 
     const complete = (cx: CompletionContext): CompletionResult | null => {
@@ -254,8 +262,14 @@ export class ScriptPanel {
     }
   }
 
-  /** Apply an app-side edit (gizmo, tree) as a minimal change, keeping the cursor where it can. */
-  replace(from: number, to: number, insert: string) {
-    this.view.dispatch({ changes: { from, to, insert } });
+  /** Replace the text with an app-side edit (gizmo) as a minimal change and compile it now. */
+  setText(next: string) {
+    const a = this.text;
+    if (a === next) return;
+    let s = 0; while (s < a.length && s < next.length && a[s] === next[s]) s++;
+    let e = 0; while (e < a.length - s && e < next.length - s && a[a.length - 1 - e] === next[next.length - 1 - e]) e++;
+    this.view.dispatch({ changes: { from: s, to: a.length - e, insert: next.slice(s, next.length - e) } });
+    clearTimeout(this.timer);
+    this.hooks.change(next);
   }
 }

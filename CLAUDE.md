@@ -24,6 +24,9 @@ used to illustrate the concept. Delivered live in a browser.
 
 - `generated: false` in core.yaml builds the parametric reactor and then drops it (lights and grid stay). The registry then holds CAD only. `script:` selects scripts/<name>.yaml; with no `camera:` the view frames everything loaded.
 
+- `.anim` scripts: `src/script/anim.ts` (parser → engine actions, keeps source ranges), `src/view/scriptPanel.ts` (CodeMirror 6, SolverKit ModelText patterns), `src/script/edit.ts` (gizmo edits → text: update/add a line in the step at t, split the step if t is mid-step). Saved via `/__script?name=`. `buildTimeline()` seeks the old player to 0 before compiling (compile reads the start pose), then restores t. `Timeline.lines` maps script line → {start, end}.
+- Rotation: world-space slerp about a pivot. The default pivot is the targets' bbox centre at their virtual pose; `pivot @x [p]` is stored in the first member's frame, so it follows the part. Don't move and rotate the same part in one parallel block (the last tween wins).
+
 ## Conventions
 - Y is up, units are metres, and the core base is at y = 0. The operating floor sits at the vessel flange (`floorY`), and locations are relative to it.
 - The machine's origin is the grapple tip.
