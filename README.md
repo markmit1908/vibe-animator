@@ -1,0 +1,81 @@
+# Core Refuelling Animation
+
+Interactive, browser-based animation of refuelling a hex-block reactor core.
+Three.js + Vite + TypeScript. The model and the animation are both defined in
+YAML, so you can change the geometry and choreography without touching code.
+
+## Quick start
+
+```bash
+npm install
+npm run dev        # open the printed URL; edits to YAML hot-reload
+npm run build      # static site in dist/ (typecheck + bundle)
+```
+
+Controls: **Space** play/pause, drag to orbit (turns off the scripted camera),
+GUI panel for speed, scrubbing, cutaway mode, X-ray shells and chapter jumps.
+
+## Files
+
+| Path | What it is |
+|---|---|
+| `scenes/core.yaml` | Model setup: core lattice, block sizes, vessel, head, machine, named locations, fresh-fuel staging, palette, CAD overrides |
+| `scripts/refuel.yaml` | Animation script (timeline + macros). Action reference is in the file header |
+| `public/cad/` | Drop `.glb` files here and reference them under `overrides:` |
+| `src/scene/build.ts` | Generates geometry from `core.yaml` |
+| `src/timeline/compile.ts` | Turns the script into tweens |
+| `src/timeline/player.ts` | Deterministic playback and seeking |
+| `src/view/cutaway.ts` | Section views |
+| `src/main.ts` | Renderer, UI, main loop |
+
+## Object ids (for scripts)
+
+- Columns: `R<ring>-<index>`. `R0-0` is the centre column, and indices walk around each ring.
+- Blocks: `<column>/L<n>`, numbered from `L0` at the bottom. The default stack is L0–1 bottom reflector, L2–9 fuel and L10–11 top reflector.
+- Fresh blocks: `fresh/0` … `fresh/N-1`, staged on `fresh_rack`.
+- Groups: `vessel`, `head`, `bolts`, `barrel`, `machine`.
+- Globs: `R1-1/L*`.
+
+## Script example
+
+```yaml
+- label: "Discharge spent fuel"
+- repeat:
+    var: i
+    from: 9
+    to: 2
+    steps:
+      - {highlight: "R1-1/L{i}", color: spent}
+      - {pick: "R1-1/L{i}", dur: 4}
+      - {place: {loc: spent_rack, dx: "{(9 - i) % 4 * 0.5}"}, dur: 4}
+```
+
+`pick` and `place` choreograph the machine for you: it travels at clearance
+height, descends, grabs or releases, and rises again. `{expr}` inside strings is
+evaluated with loop variables, macro args, `bh`, `floorY`, `clear` and Math
+functions.
+
+## Using CAD
+
+1. Export or convert STEP to glTF binary (`.glb`). FreeCAD, CAD Exchanger and Blender can all do this. Use metres with Y up.
+2. Put it in `public/cad/` and add an entry like `overrides: { vessel: cad/vessel.glb }` in `core.yaml`.
+3. The generated geometry for that group is replaced by the glTF. The pivot is the group's origin: the vessel's origin is the core base, and the head's origin is the flange face.
+
+Group objects can be overridden today. Per-block CAD overrides aren't supported yet.
+
+## Visual style
+
+Cel-shaded "technical illustration" look: black background, three-band toon
+shading, black outlines, off-white structure and a copper accent. Colours live
+in `palette:` in `core.yaml`.
+
+## Status / roadmap
+
+- [x] Parametric hex core, vessel, head, machine
+- [x] YAML timeline: pick/place, move, highlight, fade, camera, labels, repeat, macros
+- [x] Cutaway (half/quarter), X-ray, chapters, scrubbing
+- [ ] Real dimensions (all current values are **placeholders**)
+- [ ] Section caps on clipped shells, 3D callout labels
+- [ ] Post-processing outlines for shells and CAD (currently only blocks get a thick hull)
+- [ ] Video export
+- [ ] STEP→glTF conversion script
