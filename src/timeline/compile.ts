@@ -237,9 +237,11 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
 }
 
 export function bodyMaterials(obj: THREE.Object3D): THREE.MeshLambertMaterial[] {
-  if ((obj as THREE.Mesh).isMesh) return [(obj as THREE.Mesh).material as THREE.MeshLambertMaterial];
+  // userData.origMat: the real material while the tree's selection highlight is swapped in
+  const mat = (m: THREE.Object3D) => (m.userData.origMat ?? (m as THREE.Mesh).material) as THREE.MeshLambertMaterial;
+  if ((obj as THREE.Mesh).isMesh) return [mat(obj)];
   const out: THREE.MeshLambertMaterial[] = [];
-  obj.traverse((o) => { if ((o as THREE.Mesh).isMesh) out.push((o as THREE.Mesh).material as THREE.MeshLambertMaterial); });
+  obj.traverse((o) => { if ((o as THREE.Mesh).isMesh) out.push(mat(o)); });
   return out;
 }
 

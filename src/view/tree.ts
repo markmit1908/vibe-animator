@@ -71,6 +71,10 @@ export class TreePanel {
   private flat: Node[] = [];
   private selected?: Node;
   private box = new THREE.Box3Helper(new THREE.Box3(), 0xf2b705);
+  /** Meshes currently showing the selection colour (material swapped, original in userData.origMat). */
+  private lit: THREE.Mesh[] = [];
+  private hiliteMats = new Map<string, THREE.Material>();
+  static HILITE = '#ff8c1a';
 
   constructor(private scene: BuiltScene, three: THREE.Scene, private hooks: TreeHooks = {}) {
     const style = document.createElement('style'); style.textContent = CSS; document.head.appendChild(style);
@@ -92,7 +96,7 @@ export class TreePanel {
     this.scroll.onscroll = () => this.draw();
     this.el.querySelector<HTMLElement>('[data-a=collapse]')!.onclick = () => { this.open.clear(); this.roots.forEach((r) => this.open.add(r)); this.refresh(); };
     new ResizeObserver(() => this.draw()).observe(this.scroll);
-    this.box.visible = false;
+    this.box.visible = false; // kept for reference; selection is shown by colour
     three.add(this.box);
     this.rebuild();
   }
@@ -229,6 +233,7 @@ export class TreePanel {
   // ---------- selection ----------
   select(n: Node | undefined, reveal: boolean) {
     this.selected = n;
+    this.highlight(n);
     if (n && reveal) {
       this.search.value = '';
       for (let p = n.parent; p; p = p.parent) this.open.add(p);
@@ -269,12 +274,34 @@ export class TreePanel {
     this.select(found, true);
   }
 
+  /** Colour the selected meshes; restore the previous selection's materials. */
+  private highlight(n: Node | undefined) {
+    for (const m of this.lit) { m.material = m.userData.origMat; delete m.userData.origMat; }
+    this.lit = [];
+    if (!n) return;
+    for (const o of this.objsOf(n)) o.traverse((x) => {
+      const m = x as THREE.Mesh;
+      if (!m.isMesh || m.userData.origMat) return;
+      const orig = m.material as THREE.Material;
+      if (orig.side === THREE.BackSide) return; // outline hulls stay black
+      const clip = orig.clippingPlanes?.length ? 'clip' : 'noclip';
+      let h = this.hiliteMats.get(clip);
+      if (!h) {
+        h = new THREE.MeshToonMaterial({ color: TreePanel.HILITE, side: THREE.DoubleSide,
+          clippingPlanes: orig.clippingPlanes ?? undefined, clipIntersection: orig.clipIntersection });
+        this.hiliteMats.set(clip, h);
+      }
+      m.userData.origMat = orig;
+      m.material = h;
+      this.lit.push(m);
+    });
+  }
+
   private updateInfo() {
     const n = this.selected;
-    if (!n) { this.info.textContent = 'Click a part in the tree or the 3D view.'; this.box.visible = false; return; }
+    if (!n) { this.info.textContent = 'Click a part in the tree or the 3D view.'; return; }
     const box = new THREE.Box3();
     this.objsOf(n).forEach((o) => box.expandByObject(o));
-    this.box.box.copy(box); this.box.visible = !box.isEmpty();
     const size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
     const objs = this.objsOf(n);
     const locked = objs.every(isLocked);
@@ -287,10 +314,6 @@ export class TreePanel {
   /** Per frame: keep selection box on animated objects; refresh stats occasionally. */
   private frame = 0;
   update() {
-    if (this.selected && this.box.visible && !this.objsOf(this.selected).every(isLocked)) {
-      this.box.box.makeEmpty();
-      this.objsOf(this.selected).forEach((o) => this.box.box.expandByObject(o));
-    }
     if (++this.frame % 30 === 0) this.statsEl.textContent = this.hooks.stats?.() ?? '';
   }
 }
