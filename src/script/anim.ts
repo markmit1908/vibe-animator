@@ -4,6 +4,7 @@
  *   camera [12,16,14] look [0,5,0] 3s
  *   label "Remove lid" "Unbolt and lift"
  *   move @lid by [0,3,0] 6s ease
+ *   move part-a, part-b, @lid by [0,3,0] 6s       # several targets
  *   move plant/…/V-005738 to [0,5,0] 4s
  *   rotate @lid by [0,0,90] about [0,12,0] 4s      # degrees, world axes
  *   pivot @lid [0,12,0]                            # pivot travels with @lid
@@ -125,7 +126,11 @@ export function parseAnim(text: string): AnimDoc {
     const target = () => {
       const x = toks[k];
       if (!x || x.t !== 'word') { err((x ?? toks[0]).from, (x ?? toks[0]).to, 'Expected a target (@group or part id)'); return; }
-      k++; step.target = arg(x);
+      k++;
+      // several targets: "a, b, @g" (commas may be followed by spaces, which split the words)
+      let to = x.to, text = x.v as string;
+      while (text.endsWith(',') && toks[k]?.t === 'word') { text += toks[k].v; to = toks[k].to; k++; }
+      step.target = { value: text.replace(/,+$/, ''), from: x.from, to };
     };
     // trailing options: duration, easing
     const tail = () => {
@@ -202,7 +207,8 @@ export function toActions(steps: AnimStep[]): { camera?: any; timeline: any[] } 
     const base: any = { line: s.line };
     if (s.dur) base.dur = s.dur.value;
     if (s.ease) base.ease = s.ease.value;
-    const tgt = s.target?.value;
+    // several comma-separated targets become a list (the compiler resolves each)
+    const tgt = s.target?.value?.includes(',') ? s.target.value.split(',').map((x) => x.trim()).filter(Boolean) : s.target?.value;
     switch (s.verb) {
       case 'move': return { ...base, move: tgt, [s.mode!.value]: s.vec!.value, dur: s.dur?.value ?? 0 };
       case 'rotate': return { ...base, rotate: tgt, [s.mode!.value]: s.vec!.value, about: s.about?.value, dur: s.dur?.value ?? 0 };

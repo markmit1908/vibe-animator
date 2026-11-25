@@ -14,7 +14,7 @@ One step per line; steps run in sequence. \`parallel { … }\` runs the steps in
 - color TARGET #2e86de 1s · color TARGET reset 1s      – change a colour over time / back to the part's base colour
 - camera [x,y,z] look [x,y,z] 3s · label "Title" "subtitle" · cutaway none|half|quarter · wait 2s
 - # comments. Durations: 2s, 500ms. A step without a duration is instant.
-TARGET is a part id from the assembly tree (e.g. plant/model/root/V-010001-511_A/…), a user group \`@name\`, or a glob with *.
+TARGET is a part id from the assembly tree, several comma-separated (\`move a, b, @g by …\`); a part may also be named by the last segment of its id (e.g. F1-14-3) or its display name when that is unique, (e.g. plant/model/root/V-010001-511_A/…), a user group \`@name\`, or a glob with *.
 Parts must be unlocked to be animated – but you don't need to unlock them first: propose_script_edit lists locked targets and its Accept button unlocks them together with applying the script.
 Don't move and rotate the same part in one parallel block (the last one wins).
 

@@ -247,3 +247,51 @@ test("assembly: remove/restore parts, display names, group rename and delete", a
   await expect(status).toHaveText("1 error");
   await expect.poll(async () => (await model(page, a.id)).groups).toEqual({});
 });
+
+test("type a command, pick parts in the tree, and they go into the script", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Pick", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "Pick"' },
+    snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Pick");
+  const editor = page.locator("#script .cm-content");
+  await expect(editor).toBeVisible({ timeout: 15_000 });
+  await editor.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Meta+ArrowDown");
+  await page.keyboard.type("\nmove ");
+  await expect(page.locator("#script .pick")).toContainText("Pick parts");
+  const row = (t: string) => page.locator("#tree .row", { has: page.locator(".lbl", { hasText: new RegExp(`^${t}$`) }) }).first();
+  await row("head").click();
+  await row("bolts").click({ modifiers: [process.platform === "darwin" ? "Meta" : "Control"] });
+  await expect(editor).toContainText("move head, bolts");
+  await page.keyboard.type("by [0,1,0] 1s");
+  await expect(page.locator("#script .status")).toHaveText("✓");
+  await expect.poll(async () => scriptOf(await model(page, a.id))).toContain("move head, bolts by [0,1,0] 1s");
+  // both parts move: at the end of the step each is 1 m higher
+  const y = (id: string) => page.evaluate((id) => (window as any).__studio.built.registry.get(id).position.y, id);
+  const [h0, b0] = [await y("head"), await y("bolts")];
+  await page.locator("#script .cm-stepTime", { hasText: "0.0s" }).last().click();
+  await expect.poll(async () => +((await y("head")) - h0).toFixed(3)).toBe(1);
+  expect(+((await y("bolts")) - b0).toFixed(3)).toBe(1);
+});
+
+test("parts can be named by their short name, several in one step", async ({ page }) => {
+  await page.goto("/");
+  const { readFileSync } = await import("node:fs");
+  await api(page).put("/api/files/CAD/small.glb?overwrite=true", { data: readFileSync(new URL("./fixtures/small.glb", import.meta.url)) });
+  const m = { name: "Short names", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [{ id: "plant", file: "CAD/small.glb", clip: false }] },
+    script: { language: "anim", text: 'label "S"\nmove Pin_1, Pin_2 by [0,.25,0] 1s' },
+    snapshots: { active: "default", items: { default: { locked: { plant: false }, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Short names");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const y = (short: string) => page.evaluate((s) => { const r = (window as any).__studio.built.registry; for (const [id, o] of r) if (id.endsWith(`/${s}`)) { o.updateWorldMatrix(true, false); return o.matrixWorld.elements[13]; } return NaN; }, short);
+  const [a0, b0] = [await y("Pin_1"), await y("Pin_2")];
+  await page.locator("#script .cm-stepTime", { hasText: "0.0s" }).last().click();
+  await expect.poll(async () => +((await y("Pin_1")) - a0).toFixed(3)).toBe(0.25);
+  expect(+((await y("Pin_2")) - b0).toFixed(3)).toBe(0.25);
+  // a name shared by many parts asks for the full id
+  await page.locator("#script .cm-content").click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Meta+ArrowDown");
+  await page.keyboard.type("\nmove L5 by [0,1,0] 1s");
+  await expect(page.locator("#script .status")).toHaveText("1 error");
+});

@@ -165,6 +165,15 @@ function applyColors() {
     });
   }
 }
+/** The shortest script name for a part: its last id segment when no other part shares it (else the full id). */
+function shortSpec(spec: string) {
+  if (spec.startsWith('@') || !spec.includes('/')) return spec;
+  const short = spec.slice(spec.lastIndexOf('/') + 1);
+  if (!/^[\w.#-]+$/.test(short)) return spec;
+  let n = 0;
+  for (const id of built.registry.keys()) if (id.slice(id.lastIndexOf('/') + 1) === short && ++n > 1) return spec;
+  return short;
+}
 /** Remove parts from (or restore them to) this animation's assembly; saved with the animation. */
 async function setRemoved(ids: string[], rem: boolean) {
   for (const id of ids) {
@@ -577,7 +586,10 @@ const tree = new TreePanel(built, scene3, {
     persistWorking();
     if (what === 'locked') { buildTimeline(); gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs); }
   },
-  onSelect: (o, spec, objs) => gizmoFor(o, spec, objs),
+  onSelect: (o, spec, objs, clicked) => {
+    gizmoFor(o, spec, objs);
+    if (clicked && scriptPanel?.picking) scriptPanel.insertTarget(shortSpec(clicked.spec), clicked.add); // pick mode: into the script
+  },
   colorOf: (spec) => colors[spec],
   labelOf: (id) => labels[id],
   onLabel: (id, l) => {

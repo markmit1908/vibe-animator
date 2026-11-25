@@ -42,6 +42,8 @@ used to illustrate the concept. Delivered live in a browser.
 
 - Removed parts / display names: `model.removed` (ids) and `model.labels` (id → name), per animation. Removed objects get `userData.removed`: invisible (all visibility formulas include it), suppressed in `reconcile`, filtered from tree/assist, and `compile(..., isRemoved)` refuses them (groups skip removed members). Quick-fixes in `buildTimeline`: Restore (removed), Undo delete (`tree.lastDeletedGroup`), Unlock (locked). Group rename rewrites `@old` in the script via `onGroupRename` before the groups change.
 
+- Targets: comma-separated lists (`a, b, @g`) parse to arrays; a target that isn't an id/glob/@group resolves by unique short name (last id segment) or label (`byName` in compile.ts; ambiguous → error). Pick mode: `ScriptPanel.updatePick` arms when the cursor is in a step's target position; tree `onSelect(…, clicked)` → `insertTarget(shortSpec(spec), add)`.
+
 ## Conventions
 - Y is up, units are metres, and the core base is at y = 0. The operating floor sits at the vessel flange (`floorY`), and locations are relative to it.
 - The machine's origin is the grapple tip.

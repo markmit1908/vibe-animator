@@ -83,6 +83,20 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
   const vCam = { pos: camera.pos.clone(), look: camera.look.clone() };
 
   // ---- target / point resolution ----
+  let names: Map<string, string[]> | undefined;
+  /** name → ids: the last segment of each id, and display names (labels) */
+  const byName = () => {
+    if (!names) {
+      names = new Map();
+      const add = (k: string, id: string) => { const l = names!.get(k); if (l) { if (!l.includes(id)) l.push(id); } else names!.set(k, [id]); };
+      for (const [id, o] of scene.registry) {
+        if (isRemoved(o)) continue;
+        add(id.slice(id.lastIndexOf('/') + 1), id);
+        if (o.userData.label) add(o.userData.label as string, id);
+      }
+    }
+    return names;
+  };
   const resolveTargets = (spec: any): string[] => {
     const list: string[] = Array.isArray(spec) ? spec : [spec];
     const out: string[] = [];
@@ -94,9 +108,14 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
       } else if (String(s).includes('*')) {
         const re = new RegExp('^' + String(s).replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');
         for (const id of scene.registry.keys()) if (re.test(id)) out.push(id);
-      } else {
-        if (!scene.registry.has(String(s))) throw new Error(`Unknown target "${s}"`);
+      } else if (scene.registry.has(String(s))) {
         out.push(String(s));
+      } else {
+        // a part's name (last segment of its id, e.g. "F1-14-3") or its display name
+        const hits = byName().get(String(s)) ?? [];
+        if (!hits.length) throw new Error(`Unknown target "${s}"`);
+        if (hits.length > 1) throw new Error(`"${s}" names ${hits.length} parts – use the full id (select it in the tree → Copy id)`);
+        out.push(hits[0]);
       }
     }
     return out;
@@ -263,8 +282,8 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
       }
 
       case 'rotate': {
-        const spec = String(a.target ?? val);
-        const ids = resolveTargets(spec);
+        const spec = Array.isArray(a.target ?? val) ? (a.target ?? val).join(',') : String(a.target ?? val);
+        const ids = resolveTargets(Array.isArray(a.target ?? val) ? (a.target ?? val) : spec);
         const d = dur(2);
         const pivot = a.about ? new THREE.Vector3(...a.about) : pivotOf(spec, ids);
         let R: THREE.Quaternion;

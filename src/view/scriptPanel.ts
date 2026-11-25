@@ -111,7 +111,8 @@ const CSS = `
 #script .bar { display: flex; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid #222a33; }
 #script .bar b { flex: 1; font-size: 12px; }
 #script .bar .dirty { color: #ff8c1a; font-size: 11px; }
-#script .bar .ok { color: #46a758; font-size: 11px; } #script .bar .err { color: #e5484d; font-size: 11px; }
+#script .bar .ok { color: #46a758; font-size: 11px; }
+#script .bar .pick { color: #f2b705; font-size: 11px; } #script .bar .err { color: #e5484d; font-size: 11px; }
 #script button, #script select { background: #222a33; color: inherit; border: 1px solid #2b3540; border-radius: 4px; padding: 2px 7px; cursor: pointer; font-size: 11px; }
 #script .host { flex: 1; min-height: 0; overflow: auto; }
 .cm-activeStep { background: rgba(242,183,5,.10) !important; }
@@ -128,11 +129,16 @@ export class ScriptPanel {
   private saved = '';
   private timer?: number;
   mode: 'by' | 'to' = 'by';
+  /** Pick mode: the cursor is where a step's target goes – parts clicked in the tree / 3D view are inserted there. */
+  private pick?: { from: number; to: number };
+  private pickEl!: HTMLElement;
+  /** Verbs whose next word is a target. */
+  private static TARGETED = /^(\s*)(move|rotate|hide|show|fade|highlight|color|pivot)\s+([^\s]*(?:,\s*[^\s]*)*)$/;
 
   constructor(public right: HTMLElement, public name: string, text: string, public hooks: ScriptHooks) {
     const style = document.createElement('style'); style.textContent = CSS; document.head.appendChild(style);
     this.el = document.createElement('div'); this.el.id = 'script';
-    this.el.innerHTML = `<div class="bar"><b>Script · ${name}</b><span class="status"></span><span class="dirty"></span>
+    this.el.innerHTML = `<div class="bar"><b>Script · ${name}</b><span class="status"></span><span class="dirty"></span><span class="pick" title="Click parts in the tree or the 3D view to insert them (⌘/Ctrl-click: add another). Esc: stop."></span>
       <select title="How edits made with the gizmo are written"><option value="by">edit: by</option><option value="to">edit: to</option></select>
       <button data-a="cam" title="Insert the current camera view after the cursor line">📷</button>
       <button data-a="run" title="Run to end of the cursor's step (⌘↵)">▶ here</button>
@@ -140,6 +146,7 @@ export class ScriptPanel {
     right.appendChild(this.el);
     this.status = this.el.querySelector('.status')!;
     this.dirtyEl = this.el.querySelector('.dirty')!;
+    this.pickEl = this.el.querySelector('.pick')!;
     const modeSel = this.el.querySelector('select')!;
     modeSel.onchange = () => (this.mode = modeSel.value as 'by' | 'to');
     this.el.querySelector<HTMLElement>('[data-a=save]')!.onclick = () => this.save();
@@ -184,6 +191,7 @@ export class ScriptPanel {
           keymap.of([
             { key: 'Mod-s', preventDefault: true, run: () => { this.save(); return true; } },
             { key: 'Mod-Enter', preventDefault: true, run: () => { this.runToCursor(); return true; } },
+            { key: 'Escape', run: () => { if (!this.pick) return false; this.pick = undefined; this.pickEl.textContent = ''; return true; } },
             ...defaultKeymap, ...historyKeymap, indentWithTab,
           ]),
           EditorView.lineWrapping,
@@ -196,6 +204,7 @@ export class ScriptPanel {
             '.cm-tooltip': { backgroundColor: '#14191f', border: '1px solid #2b3540', color: '#d7dde4' },
           }, { dark: true }),
           EditorView.updateListener.of((u) => {
+            if (u.docChanged || u.selectionSet) this.updatePick(u.state);
             if (!u.docChanged) return;
             this.updateDirty();
             clearTimeout(this.timer);
@@ -211,6 +220,33 @@ export class ScriptPanel {
   destroy() { clearTimeout(this.timer); this.timer = undefined; this.view.destroy(); }
 
   get text() { return this.view.state.doc.toString(); }
+
+  /** Arm pick mode when the cursor sits where a target goes ("move ", "fade @a, "). */
+  private updatePick(state: EditorState) {
+    const sel = state.selection.main;
+    const line = state.doc.lineAt(sel.head);
+    const before = line.text.slice(0, sel.head - line.from);
+    const m = sel.empty ? before.match(ScriptPanel.TARGETED) : null;
+    this.pick = m ? { from: sel.head - m[3].length, to: sel.head } : undefined;
+    this.pickEl.textContent = this.pick ? '🎯 Pick parts…' : '';
+  }
+  get picking() { return !!this.pick; }
+
+  /** Insert a picked target at the pick position: replace the partial word, or append (", spec") when adding. */
+  insertTarget(spec: string, add: boolean) {
+    if (!this.pick) return;
+    const { from, to } = this.pick;
+    const cur = this.view.state.sliceDoc(from, to).replace(/,\s*$/, '');
+    const parts = cur ? cur.split(',').map((x) => x.trim()).filter(Boolean) : [];
+    const next = add ? [...parts.filter((p) => p !== spec), spec] : [spec];
+    const insert = next.join(', ') + ' ';
+    const after = this.view.state.sliceDoc(to, to + 1) === ' ' ? to + 1 : to; // don't double the space
+    this.view.dispatch({ changes: { from, to: after, insert }, selection: { anchor: from + insert.length } });
+    // stay armed so more parts can be added with ⌘/Ctrl-click
+    this.pick = { from, to: from + insert.length - 1 };
+    this.pickEl.textContent = '🎯 Pick parts… (⌘-click adds)';
+    this.view.focus();
+  }
   get dirty() { return this.text !== this.saved; }
 
   private updateDirty() { this.dirtyEl.textContent = this.dirty ? '● unsaved' : ''; }

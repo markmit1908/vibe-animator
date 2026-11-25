@@ -65,7 +65,7 @@ export interface TreeHooks {
   onChange?: (objs: THREE.Object3D[], what: 'hidden' | 'locked') => void;
   stats?: () => string;
   /** Selection changed: single object, its script spec (@group / id) and all objects selected. */
-  onSelect?: (obj: THREE.Object3D | undefined, spec: string | undefined, objs: THREE.Object3D[]) => void;
+  onSelect?: (obj: THREE.Object3D | undefined, spec: string | undefined, objs: THREE.Object3D[], clicked?: { spec: string; add: boolean }) => void;
   /** Base colour of a part id / "@group" (undefined: its own). */
   colorOf?: (spec: string) => string | undefined;
   /** Set (hex) or clear (null) base colours. */
@@ -311,7 +311,9 @@ export class TreePanel {
     } else this.sel = n ? [n] : [];
     this.highlight();
     const one = this.sel.length === 1 ? this.sel[0] : undefined;
-    this.hooks.onSelect?.(one?.obj, one ? (one.group ? `@${one.group}` : one.id) : undefined, this.sel.flatMap((x) => this.objsOf(x)));
+    const clicked = n && (n.group ? `@${n.group}` : n.id);
+    this.hooks.onSelect?.(one?.obj, one ? (one.group ? `@${one.group}` : one.id) : undefined, this.sel.flatMap((x) => this.objsOf(x)),
+      clicked && this.sel.includes(n!) ? { spec: clicked, add: additive } : undefined);
     if (n && reveal) {
       this.search.value = '';
       for (let p = n.parent; p; p = p.parent) this.open.add(p);
