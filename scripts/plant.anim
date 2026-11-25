@@ -1,0 +1,14 @@
+# Plant animation – one step per line; steps run in sequence, parallel { } runs together.
+# Targets: @group (make groups in the assembly tree) or a part id (select a part -> Copy id).
+# Unlock parts in the tree before animating them.
+#
+#   move @lid by [0,3,0] 6s ease          (by = relative, to = absolute bbox centre)
+#   rotate @lid by [0,0,90] 4s            (degrees; pivot = bbox centre, or `about [x,y,z]`)
+#   pivot @lid [0,12,0]                   (pivot that travels with @lid)
+#   hide / show @x [1s]   fade @x to 0.3 2s   highlight @x #c0392b 1s
+#   camera [x,y,z] look [x,y,z] 3s        label "Title" "subtitle"   cutaway quarter   wait 2s
+#
+# Click a step's time (left gutter) to run to it; drag on it to scrub within the step. ⌘↵ = run to cursor.
+
+label "Plant overview"
+wait 2s

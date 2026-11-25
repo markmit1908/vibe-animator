@@ -13,11 +13,18 @@ import { loadStore, store, useSnapshot, captureSnapshot, writeStore, markDirty, 
   isLocked, isHidden, isCad, state, type Snapshot } from './scene/state';
 import { TreePanel } from './view/tree';
 import { Triad } from './view/triad';
+import { ScriptPanel } from './view/scriptPanel';
+import { parseAnim, toActions, type ParseError } from './script/anim';
+import { ScriptError } from './timeline/compile';
 
 const cfg = parse(coreYaml);
 const scripts = import.meta.glob('../scripts/*.yaml', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
-const scriptName = cfg.script ?? 'refuel.yaml';
-const script = parse(scripts[`../scripts/${scriptName}`] ?? 'timeline: []') ?? {};
+const scriptName: string = cfg.script ?? 'refuel.yaml';
+const isAnim = scriptName.endsWith('.anim');
+// .anim scripts are edited live in the Script panel and saved through /__script
+const animText: string = isAnim ? await fetch(`/__script?name=${encodeURIComponent(scriptName)}`).then((r) => (r.ok ? r.text() : '')).catch(() => '') : '';
+let script: any = isAnim ? toActions(parseAnim(animText).steps) : parse(scripts[`../scripts/${scriptName}`] ?? 'timeline: []') ?? {};
+let scriptErrors: ParseError[] = isAnim ? parseAnim(animText).errors : [];
 
 // ---------- renderer / scene ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -107,22 +114,31 @@ const frameAll = () => {
   return { pos: c.clone().addScaledVector(dir, d).toArray(), look: c.toArray() };
 };
 const defaultCam = script.camera ?? frameAll();
+/** Compile the current script. On error the previous timeline keeps playing. */
 function buildTimeline(): boolean {
+  const t = player?.time ?? 0, playing = player?.playing ?? false;
+  player?.seek(0); // compile from the start pose (positions, colours) – not the animated one
   try {
-    const tl = compile(script, built, defaultCam, isLocked, store.groups);
-    const t = player?.time ?? 0, playing = player?.playing ?? false;
+    const tl = compile(script, built, script.camera ?? defaultCam, isLocked, store.groups);
     player = new Player(built, tl);
-    player.time = t; player.playing = playing;
+    player.playing = playing;
+    player.seek(Math.min(t, tl.duration));
     subEl.textContent = '';
+    scriptPanel?.setErrors(scriptErrors);
+    onTimeline();
     return true;
   } catch (e: any) {
-    chapterEl.textContent = 'Script error';
-    subEl.textContent = e.message;
+    player?.seek(t);
+    if (scriptPanel && e instanceof ScriptError && e.line) {
+      scriptPanel.setErrors([...scriptErrors, { line: e.line, from: -1, to: -1, message: e.message }]);
+    } else { chapterEl.textContent = 'Script error'; subEl.textContent = e.message; }
     console.error(e);
     return false;
   }
 }
-if (!buildTimeline()) player = new Player(built, { tweens: [], steps: [], duration: 0, touched: [],
+let onTimeline = () => {};
+let scriptPanel: ScriptPanel | undefined;
+if (!buildTimeline()) player = new Player(built, { tweens: [], steps: [], duration: 0, touched: [], lines: new Map(),
   camera: { pos: new THREE.Vector3(...defaultCam.pos), look: new THREE.Vector3(...defaultCam.look), initPos: new THREE.Vector3(...defaultCam.pos), initLook: new THREE.Vector3(...defaultCam.look) } });
 camera.position.copy(player.tl.camera.pos);
 controls.target.copy(player.tl.camera.look);
@@ -138,7 +154,8 @@ const ui = {
   xray: false,
   followCamera: true,
 };
-const gui = new GUI({ title: 'Refuelling' });
+const right = document.createElement('div'); right.id = 'right'; document.body.appendChild(right);
+const gui = new GUI({ title: 'Controls', container: right });
 const pb = gui.addFolder('Playback');
 pb.add(ui, 'play').name('Play / pause  [space]');
 pb.add(ui, 'restart').name('Restart');
@@ -152,9 +169,35 @@ view.add(ui, 'xray').name('X-ray shells').onChange((on: boolean) => built.shellM
   m.transparent = true; m.depthWrite = !on;
 }));
 view.add(ui, 'followCamera').name('Scripted camera');
-const chapters = gui.addFolder('Chapters');
-player.tl.steps.filter((s) => s.kind === 'label').forEach((s) =>
-  chapters.add({ go: () => { player.seek(s.t); player.playing = true; } }, 'go').name(`${s.t.toFixed(0).padStart(3)}s  ${s.value}`));
+const chapters = gui.addFolder('Chapters').close();
+function rebuildChapters() {
+  [...chapters.controllers].forEach((c) => c.destroy());
+  player.tl.steps.filter((s) => s.kind === 'label').forEach((s) =>
+    chapters.add({ go: () => { player.seek(s.t); player.playing = true; } }, 'go').name(`${s.t.toFixed(0).padStart(3)}s  ${s.value}`));
+  timeCtl.max(player.duration);
+}
+rebuildChapters();
+onTimeline = () => { rebuildChapters(); gizmoFor?.(tree?.selectedObject); };
+
+// ---------- script panel (.anim) ----------
+if (isAnim) {
+  scriptPanel = new ScriptPanel(right, scriptName, animText, {
+    change: (text) => {
+      const doc = parseAnim(text);
+      scriptErrors = doc.errors;
+      if (doc.errors.length) { scriptPanel!.setErrors(doc.errors); return; } // keep the last good timeline
+      script = toActions(doc.steps);
+      buildTimeline();
+    },
+    save: async (text) => { await fetch(`/__script?name=${encodeURIComponent(scriptName)}`, { method: 'POST', body: text }); },
+    seek: (t) => { player.playing = false; player.seek(t); },
+    ids: () => [...Object.keys(store.groups).map((g) => `@${g}`), ...built.registry.keys()],
+  });
+  scriptPanel.setErrors(scriptErrors);
+}
+const rightToggle = document.createElement('button'); rightToggle.id = 'right-toggle'; rightToggle.textContent = '☰';
+rightToggle.onclick = () => { right.classList.toggle('collapsed'); document.body.classList.toggle('right-collapsed'); };
+document.body.appendChild(rightToggle);
 
 // ---------- assembly tree + 3D picking ----------
 const tree = new TreePanel(built, scene3, {
@@ -271,7 +314,7 @@ function gizmoFor(o: THREE.Object3D | undefined) {
   if (ok) gizmo.attach(o!); else gizmo.detach();
 }
 addEventListener('keydown', (e) => {
-  if ((e.target as HTMLElement).tagName === 'INPUT') return;
+  if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).closest?.('.cm-editor')) return;
   if (e.key === 'w') gizmo.setMode('translate');
   if (e.key === 'e') gizmo.setMode('rotate');
   if (e.key === 'Escape') { gizmo.detach(); tree.select(undefined, false); }
@@ -282,7 +325,7 @@ addEventListener('keydown', (e) => {
   }
 });
 
-window.addEventListener('keydown', (e) => { if (e.code === 'Space') { e.preventDefault(); ui.play(); } });
+window.addEventListener('keydown', (e) => { if (e.code === 'Space' && !(e.target as HTMLElement).closest?.('.cm-editor, input')) { e.preventDefault(); ui.play(); } });
 { const sel = new URLSearchParams(location.search).get('select'); if (sel) tree.selectId(sel); }
 controls.addEventListener('start', () => { ui.followCamera = false; gui.controllersRecursive().forEach((c) => c.updateDisplay()); });
 window.addEventListener('resize', () => {
@@ -314,6 +357,7 @@ renderer.setAnimationLoop(() => {
   if (ui.time !== player.time) { ui.time = player.time; timeCtl.updateDisplay(); }
 
   tree.update();
+  scriptPanel?.setTiming(player.tl.lines, player.time);
   renderer.render(scene3, camera);
   triad.render(renderer, camera, document.body.classList.contains('tree-collapsed') ? 12 : 352);
 });

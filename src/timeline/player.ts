@@ -7,13 +7,13 @@ export class Player {
   time = 0;
   playing = false;
   speed = 1;
-  private initial = new Map<THREE.Object3D, { pos: THREE.Vector3; colors: THREE.Color[] }>();
+  private initial = new Map<THREE.Object3D, { pos: THREE.Vector3; quat: THREE.Quaternion; colors: THREE.Color[] }>();
 
   constructor(public scene: BuiltScene, public tl: Timeline) {
     // only objects the script animates are reset each frame (CAD can add thousands of nodes)
     for (const id of tl.touched) {
       const obj = scene.registry.get(id)!;
-      this.initial.set(obj, { pos: obj.position.clone(), colors: bodyMaterials(obj).map((m) => m.color.clone()) });
+      this.initial.set(obj, { pos: obj.position.clone(), quat: obj.quaternion.clone(), colors: bodyMaterials(obj).map((m) => m.color.clone()) });
     }
   }
 
@@ -30,6 +30,7 @@ export class Player {
     this.time = Math.max(0, Math.min(t, this.duration));
     for (const [obj, s] of this.initial) {
       obj.position.copy(s.pos);
+      obj.quaternion.copy(s.quat);
       bodyMaterials(obj).forEach((m, i) => m.color.copy(s.colors[i]));
       setOpacity(obj, 1);
     }

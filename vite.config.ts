@@ -33,6 +33,22 @@ function snapshots(): Plugin {
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify(data ?? {}));
       });
+      // GET/POST /__script?name=x.anim – the Script panel's file in scripts/
+      server.middlewares.use('/__script', (req, res) => {
+        const name = new URL(req.url ?? '', 'http://x').searchParams.get('name') ?? '';
+        if (!/^[\w.-]+\.anim$/.test(name)) { res.statusCode = 400; res.end('bad name'); return; }
+        const file = `scripts/${name}`;
+        server.watcher.unwatch(file); // the panel owns this file; saving must not reload the page
+        if (req.method === 'POST') {
+          let body = '';
+          req.on('data', (c) => (body += c));
+          req.on('end', () => { writeFileSync(file, body); res.end('ok'); });
+          return;
+        }
+        if (!existsSync(file)) { res.statusCode = 404; res.end(''); return; }
+        res.setHeader('content-type', 'text/plain; charset=utf-8');
+        res.end(readFileSync(file, 'utf8'));
+      });
     },
   };
 }

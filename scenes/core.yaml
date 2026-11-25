@@ -4,7 +4,7 @@
 # Parametric placeholder reactor (core, vessel, head, machine, racks). false = CAD only.
 generated: false
 # Animation script in scripts/ (refuel.yaml animates the generated reactor).
-script: plant.yaml
+script: plant.anim
 
 core:
   rings: 5              # hex rings incl. centre (5 -> 61 columns). Column ids: R<ring>-<index>, e.g. R0-0, R1-1
