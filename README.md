@@ -24,7 +24,7 @@ URL params: `?t=42` opens at 42 s, `?select=R1-1/L5` selects a part.
 
 | Path | What it is |
 |---|---|
-| `scenes/core.yaml` | Model setup: core lattice, block sizes, vessel, head, machine, named locations, fresh-fuel staging, palette, CAD overrides |
+| `scenes/core.yaml` | Model setup: core lattice, block sizes, vessel, head, machine, named locations, fresh-fuel staging, palette, CAD models |
 | `scripts/refuel.yaml` | Animation script (timeline + macros). Action reference is in the file header |
 | `public/cad/` | Converted `.glb` files (git-ignored), listed under `cad_models:` in core.yaml |
 | `src/scene/build.ts` | Generates geometry from `core.yaml` |
