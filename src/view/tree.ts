@@ -447,21 +447,38 @@ export class TreePanel {
     this.info.querySelector<HTMLElement>('[data-a=uncolor]')?.addEventListener('click', () => this.hooks.onColor?.(specs, null));
   }
 
+  // ---------- utility tools (the floating tool bar) ----------
+  /** The selection's parts: how many, and whether all of them are hidden (blanked). */
+  selectionInfo() {
+    const objs = this.sel.filter((n) => !n.removedRow).flatMap((n) => this.objsOf(n));
+    return { count: this.sel.length, allHidden: objs.length > 0 && objs.every(isHidden) };
+  }
+  /** Blank (hide) the selected parts, or unblank them when they are all hidden. */
+  toggleHiddenSelected() {
+    const { count, allHidden } = this.selectionInfo();
+    if (!count) return;
+    this.sel.filter((n) => !n.removedRow).forEach((n) => this.setFlag(n, 'hidden', !allHidden));
+    this.updateInfo();
+  }
+  /** Make a group (@name) from the selection, or add it to an existing group. */
+  groupSelected() {
+    if (!this.sel.length) return;
+    const ids = [...new Set(this.sel.flatMap((n) => this.objsOf(n)).map((o) => (o.userData.id ?? o.name) as string))];
+    const existing = Object.keys(store.groups).join(', ');
+    const name = prompt(`Group name (new, or existing to add to)${existing ? `\nExisting: ${existing}` : ''}`)?.trim().replace(/\s+/g, '-');
+    if (!name) return;
+    const set = new Set([...(store.groups[name] ?? []), ...ids]);
+    // drop members already covered by an ancestor member
+    const objs = [...set].map((id) => this.scene.registry.get(id)).filter(Boolean) as THREE.Object3D[];
+    const covered = (o: THREE.Object3D) => { for (let p = o.parent; p; p = p.parent) if (objs.includes(p)) return true; return false; };
+    store.groups[name] = objs.filter((o) => !covered(o)).map((o) => (o.userData.id ?? o.name) as string);
+    this.groupsChanged();
+  }
+
   // ---------- user groups ----------
   private wireGroupButtons() {
     const on = (a: string, f: () => void) => this.info.querySelector<HTMLElement>(`[data-a=${a}]`)?.addEventListener('click', f);
-    on('group', () => {
-      const ids = [...new Set(this.sel.flatMap((n) => this.objsOf(n)).map((o) => (o.userData.id ?? o.name) as string))];
-      const existing = Object.keys(store.groups).join(', ');
-      const name = prompt(`Group name (new, or existing to add to)${existing ? `\nExisting: ${existing}` : ''}`)?.trim().replace(/\s+/g, '-');
-      if (!name) return;
-      const set = new Set([...(store.groups[name] ?? []), ...ids]);
-      // drop members already covered by an ancestor member
-      const objs = [...set].map((id) => this.scene.registry.get(id)).filter(Boolean) as THREE.Object3D[];
-      const covered = (o: THREE.Object3D) => { for (let p = o.parent; p; p = p.parent) if (objs.includes(p)) return true; return false; };
-      store.groups[name] = objs.filter((o) => !covered(o)).map((o) => (o.userData.id ?? o.name) as string);
-      this.groupsChanged();
-    });
+    on('group', () => this.groupSelected());
     on('ungroup', () => this.removeSelected());
     on('rename', () => this.renameSelected());
     on('partrename', () => this.renameSelected());

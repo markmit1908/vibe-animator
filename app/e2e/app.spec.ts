@@ -453,3 +453,25 @@ test("locked parts: the error has an Unlock button for every locked part the scr
   await expect(page.locator("#script .status")).toHaveText("✓");
   await expect.poll(async () => (await model(page, a.id)).snapshots.items.default.locked.vessel).toBe(false);
 });
+
+test("floating tools: blank / unblank the selection, and group it", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Tools", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "T"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Tools");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const blank = page.locator("#toolsbar [data-t=blank]"), group = page.locator("#toolsbar [data-t=group]");
+  await expect(blank).toBeDisabled();
+  const row = (t: string) => page.locator("#tree .row", { has: page.locator(".lbl", { hasText: new RegExp(`^${t}$`) }) }).first();
+  await row("head").click(); await row("bolts").click({ modifiers: ["Meta"] });
+  await blank.click();
+  await expect(blank).toContainText("Unblank");
+  await expect.poll(async () => (await model(page, a.id)).snapshots.items.default.hidden).toEqual({ head: true, bolts: true });
+  await page.keyboard.press("h");                                     // H toggles back
+  await expect(blank).toContainText("Blank");
+  await expect.poll(async () => (await model(page, a.id)).snapshots.items.default.hidden).toEqual({ head: false, bolts: false });
+  page.once("dialog", (d) => d.accept("lid set"));
+  await group.click();
+  await expect.poll(async () => (await model(page, a.id)).groups).toEqual({ "lid-set": ["head", "bolts"] });
+});

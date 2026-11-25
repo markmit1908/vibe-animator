@@ -579,12 +579,14 @@ host().appendChild(rightToggle);
 // ---------- assembly tree + 3D picking ----------
 const tree = new TreePanel(built, scene3, {
   onChange: async (objs, what) => {
+    if (what === 'hidden') updateTools();
     for (const o of objs) await reconcile(o);
     persistWorking();
     if (what === 'locked') { buildTimeline(); gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs); }
   },
   onSelect: (o, spec, objs, clicked) => {
     gizmoFor(o, spec, objs);
+    updateTools();
     if (clicked && scriptPanel?.picking) scriptPanel.insertTarget(shortSpec(clicked.spec), clicked.add); // pick mode: into the script
   },
   colorOf: (spec) => colors[spec],
@@ -787,6 +789,8 @@ gizmo.addEventListener('dragging-changed', (e: any) => {
 on('keydown', (e: any) => {
   if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).closest?.('.cm-editor')) return;
   if (e.key === 'w') gizmo.setMode('translate');
+  if (e.key === 'h' && !e.metaKey && !e.ctrlKey) { tree.toggleHiddenSelected(); updateTools(); }
+  if (e.key === 'g' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); tree.groupSelected(); updateTools(); }
   if (e.key === 'e') gizmo.setMode('rotate');
   if (e.key === 'Escape') { gizmo.detach(); tree.select(undefined, false); }
   if (e.key === 'r' && gizmo.object && player.time === 0) { // reset selection to its original placement
@@ -928,6 +932,33 @@ function drawFrame() {
   const h = gizmo.getHelper();
   if (gizmo.object) { renderer.autoClear = false; renderer.clearDepth(); renderer.render(h, camera); renderer.autoClear = true; }
 }
+
+// ---------- utility tools: floating bar on the left of the 3D view ----------
+const toolbar = document.createElement('div'); toolbar.id = 'toolsbar';
+toolbar.innerHTML = `<button data-t="blank" title="Blank / unblank the selected parts (H)"><span class="i">◐</span><span class="l">Blank</span></button>
+  <button data-t="group" title="Create a group from the selected parts, or add them to one (G)"><span class="i">⊞</span><span class="l">Group</span></button>`;
+host().appendChild(toolbar);
+{
+  const css = document.createElement('style');
+  css.textContent = `#toolsbar { position: absolute; left: 352px; top: 50%; transform: translateY(-50%); z-index: 6; display: flex; flex-direction: column; gap: 4px; padding: 4px;
+      background: rgba(14,17,21,.9); border: 1px solid #2b3540; border-radius: 6px; font: 11px system-ui; }
+    .studio-root.tree-collapsed #toolsbar { left: 12px; }
+    #toolsbar button { width: 52px; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 5px 2px; background: #1b222a; color: #d7dde4; border: 1px solid #2b3540; border-radius: 4px; cursor: pointer; font: inherit; }
+    #toolsbar button .i { font-size: 16px; line-height: 1; }
+    #toolsbar button:hover:not(:disabled) { background: #26303a; } #toolsbar button:disabled { opacity: .4; cursor: default; }
+    #toolsbar button.on { border-color: #f2b705; color: #f2b705; }`;
+  document.head.appendChild(css);
+}
+function updateTools() {
+  const { count, allHidden } = tree.selectionInfo();
+  const blank = toolbar.querySelector<HTMLButtonElement>('[data-t=blank]')!, group = toolbar.querySelector<HTMLButtonElement>('[data-t=group]')!;
+  blank.disabled = group.disabled = !count;
+  blank.querySelector('.l')!.textContent = allHidden ? 'Unblank' : 'Blank';
+  blank.classList.toggle('on', allHidden);
+}
+toolbar.querySelector<HTMLElement>('[data-t=blank]')!.onclick = () => { tree.toggleHiddenSelected(); updateTools(); };
+toolbar.querySelector<HTMLElement>('[data-t=group]')!.onclick = () => { tree.groupSelected(); updateTools(); };
+updateTools();
 
 // ---------- loop ----------
 const clock = new THREE.Clock();

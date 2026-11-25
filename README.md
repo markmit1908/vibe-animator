@@ -53,6 +53,8 @@ Right-click a row for its menu. Select a row and press **F2** to rename or **Del
 **Snapshots** (bar at the top) are named start states: lock/hide flags, part placements and a camera view. Changes
 save into the active snapshot automatically. **Save** also records the camera; **Save as…** makes a new snapshot.
 
+**Tools** (floating bar, left of the 3D view): **Blank / Unblank** (**H**) hides the selected parts or shows them again; **Group** (**G**) makes a group from the selection.
+
 **Moving parts:** select an unlocked part, group or several parts to get a gizmo (**W** move, **E** rotate, **R** reset, **Esc** deselect).
 - **At t = 0** it sets the start pose.
 - **At t > 0** the change is written into the script at that time (see below).
