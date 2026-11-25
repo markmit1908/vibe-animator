@@ -471,7 +471,47 @@ test("floating tools: blank / unblank the selection, and group it", async ({ pag
   await page.keyboard.press("h");                                     // H toggles back
   await expect(blank).toContainText("Blank");
   await expect.poll(async () => (await model(page, a.id)).snapshots.items.default.hidden).toEqual({ head: false, bolts: false });
+  // reverse blank: everything not selected goes off, the selection stays on
+  await page.locator("#toolsbar [data-t=others]").click();
+  await expect.poll(async () => { const h = (await model(page, a.id)).snapshots.items.default.hidden; return [h.vessel, h['R1-1/L1'], h.machine, h.head, h.bolts]; })
+    .toEqual([true, true, true, false, false]);
   page.once("dialog", (d) => d.accept("lid set"));
   await group.click();
   await expect.poll(async () => (await model(page, a.id)).groups).toEqual({ "lid-set": ["head", "bolts"] });
+});
+
+test("undo / redo (⌘Z / ⇧⌘Z): colour, blank and group changes; the script editor keeps its own undo", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Undo", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "U"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {},
+    colors: { bolts: "#2e86de" } };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Undo");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const row = (t: string) => page.locator("#tree .row", { has: page.locator(".lbl", { hasText: new RegExp(`^${t}$`) }) }).first();
+  const saved = () => model(page, a.id);
+  await row("head").click();
+  await page.locator('#tree .info [data-swatch="#2e86de"]').first().click();       // an accidental colour
+  await expect.poll(async () => (await saved()).colors).toEqual({ bolts: "#2e86de", head: "#2e86de" });
+  await page.waitForTimeout(500);
+  await page.locator("#toolsbar [data-t=blank]").click();                            // and a blank
+  await expect.poll(async () => (await saved()).snapshots.items.default.hidden).toEqual({ head: true });
+  await page.waitForTimeout(500);
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.keyboard.press("ControlOrMeta+z");                                      // undo the blank
+  await expect.poll(async () => (await saved()).snapshots.items.default.hidden).toEqual({});
+  await page.keyboard.press("ControlOrMeta+z");                                      // undo the colour
+  await expect.poll(async () => (await saved()).colors).toEqual({ bolts: "#2e86de" });
+  const headColour = () => page.evaluate(() => { let c = ""; (window as any).__studio.built.registry.get("head").traverse((x: any) => { const mt = x.userData.origMat ?? x.material; if (!c && x.isMesh && mt.side !== 1) c = "#" + mt.color.getHexString(); }); return c; }); // origMat: under the selection highlight
+  expect(await headColour()).not.toBe("#2e86de");
+  await page.keyboard.press("ControlOrMeta+Shift+z");                                // redo the colour
+  await expect.poll(async () => (await saved()).colors).toEqual({ bolts: "#2e86de", head: "#2e86de" });
+  expect(await headColour()).toBe("#2e86de");
+  // typing in the script: ⌘Z there is the editor's undo, not the studio's
+  await page.locator("#script .cm-content").click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Meta+ArrowDown");
+  await page.keyboard.type("\nwait 1s");
+  await expect.poll(async () => (await saved()).script.text).toContain("wait 1s");
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(page.locator("#script .cm-content")).not.toContainText("wait 1s");
+  expect((await saved()).colors).toEqual({ bolts: "#2e86de", head: "#2e86de" });     // the colour stays
 });

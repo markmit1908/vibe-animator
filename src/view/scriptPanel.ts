@@ -125,8 +125,8 @@ class TimeMarker extends GutterMarker {
 const fmtT = (t: number) => (t >= 60 ? `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}` : `${t.toFixed(1)}s`);
 
 export interface ScriptHooks {
-  /** Text changed (debounced by the panel). */
-  change(text: string): void;
+  /** Text changed: typed (debounced by the panel), or set by code (gizmo write-back, an accepted proposal, undo). */
+  change(text: string, typed: boolean): void;
   save(text: string): Promise<void>;
   seek(t: number): void;
   /** Completion candidates: part ids and @groups. */
@@ -266,7 +266,7 @@ export class ScriptPanel {
             if (!u.docChanged) return;
             this.updateDirty();
             clearTimeout(this.timer);
-            this.timer = window.setTimeout(() => this.hooks.change(this.text), 250);
+            this.timer = window.setTimeout(() => this.hooks.change(this.text, true), 250);
           }),
         ],
       }),
@@ -370,6 +370,6 @@ export class ScriptPanel {
     let e = 0; while (e < a.length - s && e < next.length - s && a[a.length - 1 - e] === next[next.length - 1 - e]) e++;
     this.view.dispatch({ changes: { from: s, to: a.length - e, insert: next.slice(s, next.length - e) } });
     clearTimeout(this.timer);
-    this.hooks.change(next);
+    this.hooks.change(next, false);
   }
 }

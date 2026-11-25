@@ -47,7 +47,39 @@ export async function mountStudio(root: HTMLElement, model: AnimModel, io: Studi
 const ac = new AbortController();
 let disposed = false;
 /** Writes to the model; a disposed studio (replaced by a remount) must never write its older state. */
-const edit = (patch: Partial<AnimModel>) => { if (!disposed) io.edit(patch); };
+const edit = (patch: Partial<AnimModel>) => {
+  if (disposed) return;
+  recordUndo(patch);
+  io.edit(patch);
+};
+
+// ---------- undo / redo (⌘/Ctrl+Z, ⇧⌘Z / Ctrl+Y) of the animation's state ----------
+// Every change goes through edit(): before the first change of a burst (400 ms), the state as it was is pushed.
+// Script typing has the editor's own undo; script changes made by code (gizmo write-back, an accepted proposal) undo here.
+type UndoKey = 'colors' | 'snapshots' | 'groups' | 'labels' | 'removed' | 'script';
+const UNDO_KEYS: UndoKey[] = ['colors', 'snapshots', 'groups', 'labels', 'removed', 'script'];
+type DocState = Partial<Record<UndoKey, any>>;
+const clone = <T,>(x: T): T => (x === undefined ? x : JSON.parse(JSON.stringify(x)));
+const docNow: DocState = {
+  colors: model.colors ?? {}, snapshots: model.snapshots ?? { active: 'default', items: {} }, groups: model.groups ?? {},
+  labels: model.labels ?? {}, removed: model.removed ?? [], script: model.script ? { language: 'anim', text: joinLines(model.script.text) } : undefined,
+};
+const undoStack: DocState[] = [], redoStack: DocState[] = [];
+let undoing = false, typing = false, burst = false, burstTimer: number | undefined;
+function recordUndo(patch: Partial<AnimModel>) {
+  const keys = UNDO_KEYS.filter((k) => k in patch);
+  if (!keys.length) return;
+  const changed = keys.filter((k) => JSON.stringify((patch as any)[k]) !== JSON.stringify(docNow[k]));
+  if (!changed.length) return;
+  if (typing && changed.every((k) => k === 'script')) {
+    // typed: the editor's undo owns it; older entries must not bring back the script from before the typing
+    for (const e of [...undoStack, ...redoStack]) delete e.script;
+  } else if (!undoing) {
+    if (!burst) { undoStack.push(clone(docNow)); if (undoStack.length > 100) undoStack.shift(); redoStack.length = 0; burst = true; }
+    clearTimeout(burstTimer); burstTimer = window.setTimeout(() => (burst = false), 400);
+  }
+  for (const k of changed) docNow[k] = clone((patch as any)[k]);
+}
 const on = (t: string, f: any) => window.addEventListener(t, f, { signal: ac.signal });
 root.replaceChildren();
 if (getComputedStyle(root).position === 'static') root.style.position = 'relative'; // keep a host's own positioning
@@ -318,6 +350,16 @@ rebuildChapters();
 onTimeline = () => { rebuildChapters(); if (!drag && gizmoReady) gizmoFor?.(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs); };
 
 // ---------- script panel (.anim) ----------
+function scriptChanged(text: string) {
+  const doc = parseAnim(text);
+  if (doc.errors.length) edit({ script: { language: 'anim', text } }); // keep the text even while it has errors
+  scriptErrors = doc.errors;
+  if (doc.errors.length) { scriptPanel!.setErrors(doc.errors); return; } // keep the last good timeline
+  script = toActions(doc.steps);
+  buildTimeline();
+  edit({ script: { language: 'anim', text } });
+}
+
 let paletteKey = model.view?.paletteKey ?? DEFAULT_PALETTE_KEY;
 function modelColors(): string[] {
     // base colours set in this animation (most recent first), then the model's own material colours (most common first)
@@ -338,16 +380,8 @@ function modelColors(): string[] {
 
 if (isAnim) {
   scriptPanel = new ScriptPanel(right, scriptName, animText, {
-    change: (text) => {
-      const doc = parseAnim(text);
-      if (doc.errors.length) edit({ script: { language: 'anim', text } }); // keep the text even while it has errors
-      scriptErrors = doc.errors;
-      if (doc.errors.length) { scriptPanel!.setErrors(doc.errors); return; } // keep the last good timeline
-      script = toActions(doc.steps);
-      buildTimeline();
-      edit({ script: { language: 'anim', text } });
-    },
-    save: async (text) => { edit({ script: { language: 'anim', text } }); },
+    change: (text, typed) => { typing = typed; try { scriptChanged(text); } finally { typing = false; } },
+    save: async (text) => { typing = true; try { edit({ script: { language: 'anim', text } }); } finally { typing = false; } },
     seek: (t) => { player.playing = false; player.seek(t); gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs); },
     ids: () => [...Object.keys(store.groups).map((g) => `@${g}`), ...built.registry.keys()],
     cameraLine: () => cameraLine(probe),
@@ -789,6 +823,7 @@ gizmo.addEventListener('dragging-changed', (e: any) => {
 on('keydown', (e: any) => {
   if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).closest?.('.cm-editor')) return;
   if (e.key === 'w') gizmo.setMode('translate');
+  if (e.key === 'H' && !e.metaKey && !e.ctrlKey) void blankOthers();
   if (e.key === 'h' && !e.metaKey && !e.ctrlKey) { tree.toggleHiddenSelected(); updateTools(); }
   if (e.key === 'g' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); tree.groupSelected(); updateTools(); }
   if (e.key === 'e') gizmo.setMode('rotate');
@@ -933,9 +968,74 @@ function drawFrame() {
   if (gizmo.object) { renderer.autoClear = false; renderer.clearDepth(); renderer.render(h, camera); renderer.autoClear = true; }
 }
 
+// ---------- undo / redo: restore a recorded state in place ----------
+const undoToast = document.createElement('div');
+undoToast.style.cssText = 'position:absolute;left:50%;bottom:16px;transform:translateX(-50%);z-index:8;background:rgba(14,17,21,.95);color:#d7dde4;border:1px solid #2b3540;border-radius:6px;padding:5px 12px;font:12px system-ui;display:none;pointer-events:none';
+host().appendChild(undoToast);
+let toastTimer: number | undefined;
+const WHAT: Record<UndoKey, string> = { colors: 'colour', snapshots: 'move / lock / hide', groups: 'groups', labels: 'rename', removed: 'remove / restore', script: 'script edit' };
+async function restoreDoc(d: DocState, verb: string) {
+  const what = UNDO_KEYS.filter((k) => d[k] !== undefined && JSON.stringify(d[k]) !== JSON.stringify(docNow[k])).map((k) => WHAT[k]);
+  undoing = true;
+  try {
+    const t = player.time;
+    player.seek(0);
+    if (d.groups) store.groups = clone(d.groups);
+    if (d.snapshots) {
+      store.active = d.snapshots.active; store.snapshots = clone(d.snapshots.items);
+      useSnapshot(store.snapshots[store.active] ?? { locked: {}, hidden: {} });
+      applyPlacements();
+    }
+    if (d.removed) {
+      removed.clear(); for (const id of d.removed) removed.add(id);
+      for (const [id, o] of built.registry) { if (removed.has(id)) o.userData.removed = true; else delete o.userData.removed; }
+    }
+    if (d.labels) {
+      labels = clone(d.labels);
+      for (const [id, o] of built.registry) { if (labels[id]) o.userData.label = labels[id]; else delete o.userData.label; }
+    }
+    if (d.colors) { colors = clone(d.colors); applyColors(); }
+    for (const o of built.root.children) await reconcile(o);
+    if (d.script && scriptPanel && d.script.text !== scriptPanel.text) {
+      docNow.script = clone(d.script);
+      scriptPanel.setText(d.script.text);            // recompiles (not recorded: undoing)
+    }
+    buildTimeline({ atStart: true });
+    player.seek(Math.min(t, player.duration));
+    edit({ colors: { ...colors }, snapshots: { active: store.active, items: clone(store.snapshots) }, groups: clone(store.groups), labels: { ...labels }, removed: [...removed] });
+    tree.rebuild();
+    gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs);
+    updateTools(); renderSnapBar(); markDirty(false);
+  } finally { undoing = false; }
+  undoToast.textContent = `${verb}${what.length ? `: ${what.join(', ')}` : ''}`;
+  undoToast.style.display = '';
+  clearTimeout(toastTimer); toastTimer = window.setTimeout(() => (undoToast.style.display = 'none'), 1600);
+}
+async function undo() {
+  const d = undoStack.pop(); if (!d) return;
+  burst = false; redoStack.push(clone(docNow));
+  await restoreDoc(d, '↶ Undo');
+}
+async function redo() {
+  const d = redoStack.pop(); if (!d) return;
+  burst = false; undoStack.push(clone(docNow));
+  await restoreDoc(d, '↷ Redo');
+}
+on('keydown', (e: KeyboardEvent) => {
+  if (!(e.metaKey || e.ctrlKey)) return;
+  const k = e.key.toLowerCase();
+  if (k !== 'z' && k !== 'y') return;
+  // text boxes (script editor, chat, names) keep their own undo
+  const el = e.target as HTMLElement;
+  if (el.closest?.('.cm-editor') || el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && !['color', 'checkbox', 'range', 'button'].includes((el as HTMLInputElement).type))) return;
+  e.preventDefault();
+  if (k === 'y' || e.shiftKey) void redo(); else void undo();
+});
+
 // ---------- utility tools: floating bar on the left of the 3D view ----------
 const toolbar = document.createElement('div'); toolbar.id = 'toolsbar';
 toolbar.innerHTML = `<button data-t="blank" title="Blank / unblank the selected parts (H)"><span class="i">◐</span><span class="l">Blank</span></button>
+  <button data-t="others" title="Reverse blank: hide everything that is not selected (⇧H)"><span class="i">◑</span><span class="l">Blank others</span></button>
   <button data-t="group" title="Create a group from the selected parts, or add them to one (G)"><span class="i">⊞</span><span class="l">Group</span></button>`;
 host().appendChild(toolbar);
 {
@@ -943,20 +1043,42 @@ host().appendChild(toolbar);
   css.textContent = `#toolsbar { position: absolute; left: 352px; top: 50%; transform: translateY(-50%); z-index: 6; display: flex; flex-direction: column; gap: 4px; padding: 4px;
       background: rgba(14,17,21,.9); border: 1px solid #2b3540; border-radius: 6px; font: 11px system-ui; }
     .studio-root.tree-collapsed #toolsbar { left: 12px; }
-    #toolsbar button { width: 52px; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 5px 2px; background: #1b222a; color: #d7dde4; border: 1px solid #2b3540; border-radius: 4px; cursor: pointer; font: inherit; }
+    #toolsbar button { width: 60px; text-align: center; line-height: 1.15; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 5px 2px; background: #1b222a; color: #d7dde4; border: 1px solid #2b3540; border-radius: 4px; cursor: pointer; font: inherit; }
     #toolsbar button .i { font-size: 16px; line-height: 1; }
     #toolsbar button:hover:not(:disabled) { background: #26303a; } #toolsbar button:disabled { opacity: .4; cursor: default; }
     #toolsbar button.on { border-color: #f2b705; color: #f2b705; }`;
   document.head.appendChild(css);
 }
+/** Reverse blank: hide everything outside the selection (siblings along each selected part's path), show the selection. */
+async function blankOthers() {
+  const sel = gSel.objs.filter((o) => built.registry.get(idOfObj(o)) === o);
+  if (!sel.length) return;
+  const keep = new Set<THREE.Object3D>();
+  for (const o of sel) for (let p: THREE.Object3D | null = o; p; p = p.parent) keep.add(p);
+  const hide = new Set<string>();
+  for (const o of keep) {
+    if (sel.includes(o)) continue;                       // inside a selected part: leave it as it is
+    // the top-most registered parts under each child that isn't on a selected path (containers like the core aren't parts)
+    const off = (c: THREE.Object3D) => {
+      if (keep.has(c)) return;
+      if (built.registry.get(idOfObj(c)) === c) hide.add(idOfObj(c)); else c.children.forEach(off);
+    };
+    o.children.forEach(off);
+  }
+  for (const id of hide) state.hidden[id] = true;
+  for (const o of keep) { const id = idOfObj(o); if (built.registry.get(id) === o && state.hidden[id]) state.hidden[id] = false; }
+  for (const o of built.root.children) await reconcile(o);
+  persistWorking(); tree.redraw(); buildTimeline(); updateTools();
+}
 function updateTools() {
   const { count, allHidden } = tree.selectionInfo();
   const blank = toolbar.querySelector<HTMLButtonElement>('[data-t=blank]')!, group = toolbar.querySelector<HTMLButtonElement>('[data-t=group]')!;
-  blank.disabled = group.disabled = !count;
+  blank.disabled = group.disabled = toolbar.querySelector<HTMLButtonElement>('[data-t=others]')!.disabled = !count;
   blank.querySelector('.l')!.textContent = allHidden ? 'Unblank' : 'Blank';
   blank.classList.toggle('on', allHidden);
 }
 toolbar.querySelector<HTMLElement>('[data-t=blank]')!.onclick = () => { tree.toggleHiddenSelected(); updateTools(); };
+toolbar.querySelector<HTMLElement>('[data-t=others]')!.onclick = () => void blankOthers();
 toolbar.querySelector<HTMLElement>('[data-t=group]')!.onclick = () => { tree.groupSelected(); updateTools(); };
 updateTools();
 
