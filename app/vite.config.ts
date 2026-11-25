@@ -10,5 +10,5 @@ const api = process.env.SOLVERKIT_DEV_API;
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: { dedupe: ["react", "react-dom", "sonner", "@base-ui/react", "lucide-react", "katex", "marked"] },
-  server: { port: 5173, ...(api ? { proxy: { "/api": { target: api, changeOrigin: true } } } : {}) },
+  server: { port: 5174, fs: { allow: [".."] }, ...(api ? { proxy: { "/api": { target: api, changeOrigin: true } } } : {}) },
 });

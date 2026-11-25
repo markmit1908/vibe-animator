@@ -1,3 +1,4 @@
+import { host } from './host';
 import * as THREE from 'three';
 import type { BuiltScene } from '../scene/build';
 import { state, store, markDirty, isLocked, isHidden, isCad } from '../scene/state';
@@ -26,7 +27,7 @@ interface Node {
 const ROW = 22;
 
 const CSS = `
-#tree { position: fixed; top: 0; left: 0; bottom: 0; width: 340px; display: flex; flex-direction: column;
+#tree { position: absolute; top: 0; left: 0; bottom: 0; width: 340px; display: flex; flex-direction: column;
   background: rgba(14,17,21,.95); color: #d7dde4; font: 12px/1.35 system-ui, sans-serif; border-right: 1px solid #222a33; z-index: 5; }
 #tree.collapsed { transform: translateX(-340px); }
 #tree header { display: flex; gap: 6px; align-items: center; padding: 8px; border-bottom: 1px solid #222a33; }
@@ -51,11 +52,11 @@ const CSS = `
 #tree .info code { display: block; color: #f2b705; word-break: break-all; margin: 3px 0; font: 11px ui-monospace, monospace; }
 #tree .stats { white-space: pre; border-top: 1px solid #222a33; padding: 6px 8px; font: 11px ui-monospace, monospace; color: #7b8794; }
 #tree button { background: #222a33; color: inherit; border: 1px solid #2b3540; border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 11px; }
-#tree-toggle { position: fixed; top: 8px; left: 348px; z-index: 6; background:#222a33; color:#d7dde4; border:1px solid #2b3540; border-radius:4px; padding:3px 8px; cursor:pointer; }
-body.tree-collapsed #tree-toggle { left: 8px; }
-body:not(.tree-collapsed) #chapter, body:not(.tree-collapsed) #sub { left: 392px !important; }
-body:not(.tree-collapsed) #clock { left: 364px !important; }
-body.tree-collapsed #chapter, body.tree-collapsed #sub { left: 52px !important; }
+#tree-toggle { position: absolute; top: 8px; left: 348px; z-index: 6; background:#222a33; color:#d7dde4; border:1px solid #2b3540; border-radius:4px; padding:3px 8px; cursor:pointer; }
+.studio-root.tree-collapsed #tree-toggle { left: 8px; }
+.studio-root:not(.tree-collapsed) #chapter, .studio-root:not(.tree-collapsed) #sub { left: 392px !important; }
+.studio-root:not(.tree-collapsed) #clock { left: 364px !important; }
+.studio-root.tree-collapsed #chapter, .studio-root.tree-collapsed #sub { left: 52px !important; }
 `;
 
 export interface TreeHooks {
@@ -96,10 +97,10 @@ export class TreePanel {
       <div class="snap"></div>
       <input type="search" placeholder="Search parts… (Enter)" /><div class="scroll"><div class="spacer"></div></div>
       <div class="info">Click a part in the tree or the 3D view.</div><div class="stats"></div>`;
-    document.body.appendChild(this.el);
+    host().appendChild(this.el);
     const toggle = document.createElement('button'); toggle.id = 'tree-toggle'; toggle.textContent = '☰';
-    toggle.onclick = () => { this.el.classList.toggle('collapsed'); document.body.classList.toggle('tree-collapsed'); };
-    document.body.appendChild(toggle);
+    toggle.onclick = () => { this.el.classList.toggle('collapsed'); host().classList.toggle('tree-collapsed'); };
+    host().appendChild(toggle);
     this.scroll = this.el.querySelector('.scroll')!;
     this.spacer = this.el.querySelector('.spacer')!;
     this.info = this.el.querySelector('.info')!;

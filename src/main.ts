@@ -13,6 +13,7 @@ import { loadStore, store, useSnapshot, captureSnapshot, writeStore, markDirty, 
   isLocked, isHidden, isCad, state, type Snapshot } from './scene/state';
 import { TreePanel } from './view/tree';
 import { Triad } from './view/triad';
+import { host } from './view/host';
 import { DrawingMode } from './view/drawing';
 import { ScriptPanel } from './view/scriptPanel';
 import { AssistPanel } from './view/assistPanel';
@@ -23,6 +24,7 @@ import { parseAnim, toActions, type ParseError } from './script/anim';
 import { ScriptError } from './timeline/compile';
 import { applyEdit, cameraLine, type Edit, type Probe } from './script/edit';
 
+host().classList.add('studio-root'); // the old app's host is the page body
 const cfg = parse(coreYaml);
 const scripts = import.meta.glob('../scripts/*.yaml', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
 const scriptName: string = cfg.script ?? 'refuel.yaml';
@@ -172,7 +174,7 @@ const ui = {
   xray: false,
   followCamera: true,
 };
-const right = document.createElement('div'); right.id = 'right'; document.body.appendChild(right);
+const right = document.createElement('div'); right.id = 'right'; host().appendChild(right);
 const gui = new GUI({ title: 'Controls', container: right });
 const pb = gui.addFolder('Playback');
 pb.add(ui, 'play').name('Play / pause  [space]');
@@ -219,12 +221,12 @@ if (isAnim) {
 const tabs = document.createElement('div'); tabs.className = 'rtabs';
 tabs.innerHTML = `<button data-t="script" class="on">Script</button><button data-t="assist">Assist</button>`;
 const tabCss = document.createElement('style');
-tabCss.textContent = `#right { position: fixed; top: 0; right: 0; bottom: 0; width: 420px; display: flex; flex-direction: column; z-index: 5;
+tabCss.textContent = `#right { position: absolute; top: 0; right: 0; bottom: 0; width: 420px; display: flex; flex-direction: column; z-index: 5;
   background: rgba(14,17,21,.95); border-left: 1px solid #222a33; }
 #right.collapsed { transform: translateX(420px); }
 #right .lil-gui.root { width: 100% !important; --width: 100%; max-height: 45vh; overflow: auto; flex: none; }
-#right-toggle { position: fixed; top: 8px; right: 428px; z-index: 6; background:#222a33; color:#d7dde4; border:1px solid #2b3540; border-radius:4px; padding:3px 8px; cursor:pointer; }
-body.right-collapsed #right-toggle { right: 8px; }
+#right-toggle { position: absolute; top: 8px; right: 428px; z-index: 6; background:#222a33; color:#d7dde4; border:1px solid #2b3540; border-radius:4px; padding:3px 8px; cursor:pointer; }
+.studio-root.right-collapsed #right-toggle { right: 8px; }
 #right .rtabs { display: flex; border-top: 1px solid #222a33; } #right .rtabs button { flex: 1; background: transparent; color: #7b8794; border: 0; border-bottom: 2px solid transparent; padding: 6px; cursor: pointer; font: 600 12px system-ui; }
   #right .rtabs button.on { color: #f2b705; border-bottom-color: #f2b705; } #script, #assist { border-top: 0 !important; }`;
 document.head.appendChild(tabCss);
@@ -337,8 +339,8 @@ async function applyStateChanges(changes: { ids: string[]; lock?: boolean; hide?
 // ---------- proposal preview: play a proposed script without touching the editor ----------
 let previewing: Proposal | undefined;
 const previewBanner = document.createElement('div');
-previewBanner.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:7;background:#3a2a14;color:#f2b705;border:1px solid #f2b705;border-radius:6px;padding:5px 10px;font:600 12px system-ui;display:none;gap:8px;align-items:center';
-document.body.appendChild(previewBanner);
+previewBanner.style.cssText = 'position: absolute;top:12px;left:50%;transform:translateX(-50%);z-index:7;background:#3a2a14;color:#f2b705;border:1px solid #f2b705;border-radius:6px;padding:5px 10px;font:600 12px system-ui;display:none;gap:8px;align-items:center';
+host().appendChild(previewBanner);
 function previewProposal(p: Proposal | undefined) {
   previewing = p;
   previewUnlocked = new Set(p ? resolveIds((p.unlock as string[] | undefined) ?? []).ids : []);
@@ -458,8 +460,8 @@ ${tree}
 }
 
 const rightToggle = document.createElement('button'); rightToggle.id = 'right-toggle'; rightToggle.textContent = '☰';
-rightToggle.onclick = () => { right.classList.toggle('collapsed'); document.body.classList.toggle('right-collapsed'); };
-document.body.appendChild(rightToggle);
+rightToggle.onclick = () => { right.classList.toggle('collapsed'); host().classList.toggle('right-collapsed'); };
+host().appendChild(rightToggle);
 
 // ---------- assembly tree + 3D picking ----------
 const tree = new TreePanel(built, scene3, {
@@ -693,17 +695,17 @@ function exportPng() {
 }
 {
   const css = document.createElement('style');
-  css.textContent = `#viewbar { position: fixed; top: 8px; right: 468px; z-index: 6; display: flex; gap: 4px; padding: 4px; background: rgba(14,17,21,.9); border: 1px solid #2b3540; border-radius: 6px; font: 12px system-ui; }
+  css.textContent = `#viewbar { position: absolute; top: 8px; right: 468px; z-index: 6; display: flex; gap: 4px; padding: 4px; background: rgba(14,17,21,.9); border: 1px solid #2b3540; border-radius: 6px; font: 12px system-ui; }
     #viewbar { flex-wrap: wrap; justify-content: flex-end; max-width: calc(100vw - 352px - 476px); }
-    body.tree-collapsed #viewbar { max-width: calc(100vw - 56px - 476px); }
-    body.right-collapsed #viewbar { right: 48px; max-width: calc(100vw - 352px - 56px); }
-    body.right-collapsed.tree-collapsed #viewbar { max-width: calc(100vw - 112px); }
-    body.paper #chapter { color: #111 !important; } body.paper #sub, body.paper #clock { color: #555 !important; }
+    .studio-root.tree-collapsed #viewbar { max-width: calc(100vw - 56px - 476px); }
+    .studio-root.right-collapsed #viewbar { right: 48px; max-width: calc(100vw - 352px - 56px); }
+    .studio-root.right-collapsed.tree-collapsed #viewbar { max-width: calc(100vw - 112px); }
+    .studio-root.paper #chapter { color: #111 !important; } .studio-root.paper #sub, .studio-root.paper #clock { color: #555 !important; }
     #viewbar .grp { display: flex; } #viewbar .sep { width: 1px; background: #2b3540; margin: 0 4px; }
     #viewbar button { background: #1b222a; color: #d7dde4; border: 1px solid #2b3540; padding: 3px 8px; cursor: pointer; font: inherit; }
     #viewbar .grp button + button { border-left: 0; } #viewbar .grp button:first-child { border-radius: 4px 0 0 4px; } #viewbar .grp button:last-child { border-radius: 0 4px 4px 0; }
     #viewbar button.on { background: #f2b705; color: #111; border-color: #f2b705; } #viewbar button:hover:not(.on) { background: #26303a; }
-    #viewbar { position: fixed; } #viewbar > button { border-radius: 4px; }
+    #viewbar { position: absolute; } #viewbar > button { border-radius: 4px; }
     #viewbar .pop { position: absolute; top: calc(100% + 6px); right: 0; width: 260px; background: rgba(14,17,21,.97); border: 1px solid #2b3540; border-radius: 6px; padding: 8px 10px; color: #d7dde4; display: flex; flex-direction: column; gap: 6px; }
     #viewbar .pop[hidden] { display: none; }
     #viewbar .pop label { display: grid; grid-template-columns: 1fr 100px 36px; align-items: center; gap: 6px; font-size: 11px; }
@@ -725,10 +727,10 @@ function exportPng() {
       <label>Paper colour <input type="color" data-k="paper"></label>
       <button data-a="reset">Reset</button>
     </div>`;
-  document.body.appendChild(bar);
+  host().appendChild(bar);
   const setMode = (m: string) => {
     drawing.enabled = m === 'hidden';
-    document.body.classList.toggle('paper', drawing.enabled);
+    host().classList.toggle('paper', drawing.enabled);
     if (drawing.enabled) drawing.collectDecor(scene3, [gizmo.getHelper()]);
     bar.querySelectorAll<HTMLElement>('[data-m]').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
   };
@@ -804,7 +806,7 @@ renderer.setAnimationLoop(() => {
   tree.update();
   scriptPanel?.setTiming(player.tl.lines, player.time);
   drawFrame();
-  triad.render(renderer, camera, document.body.classList.contains('tree-collapsed') ? 12 : 352);
+  triad.render(renderer, camera, host().classList.contains('tree-collapsed') ? 12 : 352);
 });
 
 // ?debug: dump CAD ids + stats into the DOM (for headless checks)
@@ -822,7 +824,7 @@ if (new URLSearchParams(location.search).has('debug') && new URLSearchParams(loc
   const after: string[] = [];
   built.root.traverse((o) => { if (o.userData.suppressed) after.push(o.userData.id); });
   pre.textContent = JSON.stringify({ ids, supp, before, after: { supp: after, cad: cad.stats() } }, null, 1);
-  document.body.appendChild(pre);
+  host().appendChild(pre);
 }
 
 // ?debug=assist: run each read tool and dump the results (headless check without the API)
@@ -842,7 +844,7 @@ if (new URLSearchParams(location.search).get('debug') === 'assist') {
   out.shot = await call('screenshot', { view: 'iso', target: 'head' });
   out.contextChars = (await assistContext()).length;
   const pre = document.createElement('pre'); pre.id = 'debug'; pre.style.display = 'none';
-  pre.textContent = JSON.stringify(out, null, 1); document.body.appendChild(pre);
+  pre.textContent = JSON.stringify(out, null, 1); host().appendChild(pre);
 }
 
 // ?debug=proposal: inject a proposal made by the real tool (headless check of the card)
@@ -874,7 +876,7 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
   await applyStateChanges(s1.p.changes);
   out.after = { headLocked: isLocked(built.registry.get('head')!), headHidden: isHidden(built.registry.get('head')!), L10hidden: isHidden(built.registry.get('R1-1/L10')!), dirty: isDirty() };
   const pre = document.createElement('pre'); pre.id = 'debug2'; pre.style.display = 'none';
-  pre.textContent = JSON.stringify(out, null, 1); document.body.appendChild(pre);
+  pre.textContent = JSON.stringify(out, null, 1); host().appendChild(pre);
 }
 
 // ---------- project file: export / import everything except 3D geometry; re-import CAD ----------
@@ -970,10 +972,10 @@ function missingReferences() {
 }
 function showBanner(html: string) {
   const b = document.createElement('div');
-  b.style.cssText = 'position:fixed;left:50%;top:56px;transform:translateX(-50%);z-index:8;max-width:620px;background:#14191f;color:#d7dde4;border:1px solid #f2b705;border-radius:6px;padding:8px 12px;font:12px system-ui;box-shadow:0 4px 20px #0008';
+  b.style.cssText = 'position: absolute;left:50%;top:56px;transform:translateX(-50%);z-index:8;max-width:620px;background:#14191f;color:#d7dde4;border:1px solid #f2b705;border-radius:6px;padding:8px 12px;font:12px system-ui;box-shadow:0 4px 20px #0008';
   b.innerHTML = `${html}<div style="text-align:right;margin-top:6px"><button style="background:#222a33;color:inherit;border:1px solid #2b3540;border-radius:4px;padding:2px 8px;cursor:pointer">OK</button></div>`;
   b.querySelector('button')!.onclick = () => b.remove();
-  document.body.appendChild(b);
+  host().appendChild(b);
 }
 // after an import / CAD re-import: restore the view and unsaved state, then check the 3D data
 {
@@ -1025,7 +1027,7 @@ if (new URLSearchParams(location.search).get('debug') === 'locked-proposal' && s
   let p: any, r = await g.next();
   for (; !r.done; r = await g.next()) if (r.value.type === 'proposal') p = r.value.proposal;
   const pre = document.createElement('pre'); pre.id = 'debug3'; pre.style.display = 'none';
-  pre.textContent = JSON.stringify({ check: p.check, unlock: p.unlock, result: r.value.content }); document.body.appendChild(pre);
+  pre.textContent = JSON.stringify({ check: p.check, unlock: p.unlock, result: r.value.content }); host().appendChild(pre);
   assist.history.push({ role: 'user', content: 'lift the head' }, { role: 'assistant', content: 'Here:\n```\nmove head by [0,3,0] 20s\n```', proposals: [p] });
   assist.refreshCards();
 }

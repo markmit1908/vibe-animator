@@ -14,6 +14,8 @@ export interface AssistHooks {
   renderProposal?(p: Proposal, el: HTMLElement, decide: (s: 'accepted' | 'rejected') => void): void;
   /** Insert a code block from a reply into the script (after the cursor line). */
   insertCode?(code: string): void;
+  /** The key proxy (old app: /__assist; SolverKit: /api/assist/proxy) and its status URL. */
+  endpoints?: { base: string; status: string };
   /** History changed (persist it). */
   saveHistory?(h: ChatMessage[]): void;
 }
@@ -72,12 +74,13 @@ export class AssistPanel {
   private sendBtn: HTMLButtonElement;
   private status: HTMLElement;
   private effort: HTMLSelectElement;
-  private client = assistClient();
+  private client;
   history: ChatMessage[] = [];
   private abort?: AbortController;
   private enabled = false;
 
   constructor(parent: HTMLElement, private hooks: AssistHooks, history: ChatMessage[] = []) {
+    this.client = assistClient(hooks.endpoints?.base);
     const style = document.createElement('style'); style.textContent = CSS; document.head.appendChild(style);
     this.el = document.createElement('div'); this.el.id = 'assist';
     this.el.innerHTML = `<div class="bar"><b>Assist</b><span class="st">checking…</span>
@@ -106,8 +109,8 @@ export class AssistPanel {
       this.history = []; this.hooks.saveHistory?.(this.history); this.render();
     };
     addEventListener('keydown', (e) => { if (e.key === 'Escape' && this.abort) this.stop(); });
-    fetch('/__assist/status').then((r) => r.json()).then((s) => {
-      this.enabled = !!s.enabled;
+    fetch(hooks.endpoints?.status ?? '/__assist/status').then((r) => r.json()).then((s) => {
+      this.enabled = !!(s.enabled ?? s.key ?? s.available);
       this.status.textContent = this.enabled ? 'claude-opus-5-5' : 'no API key';
       this.status.className = 'st' + (this.enabled ? '' : ' off');
       this.status.title = this.enabled ? '' : 'Add ANTHROPIC_API_KEY to .env and restart the dev server';

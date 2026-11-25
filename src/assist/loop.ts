@@ -43,10 +43,10 @@ export interface AssistTool {
   run(input: any): AsyncGenerator<AssistEvent, ToolResult, void>;
 }
 
-export function assistClient() {
+export function assistClient(base = '/__assist') {
   // The proxy holds the key; the SDK needs a placeholder and browser opt-in.
   return new Anthropic({
-    baseURL: new URL('/__assist', location.href).href,
+    baseURL: new URL(base, location.href).href,
     apiKey: 'held-by-the-dev-server',
     dangerouslyAllowBrowser: true,
     maxRetries: 2,

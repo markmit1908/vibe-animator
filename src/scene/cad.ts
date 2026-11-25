@@ -57,12 +57,13 @@ export class CadManager {
   private geoms = new Map<string, { geo: THREE.BufferGeometry; users: Set<THREE.Mesh> }>();
   private static EMPTY = new THREE.BufferGeometry();
 
-  constructor(private scene: BuiltScene) {}
+  /** urlFor: where a model's file is fetched from (old app: /<file>; SolverKit: /api/files/<vault path>). */
+  constructor(private scene: BuiltScene, private urlFor: (file: string) => string = (f) => `/${f}`) {}
 
   async load(models: CadModel[]) {
     for (const m of models) {
       const t0 = performance.now();
-      const gltf = await this.loader.loadAsync(`/${m.file}`);
+      const gltf = await this.loader.loadAsync(this.urlFor(m.file));
       this.models.set(m.id, m);
 
       // wrapper = model root (scriptable as the model id); inner = glTF scene, oriented
@@ -150,7 +151,7 @@ export class CadManager {
     const missing = todo.filter((m) => !this.geoms.has(m.userData.geomKey));
     for (const modelId of new Set(missing.map((m) => (m.userData.id as string).split('/')[0]))) {
       const m = this.models.get(modelId)!;
-      const fresh = (await this.loader.loadAsync(`/${m.file}`)).scene;
+      const fresh = (await this.loader.loadAsync(this.urlFor(m.file))).scene;
       // walk the fresh copy with the same id scheme (root "model" sits under the wrapper id)
       const byId = new Map<string, THREE.Object3D>();
       const walk = (x: THREE.Object3D, id: string) => { byId.set(id, x); for (const [c, cid] of childIds(x, id)) walk(c, cid); };

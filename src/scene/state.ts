@@ -42,8 +42,19 @@ export async function loadStore() {
   if (!store.snapshots[store.active]) store.snapshots[store.active] = { locked: {}, hidden: {} };
 }
 
+let writer: ((s: SnapshotFile) => Promise<void> | void) | undefined;
+/** Where Save writes (old app: the dev server's /__snapshots; SolverKit: the model file). */
+export function setStoreWriter(w: (s: SnapshotFile) => Promise<void> | void) { writer = w; }
+
 export async function writeStore() {
+  if (writer) { await writer(store); return; }
   await fetch('/__snapshots', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(store) });
+}
+
+/** Replace the store (SolverKit: from the model file) – the working state follows the active snapshot. */
+export function setStore(s: SnapshotFile) {
+  store.active = s.active; store.snapshots = s.snapshots; store.groups = s.groups ?? {};
+  if (!store.snapshots[store.active]) store.snapshots[store.active] = { locked: {}, hidden: {} };
 }
 
 /** Copy the working state (+ camera) into a snapshot. */
