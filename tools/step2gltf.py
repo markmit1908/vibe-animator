@@ -150,6 +150,8 @@ def cmd_convert(doc, st, a):
     for r in roots(st):
         prune(r, name_of(r), False)
     st.UpdateAssemblies()
+    if a.split_bodies:
+        split_bodies(st)
     if a.reinstance:
         reinstance(st, a.match_tol)
     # parts whose every instance was removed become free shapes; drop them so they aren't exported
@@ -161,6 +163,12 @@ def cmd_convert(doc, st, a):
             st.RemoveShape(o, True)
         st.UpdateAssemblies()
     log(f"pruned {removed} components; ~{kept_parts} part instances kept")
+
+    # every component gets a readable instance name (OCCT's default is "=>[0:1:1:7]")
+    seq = TDF_LabelSequence(); st.GetShapes(seq)
+    for i in range(1, seq.Length() + 1):
+        for k in children(seq.Value(i)):
+            TDataStd_Name.Set_s(k, TCollection_ExtendedString(instance_name(k)))
 
     # mesh each remaining simple shape once (instances share the mesh)
     seq = TDF_LabelSequence()
@@ -177,7 +185,7 @@ def cmd_convert(doc, st, a):
 
     w = RWGltf_CafWriter(TCollection_AsciiString(a.output), a.output.endswith(".glb"))
     w.SetMergeFaces(True)  # one primitive per part instead of one per B-rep face (draw calls!)
-    w.SetNodeNameFormat(RWMesh_NameFormat.RWMesh_NameFormat_ProductOrInstance)
+    w.SetNodeNameFormat(RWMesh_NameFormat.RWMesh_NameFormat_InstanceOrProduct)
     w.SetMeshNameFormat(RWMesh_NameFormat.RWMesh_NameFormat_Product)
     conv = w.ChangeCoordinateSystemConverter()
     conv.SetInputLengthUnit(0.001)
@@ -301,6 +309,60 @@ def cmd_audit(st, tol):
         if probs and d["n"]:
             print(f"- {d['name']}: {', '.join(probs)} — {fmt(d)}")
 
+
+
+# ---------------------------------------------------------------- multi-body parts
+# A STEP part can hold many solid bodies (Shapr3D exports a "part" with 308 named
+# bodies, e.g. V-005738-001_A). Turn such parts into an assembly with one component
+# per body, named from the STEP body names, so each body is its own node/mesh.
+
+def split_bodies(st):
+    from OCP.TopAbs import TopAbs_SOLID
+    from OCP.TopLoc import TopLoc_Location
+    seq = TDF_LabelSequence(); st.GetShapes(seq)
+    labels = [seq.Value(i) for i in range(1, seq.Length() + 1)]
+    users = {}
+    for l in labels:
+        for k in children(l):
+            users.setdefault(referred(k).Tag(), []).append((l, k))
+    split = bodies = named_n = 0
+    for l in labels:
+        if not ST.IsSimpleShape_s(l) or l.Tag() not in users:
+            continue
+        shp = ST.GetShape_s(l)
+        solids = []
+        e = TopExp_Explorer(shp, TopAbs_SOLID)
+        while e.More(): solids.append(e.Current()); e.Next()
+        if len(solids) < 2:
+            continue
+        # body names live on sub-shape labels
+        subs = TDF_LabelSequence(); ST.GetSubShapes_s(l, subs)
+        named = [(ST.GetShape_s(subs.Value(i)), name_of(subs.Value(i))) for i in range(1, subs.Length() + 1)]
+        part_name = name_of(l)
+        asm = st.NewShape()
+        TDataStd_Name.Set_s(asm, TCollection_ExtendedString(part_name))
+        for i, so in enumerate(solids, 1):
+            nm = next((n for sh, n in named if sh.IsSame(so) and n not in ("?", "")), f"{part_name} body {i}")
+            nm = nm[:-len("-solid1")] if nm.endswith("-solid1") else nm
+            body = st.AddShape(so, False)
+            TDataStd_Name.Set_s(body, TCollection_ExtendedString(nm))
+            c = st.AddComponent(asm, body, TopLoc_Location())
+            TDataStd_Name.Set_s(c, TCollection_ExtendedString(nm))
+            named_n += not nm.startswith(f"{part_name} body ")
+        for parent, comp in users[l.Tag()]:
+            loc, cname = ST.GetLocation_s(comp), instance_name(comp)
+            st.RemoveComponent(comp)
+            c = st.AddComponent(parent, asm, loc)
+            TDataStd_Name.Set_s(c, TCollection_ExtendedString(cname))
+        split += 1; bodies += len(solids)
+    st.UpdateAssemblies()
+    log(f"split {split} multi-body parts into {bodies} bodies ({named_n} named from STEP)")
+
+
+def instance_name(comp):
+    """Name to show for a component: its own instance name, else its part's name."""
+    n = name_of(comp)
+    return n if n not in ("?", "") and not n.startswith("=>") else name_of(referred(comp))
 
 
 # ---------------------------------------------------------------- re-instancing
@@ -429,9 +491,10 @@ def reinstance(st, tol):
             c, (R, t) = hit
             T = TopLoc_Location(_trsf(R, t))
             for parent, comp in users[l.Tag()]:
-                loc = ST.GetLocation_s(comp).Multiplied(T)
+                loc, cname = ST.GetLocation_s(comp).Multiplied(T), instance_name(comp)
                 st.RemoveComponent(comp)
-                st.AddComponent(parent, c, loc)
+                nc = st.AddComponent(parent, c, loc)
+                TDataStd_Name.Set_s(nc, TCollection_ExtendedString(cname))
             merged += 1
     st.UpdateAssemblies()
     log(f"re-instancing: {merged} copies now instance a shared part"
@@ -450,6 +513,8 @@ def main():
     c.add_argument("--deflection", type=float, default=1.0, help="mesh chord tolerance, mm")
     c.add_argument("--angle", type=float, default=20, help="mesh angular tolerance, degrees")
     c.add_argument("--up", choices=["z", "y"], default="z", help="up axis of the STEP model")
+    c.add_argument("--no-split-bodies", dest="split_bodies", action="store_false",
+                   help="keep multi-body parts as one mesh (default: one child per solid body)")
     c.add_argument("--no-reinstance", dest="reinstance", action="store_false",
                    help="don't rebuild instancing for copies baked in place")
     c.add_argument("--match-tol", type=float, default=0.05, help="vertex match tolerance for re-instancing, mm")
