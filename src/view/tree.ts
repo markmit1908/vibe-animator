@@ -65,6 +65,10 @@ export interface TreeHooks {
   stats?: () => string;
   /** Selection changed: single object, its script spec (@group / id) and all objects selected. */
   onSelect?: (obj: THREE.Object3D | undefined, spec: string | undefined, objs: THREE.Object3D[]) => void;
+  /** Base colour of a part id / "@group" (undefined: its own). */
+  colorOf?: (spec: string) => string | undefined;
+  /** Set (hex) or clear (null) base colours. */
+  onColor?: (specs: string[], hex: string | null) => void;
   /** User groups were created/changed (recompile the script). */
   onGroups?: () => void;
 }
@@ -241,7 +245,7 @@ export class TreePanel {
     r.innerHTML = `<span class="caret">${hasKids ? (this.open.has(n) ? '▾' : '▸') : ''}</span>
       <span class="tg ${hidden ? 'off' : ''} ${explicitH ? '' : 'inh'}" title="show / hide">●</span>
       <span class="tg ${locked ? '' : 'off'} ${explicitL ? '' : 'inh'}" title="lock / unlock">${locked ? '🔒' : '🔓'}</span>
-      <span class="lbl" title="${esc(n.id ?? n.label)}">${esc(n.label)}</span>${n.badge ? `<span class="badge">${n.badge}</span>` : ''}`;
+      <span class="lbl" title="${esc(n.id ?? n.label)}">${esc(n.label)}</span>${(() => { const c = this.hooks.colorOf?.(n.group ? `@${n.group}` : n.id ?? ''); return c ? `<span style="width:9px;height:9px;border-radius:2px;margin-left:6px;flex:none;background:${c}"></span>` : ''; })()}${n.badge ? `<span class="badge">${n.badge}</span>` : ''}`;
     const [caret, eye, lock] = r.children as unknown as HTMLElement[];
     caret.onclick = (e) => { e.stopPropagation(); this.toggleOpen(n); };
     eye.onclick = (e) => { e.stopPropagation(); this.setFlag(n, 'hidden', !hidden); };
@@ -349,8 +353,9 @@ export class TreePanel {
     if (!n) { this.info.textContent = 'Click a part in the tree or the 3D view. ⌘/Ctrl-click to select several.'; return; }
     if (this.sel.length > 1) {
       this.info.innerHTML = `<div>${this.sel.length} items selected</div>
-        <div style="margin-top:4px"><button data-a="group">Group…</button></div>`;
+        <div style="margin-top:4px"><button data-a="group">Group…</button></div>${this.colorRow()}`;
       this.wireGroupButtons();
+      this.wireColor();
       return;
     }
     const box = new THREE.Box3();
@@ -364,8 +369,30 @@ export class TreePanel {
       <div style="margin-top:4px">${n.group ? `<button data-a="ungroup">Delete group</button> <button data-a="rename">Rename</button>`
         : n.memberOf ? `<button data-a="unmember">Remove from ${esc(n.memberOf)}</button>`
         : n.id ? `<button data-a="group">Group…</button>` : ''}</div>`;
+    this.info.insertAdjacentHTML('beforeend', this.colorRow());
     this.info.querySelector<HTMLElement>('[data-a=copy]')?.addEventListener('click', () => navigator.clipboard?.writeText(n.id!));
     this.wireGroupButtons();
+    this.wireColor();
+  }
+
+  // ---------- base colours ----------
+  /** Specs of the selection: "@group" for group rows, ids for parts (virtual folders: their parts). */
+  private selSpecs(): string[] {
+    return [...new Set(this.sel.flatMap((n) => (n.group ? [`@${n.group}`] : n.id ? [n.id] : this.objsOf(n).map((o) => (o.userData.id ?? o.name) as string))))];
+  }
+  private colorRow() {
+    if (!this.hooks.onColor) return '';
+    const specs = this.selSpecs();
+    const cur = specs.map((sp) => this.hooks.colorOf?.(sp)).find(Boolean);
+    return `<div style="margin-top:6px;display:flex;align-items:center;gap:6px">Colour
+      <input type="color" data-a="color" value="${cur ?? '#cccccc'}" style="width:34px;height:20px;padding:0;border:1px solid #2b3540;background:none">
+      ${cur ? `<span style="font:11px ui-monospace,monospace">${cur}</span><button data-a="uncolor" title="Back to the CAD / default colour">Reset</button>` : '<span style="color:#7b8794">default</span>'}</div>`;
+  }
+  private wireColor() {
+    const specs = this.selSpecs();
+    const inp = this.info.querySelector<HTMLInputElement>('[data-a=color]');
+    if (inp) inp.onchange = () => this.hooks.onColor?.(specs, inp.value);
+    this.info.querySelector<HTMLElement>('[data-a=uncolor]')?.addEventListener('click', () => this.hooks.onColor?.(specs, null));
   }
 
   // ---------- user groups ----------

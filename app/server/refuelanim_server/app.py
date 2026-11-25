@@ -44,7 +44,7 @@ class Store(ModelStore):
     SOLVER = "refuel-anim"
     FORMAT = 1
     # the model's fields, in file order (src/model/file.ts in the repo root)
-    MODEL_FIELDS = ("name", "uuid", "solver", "format", "scene", "script", "snapshots", "groups", "view", "chat", "thumbnail")
+    MODEL_FIELDS = ("name", "uuid", "solver", "format", "scene", "script", "snapshots", "groups", "colors", "view", "chat", "thumbnail")
     FILE_FIELDS = ("description",)
     LINES = ("description",)
     # view state and the chat don't change what the animation is

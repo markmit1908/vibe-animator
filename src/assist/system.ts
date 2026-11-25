@@ -11,6 +11,7 @@ One step per line; steps run in sequence. \`parallel { … }\` runs the steps in
 - pivot TARGET [x,y,z]                                 – pivot that travels with TARGET for later rotations
 - hide TARGET [1s] · show TARGET [1s] · fade TARGET to 0.3 2s
 - highlight TARGET #c0392b 1s                          – or a palette name (spent, fresh, fuel)
+- color TARGET #2e86de 1s · color TARGET reset 1s      – change a colour over time / back to the part's base colour
 - camera [x,y,z] look [x,y,z] 3s · label "Title" "subtitle" · cutaway none|half|quarter · wait 2s
 - # comments. Durations: 2s, 500ms. A step without a duration is instant.
 TARGET is a part id from the assembly tree (e.g. plant/model/root/V-010001-511_A/…), a user group \`@name\`, or a glob with *.

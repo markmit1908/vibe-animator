@@ -17,7 +17,7 @@ export class ScriptError extends Error { constructor(message: string, public lin
 export interface CameraRig { pos: THREE.Vector3; look: THREE.Vector3; initPos: THREE.Vector3; initLook: THREE.Vector3 }
 
 /** Virtual (compile-time) state, all WORLD space. */
-interface VState { pos: THREE.Vector3; quat: THREE.Quaternion; color: THREE.Color; opacity: number }
+interface VState { pos: THREE.Vector3; quat: THREE.Quaternion; color: THREE.Color; base: THREE.Color; opacity: number }
 
 const EASES: Record<string, (p: number) => number> = {
   ease: (p) => p * p * (3 - 2 * p),
@@ -67,7 +67,7 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
       if (!obj) throw new Error(`Unknown object id "${id}"`);
       if (isLocked(obj)) throw new Error(`"${id}" is locked – unlock it in the assembly tree to animate it`);
       // virtual state holds WORLD positions; tweens convert to the parent's frame
-      s = { pos: obj.getWorldPosition(new THREE.Vector3()), quat: obj.getWorldQuaternion(new THREE.Quaternion()), color: firstColor(obj), opacity: 1 };
+      s = { pos: obj.getWorldPosition(new THREE.Vector3()), quat: obj.getWorldQuaternion(new THREE.Quaternion()), color: firstColor(obj), base: firstColor(obj), opacity: 1 };
       vs.set(id, s);
     }
     return s;
@@ -281,11 +281,12 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
       }
 
       case 'highlight': {
-        const to = colorOf(a.color ?? 'spent');
+        const reset = a.color === 'reset';
         const d = dur(0.6);
         for (const id of resolveTargets(a.target ?? val)) {
           materialsOwned(id);
           const s = state(id), from = s.color.clone(), mats = bodyMaterials(scene.registry.get(id)!);
+          const to = reset ? s.base.clone() : colorOf(a.color ?? 'spent');
           s.color = to.clone();
           tweens.push({ start: t, dur: d, apply: (p) => mats.forEach((m) => m.color.lerpColors(from, to, p)) });
         }

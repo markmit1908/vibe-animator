@@ -38,6 +38,8 @@ used to illustrate the concept. Delivered live in a browser.
 - Hidden-line mode: `src/view/drawing.ts` – normal+depth pass (scene.overrideMaterial = MeshNormalMaterial with the cutaway clip planes; edge lines, outline hulls, sprites and the gizmo hidden for that pass) then a full-screen edge shader. `drawFrame()` in studio.ts picks shaded or drawing; PNG export renders one frame at 2× pixel ratio.
 
 
+- Base colours: `model.colors` (id or @group → #hex). `applyColors()` in studio.ts clones the material per coloured mesh (`userData.baseMat0` keeps the original, `ownMat` set so the compiler doesn't clone again; respects the selection highlight's `origMat`). Changing them: seek 0, apply, `buildTimeline({ atStart: true })` (the old player's reset would overwrite the new colours). Script `color T #hex|reset [dur]` compiles to `highlight`; `reset` goes to the object's base colour (VState.base).
+
 ## Conventions
 - Y is up, units are metres, and the core base is at y = 0. The operating floor sits at the vessel flange (`floorY`), and locations are relative to it.
 - The machine's origin is the grapple tip.

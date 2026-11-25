@@ -170,3 +170,34 @@ test("typing across autosaves and an outside change never garbles the script", a
   expect(shown).not.toMatch(/\ds\w/);           // no "5sfade"-style joins
   expect(saved.groups.lid).toEqual(["head", "bolts"]);
 });
+
+test("base colours from the tree are saved, and the script can change and reset them", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Colours", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "Colours"\ncolor head #2e86de 1s\nwait 1s\ncolor head reset 1s' },
+    snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Colours");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const colourOf = (id: string) => page.evaluate((id) => {
+    const o = (window as any).__studio.built.registry.get(id); let c = "";
+    o.traverse((x: any) => { if (!c && x.isMesh && x.material?.side !== 1) c = (x.userData.origMat ?? x.material).color.getHexString(); });
+    return c;
+  }, id);
+  const vesselBefore = await colourOf("vessel");
+  // base colour from the tree's info box
+  await page.locator("#tree .row", { hasText: "head" }).first().click();
+  await page.locator('#tree .info input[data-a="color"]').evaluate((el: HTMLInputElement) => { el.value = "#c0392b"; el.dispatchEvent(new Event("change")); });
+  await expect.poll(async () => (await model(page, a.id)).colors).toEqual({ head: "#c0392b" });
+  expect(await colourOf("head")).toBe("c0392b");
+  expect(await colourOf("vessel")).toBe(vesselBefore);            // other parts keep theirs
+  // the script: blue at 2 s, back to the base (red) after the reset
+  await page.locator("#script .cm-stepTime", { hasText: "0.0s" }).nth(1).click();   // run to the end of `color head #2e86de 1s`
+  await expect.poll(() => colourOf("head")).toBe("2e86de");
+  await page.locator("#script .cm-stepTime", { hasText: "2.0s" }).click();          // end of `color head reset 1s`
+  await expect.poll(() => colourOf("head")).toBe("c0392b");
+  // reload: the base colour is still there
+  await open(page, "Colours");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  expect(await colourOf("head")).toBe("c0392b");
+});

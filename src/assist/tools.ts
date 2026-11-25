@@ -256,7 +256,7 @@ export function modelProposeTools(d: ModelProposeDeps): AssistTool[] {
     },
     {
       name: 'propose_state',
-      description: 'Propose lock/unlock and hide/show changes for parts (ids, globs or @groups). Parts must be unlocked before a script can animate them; hidden + locked CAD parts are unloaded from memory. Changes go into the working snapshot (unsaved until the user saves). The user accepts or rejects.',
+      description: 'Propose lock/unlock, hide/show and base-colour changes for parts (ids, globs or @groups). Parts must be unlocked before a script can animate them; hidden + locked CAD parts are unloaded from memory. Changes go into the working snapshot (unsaved until the user saves). The user accepts or rejects.',
       input_schema: {
         type: 'object',
         properties: {
@@ -265,6 +265,7 @@ export function modelProposeTools(d: ModelProposeDeps): AssistTool[] {
             targets: { type: 'array', items: { type: 'string' } },
             lock: { type: 'boolean', description: 'true = lock, false = unlock' },
             hide: { type: 'boolean', description: 'true = hide, false = show' },
+            color: { type: ['string', 'null'], description: 'Base colour #rrggbb to show the parts in (null = back to their own colour). Use colour to clarify / highlight components.' },
           }, required: ['targets'] } },
         },
         required: ['summary', 'changes'],
@@ -276,8 +277,9 @@ export function modelProposeTools(d: ModelProposeDeps): AssistTool[] {
         const changes = i.changes.map((c: any) => {
           const r = d.resolve(c.targets ?? []);
           r.unknown.forEach((u) => problems.push(`unknown target "${u}"`));
-          if (c.lock === undefined && c.hide === undefined) problems.push('a change needs lock and/or hide');
-          return { targets: c.targets, ids: r.ids, lock: c.lock, hide: c.hide };
+          if (c.lock === undefined && c.hide === undefined && c.color === undefined) problems.push('a change needs lock, hide and/or color');
+          if (c.color && !/^#[0-9a-fA-F]{6}$/.test(c.color)) problems.push(`colour must be #rrggbb, not ${c.color}`);
+          return { targets: c.targets, ids: r.ids, lock: c.lock, hide: c.hide, color: c.color };
         });
         const ok = !problems.length;
         const n = changes.reduce((a: number, c: any) => a + c.ids.length, 0);

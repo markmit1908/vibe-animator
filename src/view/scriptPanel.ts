@@ -28,7 +28,7 @@ const animLang = StreamLanguage.define({
     if (!w) { stream.next(); return null; }
     if (stream.column() === stream.indentation() || ANIM_VERBS.includes(w[0]) && stream.string.slice(0, stream.start).trim() === '') return 'keyword';
     if (['by', 'to', 'about', 'look'].includes(w[0])) return 'operator';
-    if (['ease', 'linear', 'in', 'out', 'none', 'half', 'quarter'].includes(w[0])) return 'atom';
+    if (['ease', 'linear', 'in', 'out', 'none', 'half', 'quarter', 'reset'].includes(w[0])) return 'atom';
     return 'variableName';
   },
   languageData: { commentTokens: { line: '#' } },

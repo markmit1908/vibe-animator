@@ -9,6 +9,7 @@
  *   pivot @lid [0,12,0]                            # pivot travels with @lid
  *   hide @shielding 1s     show @shielding     fade @bolts to 0.2 2s
  *   highlight @spent #c0392b 1s                    # or palette name
+ *   color @lid #2e86de 1s · color @lid reset 1s    # change colour / back to its base colour
  *   cutaway quarter        wait 2s
  *   parallel {
  *     move @lid by [4,0,0] 5s
@@ -45,7 +46,7 @@ export interface AnimStep {
 export interface ParseError { line: number; from: number; to: number; message: string; fix?: { label: string; run: () => void } }
 export interface AnimDoc { steps: AnimStep[]; errors: ParseError[] }
 
-const VERBS = ['move', 'rotate', 'hide', 'show', 'fade', 'highlight', 'label', 'camera', 'cutaway', 'wait', 'pivot', 'parallel'];
+const VERBS = ['move', 'rotate', 'hide', 'show', 'fade', 'highlight', 'color', 'label', 'camera', 'cutaway', 'wait', 'pivot', 'parallel'];
 export const ANIM_VERBS = VERBS;
 
 interface Tok { t: 'word' | 'str' | 'vec' | 'num' | 'dur' | 'color' | 'brace'; v: any; from: number; to: number }
@@ -155,7 +156,7 @@ export function parseAnim(text: string): AnimDoc {
         step.num = arg(take('num', 'opacity 0..1'));
         tail(); break;
       }
-      case 'highlight': {
+      case 'highlight': case 'color': {
         target();
         const x = peek();
         if (x && (x.t === 'color' || x.t === 'word')) { k++; step.word = arg(x); }
@@ -210,6 +211,7 @@ export function toActions(steps: AnimStep[]): { camera?: any; timeline: any[] } 
       case 'show': return { ...base, fade: tgt, to: 1, dur: s.dur?.value ?? 0 };
       case 'fade': return { ...base, fade: tgt, to: s.num!.value, dur: s.dur?.value ?? 1 };
       case 'highlight': return { ...base, highlight: tgt, color: s.word?.value ?? 'spent' };
+      case 'color': return { ...base, highlight: tgt, color: s.word?.value ?? 'reset', dur: s.dur?.value ?? 0 };
       case 'label': return { ...base, label: s.text![0]?.value, sub: s.text![1]?.value };
       case 'camera': return { ...base, camera: { pos: s.vec!.value, look: s.look?.value }, dur: s.dur?.value ?? 0 };
       case 'cutaway': return { ...base, cutaway: s.word!.value };

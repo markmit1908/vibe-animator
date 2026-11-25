@@ -136,9 +136,44 @@ function applyPlacements() {
     o.updateMatrix();
   }
 }
+// ---------- base colours (model.colors: part id or @group → #hex; a part's own colour wins) ----------
+let colors: Record<string, string> = { ...(model.colors ?? {}) };
+let coloured: THREE.Mesh[] = [];
+/** Put a material on a mesh, respecting the tree's selection highlight (which keeps the real one in origMat). */
+const setMat = (m: THREE.Mesh, mat: THREE.Material) => { if (m.userData.origMat) m.userData.origMat = mat; else m.material = mat; };
+function applyColors() {
+  for (const m of coloured) { setMat(m, m.userData.baseMat0); delete m.userData.baseMat0; m.userData.ownMat = false; }
+  coloured = [];
+  const entries = Object.entries(colors).sort(([a], [b]) => Number(b.startsWith('@')) - Number(a.startsWith('@'))); // groups first, parts win
+  for (const [spec, hex] of entries) for (const id of resolveIds([spec]).ids) {
+    built.registry.get(id)?.traverse((x) => {
+      const m = x as THREE.Mesh;
+      const cur = (m.userData.origMat ?? m.material) as THREE.MeshToonMaterial;
+      if (!m.isMesh || !cur || cur.side === THREE.BackSide) return; // outline hulls stay black
+      if (!m.userData.baseMat0) { m.userData.baseMat0 = cur; coloured.push(m); }
+      const c = (m.userData.baseMat0 as THREE.Material).clone() as THREE.MeshToonMaterial;
+      c.color?.set(hex);
+      setMat(m, c);
+      m.userData.ownMat = true; // the compiler's highlight/fade may change it without cloning again
+    });
+  }
+}
+/** Set (hex) or clear (null) the base colour of parts / @groups; saved with the animation. */
+function setColors(specs: string[], hex: string | null) {
+  const t = player.time;
+  player.seek(0);
+  for (const s0 of specs) { if (hex) colors[s0] = hex; else delete colors[s0]; }
+  applyColors();
+  buildTimeline({ atStart: true });
+  player.seek(t);
+  edit({ colors: { ...colors } });
+  tree.redraw();
+}
+
 useSnapshot(store.snapshots[store.active]);
 applyPlacements();
 for (const o of built.root.children) await reconcile(o);
+applyColors();
 
 let player!: Player;
 // no camera in the script: frame everything that's loaded
@@ -157,9 +192,11 @@ let drag: { members: { o: THREE.Object3D; world: THREE.Matrix4; p: THREE.Vector3
 let gizmoReady = false; // set once the gizmo exists (timeline refreshes before that skip it)
 let previewUnlocked = new Set<string>(); // parts a previewed assist proposal would unlock
 /** Compile the current script. On error the previous timeline keeps playing. */
-function buildTimeline(): boolean {
+function buildTimeline(o: { atStart?: boolean } = {}): boolean {
   const t = player?.time ?? 0, playing = player?.playing ?? false;
-  player?.seek(0); // compile from the start pose (positions, colours) – not the animated one
+  // compile from the start pose (positions, colours) – not the animated one. atStart: the caller already put the
+  // scene at its start pose and changed it (base colours); the old player's reset would undo that change
+  if (!o.atStart) player?.seek(0);
   try {
     const tl = compile(script, built, script.camera ?? defaultCam, (o) => isLocked(o) && !previewUnlocked.has(idOfObj(o)), store.groups);
     player = new Player(built, tl);
@@ -365,7 +402,8 @@ function persistWorking() {
   edit({ snapshots: { active: store.active, items: JSON.parse(JSON.stringify(store.snapshots)) } });
   markDirty(false);
 }
-async function applyStateChanges(changes: { ids: string[]; lock?: boolean; hide?: boolean }[]) {
+async function applyStateChanges(changes: { ids: string[]; targets?: string[]; lock?: boolean; hide?: boolean; color?: string | null }[]) {
+  for (const c of changes) if (c.color !== undefined) setColors(c.targets ?? c.ids, c.color);
   const touched: THREE.Object3D[] = [];
   for (const c of changes) for (const id of c.ids) {
     const o = built.registry.get(id); if (!o) continue;
@@ -421,7 +459,7 @@ const assist = new AssistPanel(right, {
       const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;');
       const lines = p.kind === 'groups'
         ? (p.changes as any[]).map((c) => `${c.action} <b>@${esc(c.name)}</b>${c.ids.length ? ` – ${c.ids.length} part${c.ids.length > 1 ? 's' : ''}: ${esc(c.ids.slice(0, 4).map((x: string) => x.split('/').pop()).join(', '))}${c.ids.length > 4 ? ' …' : ''}` : ''}`)
-        : (p.changes as any[]).map((c) => `${[c.lock === true ? '🔒 lock' : c.lock === false ? '🔓 unlock' : '', c.hide === true ? 'hide' : c.hide === false ? 'show' : ''].filter(Boolean).join(' + ')} – ${esc((c.targets as string[]).join(', '))} (${c.ids.length} part${c.ids.length === 1 ? '' : 's'})`);
+        : (p.changes as any[]).map((c) => `${[c.lock === true ? '🔒 lock' : c.lock === false ? '🔓 unlock' : '', c.hide === true ? 'hide' : c.hide === false ? 'show' : '', c.color ? `colour <span style="display:inline-block;width:9px;height:9px;background:${c.color}"></span> ${c.color}` : c.color === null ? 'reset colour' : ''].filter(Boolean).join(' + ')} – ${esc((c.targets as string[]).join(', '))} (${c.ids.length} part${c.ids.length === 1 ? '' : 's'})`);
       const probs = (p.problems as string[] | undefined) ?? [];
       el.innerHTML = `<ul style="margin:6px 0;padding-left:18px">${lines.map((l) => `<li>${l}</li>`).join('')}</ul>
         ${probs.length ? `<div class="err">${probs.map(esc).join('<br>')}</div>` : ''}
@@ -515,6 +553,8 @@ const tree = new TreePanel(built, scene3, {
     if (what === 'locked') { buildTimeline(); gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs); }
   },
   onSelect: (o, spec, objs) => gizmoFor(o, spec, objs),
+  colorOf: (spec) => colors[spec],
+  onColor: (specs, hex) => setColors(specs, hex),
   onGroups: () => { buildTimeline(); edit({ groups: JSON.parse(JSON.stringify(store.groups)) }); }, // groups are part of the animation: saved at once
   stats: () => {
     const c = cad.stats(), r = renderer.info;
