@@ -71,6 +71,7 @@ One step per line; steps run in sequence. `#` starts a comment. Durations: `2s`,
 | `rotate` | `rotate @lid by [0,0,90] 4s about [0,12,0]` | Degrees about world X/Y/Z. Pivot: bounding-box centre, `about [..]`, or a `pivot`. `to [..]` = absolute orientation. |
 | `pivot` | `pivot @lid [0,12,0]` | A pivot that travels with the part for later rotations. |
 | `hide` / `show` | `hide @shielding 1s` | |
+| `blank` / `unblank` | `blank @lid 1s` · `unblank all` · `blank others @core 1s` | Hide / show; work on locked parts (they don't move them). `blank others` hides everything not in the target (reverse blank); `unblank all` shows everything the script blanked. |
 | `fade` | `fade @bolts to 0.2 2s` | Opacity 0–1. Faded to 0 = hidden. |
 | `color` | `color @lid #2e86de 1s` · `color @lid reset 1s` | Change colour over time / back to the base colour. |
 | `highlight` | `highlight @spent #c0392b 1s` | Like `color`; also takes palette names (`spent`, `fresh`, `fuel`). |

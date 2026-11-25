@@ -493,10 +493,10 @@ test("undo / redo (⌘Z / ⇧⌘Z): colour, blank and group changes; the script 
   await row("head").click();
   await page.locator('#tree .info [data-swatch="#2e86de"]').first().click();       // an accidental colour
   await expect.poll(async () => (await saved()).colors).toEqual({ bolts: "#2e86de", head: "#2e86de" });
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(900);
   await page.locator("#toolsbar [data-t=blank]").click();                            // and a blank
   await expect.poll(async () => (await saved()).snapshots.items.default.hidden).toEqual({ head: true });
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(900);
   await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
   await page.keyboard.press("ControlOrMeta+z");                                      // undo the blank
   await expect.poll(async () => (await saved()).snapshots.items.default.hidden).toEqual({});
@@ -541,4 +541,34 @@ test("camera views: save from the tools bar, use as `camera <name> 2s`; unknown 
   await page.keyboard.press("Control+End"); await page.keyboard.press("Meta+ArrowDown");
   await page.keyboard.type("\ncamera nowhere 1s");
   await expect(page.locator("#script .status")).toHaveText("1 error");
+});
+
+test("script blank / unblank / blank others work on locked parts", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Blanks", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "B"\nblank head 1s\nwait 1s\nunblank head\nblank others head, bolts 1s\nwait 1s\nunblank all' },
+    snapshots: { active: "default", items: { default: { locked: { head: true, vessel: true }, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Blanks");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });   // locked parts: no error
+  const vis = (t: number) => page.evaluate((t) => { const s = (window as any).__studio; s.player.playing = false; s.player.seek(t);
+    const r = (id: string) => s.built.registry.get(id).visible; return [r("head"), r("bolts"), r("vessel"), r("machine")]; }, t);
+  expect(await vis(1.5)).toEqual([false, true, true, true]);    // blank head
+  expect(await vis(3.5)).toEqual([true, true, false, false]); // blank others: only head + bolts left
+  expect(await vis(4.1)).toEqual([true, true, true, true]);   // unblank all
+});
+
+test("Tab accepts the highlighted completion in the script", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Tab", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "T"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Tab");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  await page.locator("#script .cm-content").click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Meta+ArrowDown");
+  await page.keyboard.type("\nunbl");
+  await expect(page.locator(".cm-tooltip-autocomplete")).toContainText("unblank");
+  await page.waitForTimeout(150);                 // CodeMirror ignores an accept in the first 75 ms of the list
+  await page.keyboard.press("Tab");
+  await expect(page.locator("#script .cm-content")).toContainText("unblank");
 });

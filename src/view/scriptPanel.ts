@@ -3,7 +3,7 @@
  * Patterns follow SolverKit's ModelText: the text is canonical, diagnostics are lint marks,
  * completion is context-aware, and app-side edits are applied as minimal changes.
  */
-import { autocompletion, startCompletion, type Completion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
+import { acceptCompletion, autocompletion, startCompletion, type Completion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { HighlightStyle, StreamLanguage, syntaxHighlighting } from '@codemirror/language';
 import { type Diagnostic, lintGutter, setDiagnostics } from '@codemirror/lint';
@@ -256,6 +256,7 @@ export class ScriptPanel {
           }),
           colorChips,
           keymap.of([
+            { key: 'Tab', run: acceptCompletion },   // Tab takes the highlighted completion (else it indents)
             { key: 'Mod-s', preventDefault: true, run: () => { this.save(); return true; } },
             { key: 'Mod-Enter', preventDefault: true, run: () => { this.runToCursor(); return true; } },
             { key: 'Escape', run: () => { if (!this.pick) return false; this.pick = undefined; this.pickEl.textContent = ''; return true; } },

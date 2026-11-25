@@ -68,13 +68,14 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
 
   // virtual state
   const vs = new Map<string, VState>();
-  const state = (id: string): VState => {
+  /** motion: the step moves it (locked parts can't move; blanking / fading a locked part is fine). */
+  const state = (id: string, motion = true): VState => {
     let s = vs.get(id);
+    const obj = scene.registry.get(id);
+    if (!obj) throw new Error(`Unknown object id "${id}"`);
+    if (motion && isLocked(obj)) throw new Error(`"${id}" is locked – unlock it in the assembly tree to animate it`);
     if (!s) {
-      const obj = scene.registry.get(id);
-      if (!obj) throw new Error(`Unknown object id "${id}"`);
       if (isRemoved(obj)) throw new Error(`"${id}" is removed from the assembly – restore it to animate it`);
-      if (isLocked(obj)) throw new Error(`"${id}" is locked – unlock it in the assembly tree to animate it`);
       // virtual state holds WORLD positions; tweens convert to the parent's frame
       s = { pos: obj.getWorldPosition(new THREE.Vector3()), quat: obj.getWorldQuaternion(new THREE.Quaternion()), color: firstColor(obj), base: firstColor(obj), opacity: 1 };
       vs.set(id, s);
@@ -333,9 +334,25 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
 
       case 'fade': {
         const d = dur(1);
-        for (const id of resolveTargets(a.target ?? val)) {
+        let ids: string[];
+        if (a.all) ids = [...vs].filter(([, s]) => s.opacity < 1).map(([id]) => id);   // unblank all: what the script blanked
+        else if (a.others) {
+          // reverse blank: the top-most parts outside the targets' paths (containers that aren't parts are looked into)
+          const sel = resolveTargets(a.target ?? val).map((id) => scene.registry.get(id)!);
+          const keep = new Set<THREE.Object3D>();
+          for (const o of sel) for (let p: THREE.Object3D | null = o; p; p = p.parent) keep.add(p);
+          const out = new Set<string>();
+          const off = (c: THREE.Object3D) => {
+            if (keep.has(c)) return;
+            const id = (c.userData.id ?? c.name) as string;
+            if (scene.registry.get(id) === c) { if (!isRemoved(c) && c.visible) out.add(id); } else c.children.forEach(off);
+          };
+          for (const o of keep) if (!sel.includes(o)) o.children.forEach(off);
+          ids = [...out];
+        } else ids = resolveTargets(a.target ?? val);
+        for (const id of ids) {
           materialsOwned(id);
-          const s = state(id), from = s.opacity, to = a.to ?? 0, obj = scene.registry.get(id)!;
+          const s = state(id, false), from = s.opacity, to = a.to ?? 0, obj = scene.registry.get(id)!;
           s.opacity = to;
           tweens.push({ start: t, dur: d, apply: (p) => setOpacity(obj, from + (to - from) * p) });
         }

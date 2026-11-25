@@ -10,6 +10,7 @@
  *   rotate @lid by [0,0,90] about [0,12,0] 4s      # degrees, world axes
  *   pivot @lid [0,12,0]                            # pivot travels with @lid
  *   hide @shielding 1s     show @shielding     fade @bolts to 0.2 2s
+ *   blank @lid 1s · unblank @lid · unblank all · blank others @core 1s   # blank works on locked parts too
  *   highlight @spent #c0392b 1s                    # or palette name
  *   color @lid #2e86de 1s · color @lid reset 1s    # change colour / back to its base colour
  *   cutaway quarter        wait 2s
@@ -55,7 +56,7 @@ export interface AnimStep {
 export interface ParseError { line: number; from: number; to: number; message: string; fix?: { label: string; run: () => void } }
 export interface AnimDoc { steps: AnimStep[]; errors: ParseError[] }
 
-const VERBS = ['list', 'each', 'move', 'rotate', 'hide', 'show', 'fade', 'highlight', 'color', 'label', 'camera', 'cutaway', 'wait', 'pivot', 'parallel'];
+const VERBS = ['list', 'each', 'move', 'rotate', 'blank', 'unblank', 'hide', 'show', 'fade', 'highlight', 'color', 'label', 'camera', 'cutaway', 'wait', 'pivot', 'parallel'];
 export const ANIM_VERBS = VERBS;
 
 interface Tok { t: 'word' | 'str' | 'vec' | 'num' | 'dur' | 'color' | 'brace'; v: any; from: number; to: number }
@@ -164,6 +165,11 @@ export function parseAnim(text: string): AnimDoc {
       case 'move': case 'rotate': target(); mode(); tail(); break;
       case 'pivot': target(); step.vec = arg(take('vec', '[x, y, z] pivot point')); tail(); break;
       case 'hide': case 'show': target(); tail(); break;
+      case 'blank': {                                   // blank T · blank others T (reverse blank)
+        if (peek()?.t === 'word' && peek()!.v === 'others' && toks[k + 1]?.t === 'word') step.word = arg(toks[k++]);
+        target(); tail(); break;
+      }
+      case 'unblank': target(); tail(); break;          // unblank T · unblank all
       case 'fade': {
         target();
         if (peek()?.t === 'word' && peek()!.v === 'to') k++;
@@ -251,6 +257,8 @@ export function toActions(steps: AnimStep[]): { camera?: any; timeline: any[] } 
       case 'rotate': return { ...base, rotate: tgt, [s.mode!.value]: s.vec!.value, about: s.about?.value, dur: s.dur?.value ?? 0 };
       case 'pivot': return { ...base, pivot: tgt, point: s.vec!.value };
       case 'hide': return { ...base, fade: tgt, to: 0, dur: s.dur?.value ?? 0 };
+      case 'blank': return { ...base, fade: tgt, to: 0, others: s.word?.value === 'others', dur: s.dur?.value ?? 0 };
+      case 'unblank': return tgt === 'all' ? { ...base, fade: 'all', all: true, to: 1, dur: s.dur?.value ?? 0 } : { ...base, fade: tgt, to: 1, dur: s.dur?.value ?? 0 };
       case 'show': return { ...base, fade: tgt, to: 1, dur: s.dur?.value ?? 0 };
       case 'fade': return { ...base, fade: tgt, to: s.num!.value, dur: s.dur?.value ?? 1 };
       case 'highlight': return { ...base, highlight: tgt, color: s.word?.value ?? 'spent' };

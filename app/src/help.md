@@ -52,6 +52,9 @@ pivot @lid [0,12,0]
 hide @x 1s
 show @x
 fade @x to 0.2 2s
+blank @x 1s                           # hide; also on locked parts
+unblank @x                            # unblank all: everything the script blanked
+blank others @core 1s                 # reverse blank: hide everything else
 color @lid #2e86de 1s
 color @lid reset 1s
 highlight @spent spent 1s
