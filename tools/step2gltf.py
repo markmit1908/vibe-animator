@@ -211,23 +211,37 @@ def cmd_audit(st, tol):
         if not box.IsVoid():
             x0, y0, z0, x1, y1, z1 = box.Get(); dims = tuple(sorted((x1 - x0, y1 - y0, z1 - z0)))
         asm = ST.IsAssembly_s(l)
-        vol = faces = solids = 0
+        vol = faces = solids = area = 0
+        moments = (0, 0, 0)
         if not asm:
             g = GProp_GProps(); BRepGProp.VolumeProperties_s(shp, g); vol = g.Mass()
+            ga = GProp_GProps(); BRepGProp.SurfaceProperties_s(shp, ga); area = ga.Mass()
+            try:  # principal moments: orientation-independent shape fingerprint
+                pm = g.PrincipalProperties()
+                m = pm.Moments()
+                moments = tuple(sorted(m)) if isinstance(m, tuple) else moments
+            except Exception:
+                pass
             e = TopExp_Explorer(shp, TopAbs_FACE)
             while e.More(): faces += 1; e.Next()
             e = TopExp_Explorer(shp, TopAbs_SOLID)
             while e.More(): solids += 1; e.Next()
         n = name_of(l)
-        info[l.Tag()] = dict(name=n, asm=asm, dims=dims, vol=vol, faces=faces, solids=solids,
+        info[l.Tag()] = dict(name=n, asm=asm, dims=dims, vol=vol, area=area, moments=moments, faces=faces, solids=solids,
                              n=counts.get(l.Tag(), 0), kids=len(children(l)))
         by_name.setdefault(n, []).append(l.Tag())
         if (i + 1) % 500 == 0:
             log(f"  {i + 1}/{len(protos)}")
 
-    def sig(d):  # geometry signature, rounded to tolerance
+    def sig(d):
+        """Orientation-independent geometry signature (rounded to tolerance).
+        Rotated/moved copies of the same part match; genuinely different parts don't."""
         r = lambda v: round(v / tol)
-        return (d["asm"], d["kids"], d["faces"], r(d["vol"] ** (1 / 3) if d["vol"] > 0 else 0), *map(r, d["dims"]))
+        if d["asm"]:
+            return (True, d["kids"], r(sum(d["dims"])))  # assemblies: child count + rough size
+        root = lambda v: abs(v) ** (1 / 3) if v else 0
+        return (False, d["faces"], r(root(d["vol"])), r(d["area"] ** 0.5),
+                *(r(m ** 0.2) for m in d["moments"]))
 
     def fmt(d):
         dm = "x".join(f"{v:.0f}" for v in d["dims"])
@@ -235,7 +249,7 @@ def cmd_audit(st, tol):
         return f"{dm} mm, {kind}, used x{d['n']}"
 
     print("# STEP audit\n")
-    print("## Same name, different geometry\n")
+    print("## Same name, genuinely different geometry\n")
     clash = 0
     for n, tags in sorted(by_name.items()):
         groups = {}
@@ -245,17 +259,17 @@ def cmd_audit(st, tol):
             clash += 1
             print(f"- **{n}**: {len(groups)} distinct shapes")
             for g in groups.values():
-                print(f"    - {fmt(info[g[0]])}" + (f"  ({len(g)} identical copies, not instanced)" if len(g) > 1 else ""))
+                print(f"    - {fmt(info[g[0]])}" + (f"  ({len(g)} copies, not instanced)" if len(g) > 1 else ""))
     print(f"\n{clash} clashing names\n")
 
-    print("## Same name, same geometry, stored as separate parts (should be instances)\n")
+    print("## Same part stored as separate copies (geometry baked in place, not instanced)\n")
     dup = 0
     for n, tags in sorted(by_name.items()):
         groups = {}
         for t in tags:
             groups.setdefault(sig(info[t]), []).append(t)
         for g in groups.values():
-            if len(g) > 1 and len(groups) == 1:
+            if len(g) > 1:
                 dup += 1
                 print(f"- **{n}**: {len(g)} copies — {fmt(info[g[0]])}")
     print(f"\n{dup} names\n")
