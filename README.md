@@ -62,21 +62,6 @@ The conversation is saved in the animation file.
 **Setup:** put the key in the repo's `.env` (git-ignored) as `ANTHROPIC_API_KEY=…` (or `VITE_ANTHROPIC_API_KEY`), then restart `npm run dev`.
 The Python server reads it and SolverKit's assist proxy adds it to each request, so the key never reaches the page.
 
-## Files
-
-| Path | What it is |
-|---|---|
-| `scenes/core.yaml` | Model setup: `generated: true/false` (parametric placeholder reactor on/off), `script:`, core lattice, block sizes, vessel, head, machine, named locations, fresh-fuel staging, palette, CAD models |
-| `scripts/*.yaml` | Animation scripts. `script:` in core.yaml picks one: `refuel.yaml` animates the generated reactor, `plant.yaml` is the CAD starter. Action reference is in refuel.yaml's header |
-| `public/cad/` | Converted `.glb` files (git-ignored), listed under `cad_models:` in core.yaml |
-| `src/scene/build.ts` | Generates geometry from `core.yaml` |
-| `src/timeline/compile.ts` | Turns the script into tweens |
-| `src/timeline/player.ts` | Deterministic playback and seeking |
-| `src/view/cutaway.ts` | Section views |
-| `src/view/tree.ts` | Assembly tree panel, selection, visibility |
-| `src/scene/cad.ts` | Loads `cad_models`, restyles them, registers node ids |
-| `src/main.ts` | Renderer, UI, main loop |
-
 ## Object ids (for scripts)
 
 - Columns: `R<ring>-<index>`. `R0-0` is the centre column, and indices walk around each ring.
