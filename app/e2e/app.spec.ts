@@ -127,3 +127,16 @@ test("unlocking a locked group clears the script error and is saved", async ({ p
   await open(page, "Locked lid");
   await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
 });
+
+test("the studio fills the editor area: nothing under the header or status bar", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 860 });
+  await newAnimation(page);
+  await expect(page.locator("#app canvas")).toBeVisible({ timeout: 15_000 });
+  const box = async (sel: string) => (await page.locator(sel).first().boundingBox())!;
+  const main = await box("main"), host = await box("main > div");
+  expect(host).toEqual(main);
+  await page.getByRole("button", { name: "Assist", exact: true }).click();
+  const input = await box("#assist .input"), footer = await box("footer");
+  expect(input.y + input.height).toBeLessThanOrEqual(footer.y + 0.5);
+  await expect(page.getByRole("button", { name: "Send", exact: true })).toBeInViewport();
+});

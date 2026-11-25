@@ -739,10 +739,10 @@ function exportPng() {
 {
   const css = document.createElement('style');
   css.textContent = `#viewbar { position: absolute; top: 8px; right: 468px; z-index: 6; display: flex; gap: 4px; padding: 4px; background: rgba(14,17,21,.9); border: 1px solid #2b3540; border-radius: 6px; font: 12px system-ui; }
-    #viewbar { flex-wrap: wrap; justify-content: flex-end; max-width: calc(100vw - 352px - 476px); }
-    .studio-root.tree-collapsed #viewbar { max-width: calc(100vw - 56px - 476px); }
-    .studio-root.right-collapsed #viewbar { right: 48px; max-width: calc(100vw - 352px - 56px); }
-    .studio-root.right-collapsed.tree-collapsed #viewbar { max-width: calc(100vw - 112px); }
+    #viewbar { flex-wrap: wrap; justify-content: flex-end; max-width: calc(100% - 396px - 476px); }
+    .studio-root.tree-collapsed #viewbar { max-width: calc(100% - 56px - 476px); }
+    .studio-root.right-collapsed #viewbar { right: 48px; max-width: calc(100% - 396px - 56px); }
+    .studio-root.right-collapsed.tree-collapsed #viewbar { max-width: calc(100% - 112px); }
     .studio-root.paper #chapter { color: #111 !important; } .studio-root.paper #sub, .studio-root.paper #clock { color: #555 !important; }
     #viewbar .grp { display: flex; } #viewbar .sep { width: 1px; background: #2b3540; margin: 0 4px; }
     #viewbar button { background: #1b222a; color: #d7dde4; border: 1px solid #2b3540; padding: 3px 8px; cursor: pointer; font: inherit; }

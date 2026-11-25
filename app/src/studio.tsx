@@ -44,5 +44,6 @@ export function StudioView({ c }: { c: Context }) {
     }).catch((e) => console.error("studio:", e));
     return () => { gone = true; studio?.dispose(); studio = undefined; };
   }, [c.id, generation]);
-  return <div ref={host} style={{ position: "absolute", inset: 0 }} />;
+  // fill the editor area (not the page): positioned, so the studio's panels stay inside it
+  return <div ref={host} style={{ position: "relative", width: "100%", height: "100%", minHeight: 0, overflow: "hidden" }} />;
 }
