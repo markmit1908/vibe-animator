@@ -76,6 +76,7 @@ in `palette:` in `core.yaml`.
 - [x] Cutaway (half/quarter), X-ray, chapters, scrubbing
 - [ ] Real dimensions (all current values are **placeholders**)
 - [ ] Section caps on clipped shells, 3D callout labels
-- [ ] Post-processing outlines for shells and CAD (currently only blocks get a thick hull)
+- [x] Thick outlines on blocks and shells (inverted hull; `outline_width` in core.yaml)
+- [ ] Outlines for imported CAD
 - [ ] Video export
 - [ ] STEP→glTF conversion script

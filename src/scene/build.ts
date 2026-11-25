@@ -74,8 +74,19 @@ export function buildScene(cfg: any): BuiltScene {
     color: pal.edge, transparent: true, opacity: 1,
     ...(opts.clip ? { clippingPlanes: clipPlanes, clipIntersection: true } : {}),
   });
+  // Inverted hull pushed out along normals (constant thickness, unlike scaling);
+  // shares the cutaway planes so it is sliced with the shell.
+  const shellHullMat = new THREE.MeshBasicMaterial({
+    color: 0x000000, side: THREE.BackSide, clippingPlanes: clipPlanes, clipIntersection: true,
+  });
+  shellHullMat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader.replace('#include <begin_vertex>',
+      `#include <begin_vertex>\n transformed += normalize(normal) * ${(cfg.outline_width ?? 0.08).toFixed(3)};`);
+  };
+  shellMaterials.push(shellHullMat);
   const withEdges = (mesh: THREE.Mesh, clip = false, threshold = 30) => {
     mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, threshold), edgeMat({ clip })));
+    if (clip) mesh.add(new THREE.Mesh(mesh.geometry, shellHullMat)); // thick silhouette on shells
     return mesh;
   };
 

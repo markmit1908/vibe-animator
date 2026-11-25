@@ -42,6 +42,8 @@ fresh:
   per_row: 4
   spacing: 0.5
 
+outline_width: 0.1      # thick silhouette on vessel/head/barrel (m)
+
 palette:                # cel-shaded: off-white structure, copper accent, black outlines
   background: "#050607"
   fuel: "#d98a3a"
