@@ -109,3 +109,21 @@ test("the generated reactor animation compiles and plays", async ({ page }) => {
   await expect(page.locator("#clock")).toContainText("/ 3.0 s");
   await expect.poll(async () => page.locator("#clock").textContent(), { timeout: 8_000 }).toMatch(/^3\.0 \/ 3\.0 s/);
 });
+
+test("unlocking a locked group clears the script error and is saved", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Locked lid", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "Lift"\nmove @lid by [0,3,0] 2s' },
+    snapshots: { active: "default", items: { default: { locked: { head: true }, hidden: {} } } }, groups: { lid: ["head"] } };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Locked lid");
+  await expect(page.locator("#script .status")).toHaveText("1 error", { timeout: 15_000 });
+  // the group's row in the assembly tree: its lock toggle (second toggle in the row)
+  const row = page.locator("#tree .row", { hasText: "lid" }).first();
+  await row.locator(".tg").nth(1).click();
+  await expect(page.locator("#script .status")).toHaveText("✓");
+  await expect.poll(async () => (await model(page, a.id)).snapshots.items.default.locked.head, { timeout: 10_000 }).toBe(false);
+  // and it stays fixed after reopening
+  await open(page, "Locked lid");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+});

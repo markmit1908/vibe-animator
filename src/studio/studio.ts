@@ -354,6 +354,14 @@ function applyGroupChanges(changes: { action: string; name: string; ids: string[
   tree.rebuild(); buildTimeline();
 }
 /** Apply accepted lock/hide changes like the tree's toggles (explicit flag, descendants inherit). */
+/** Lock / hide / placement changes autosave into the active snapshot (like script and group edits);
+ *  the snapshot bar's Save also records the camera, Save as… makes a new snapshot. */
+function persistWorking() {
+  const cur = store.snapshots[store.active] ?? { locked: {}, hidden: {} };
+  store.snapshots[store.active] = { ...cur, locked: { ...state.locked }, hidden: { ...state.hidden }, placements: JSON.parse(JSON.stringify(state.placements)) };
+  io.edit({ snapshots: { active: store.active, items: JSON.parse(JSON.stringify(store.snapshots)) } });
+  markDirty(false);
+}
 async function applyStateChanges(changes: { ids: string[]; lock?: boolean; hide?: boolean }[]) {
   const touched: THREE.Object3D[] = [];
   for (const c of changes) for (const id of c.ids) {
@@ -366,7 +374,7 @@ async function applyStateChanges(changes: { ids: string[]; lock?: boolean; hide?
     touched.push(o);
   }
   for (const o of touched) await reconcile(o);
-  markDirty(); tree.redraw(); buildTimeline();
+  persistWorking(); tree.redraw(); buildTimeline();
 }
 
 // ---------- proposal preview: play a proposed script without touching the editor ----------
@@ -500,6 +508,7 @@ host().appendChild(rightToggle);
 const tree = new TreePanel(built, scene3, {
   onChange: async (objs, what) => {
     for (const o of objs) await reconcile(o);
+    persistWorking();
     if (what === 'locked') { buildTimeline(); gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs); }
   },
   onSelect: (o, spec, objs) => gizmoFor(o, spec, objs),
@@ -674,7 +683,7 @@ gizmo.addEventListener('dragging-changed', (e: any) => {
   }
   // start pose: record placements for every member
   for (const m of d.members) state.placements[idOfObj(m.o)] = { p: m.o.position.toArray(), q: m.o.quaternion.toArray() };
-  markDirty();
+  persistWorking();
   buildTimeline();
 });
 on('keydown', (e: any) => {
@@ -684,7 +693,7 @@ on('keydown', (e: any) => {
   if (e.key === 'Escape') { gizmo.detach(); tree.select(undefined, false); }
   if (e.key === 'r' && gizmo.object && player.time === 0) { // reset selection to its original placement
     for (const o of gSel.objs) { delete state.placements[idOfObj(o)]; o.position.fromArray(o.userData.homeP); o.quaternion.fromArray(o.userData.homeQ); }
-    markDirty(); buildTimeline(); gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs);
+    persistWorking(); buildTimeline(); gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs);
   }
 });
 
