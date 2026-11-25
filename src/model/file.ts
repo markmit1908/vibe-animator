@@ -49,7 +49,7 @@ export interface AnimModel {
   removed?: string[];
   /** Display names for parts (ids, used by scripts, are unchanged). */
   labels?: Record<string, string>;
-  view?: { camera?: { pos: number[]; look: number[] }; time?: number; mode?: 'shaded' | 'hidden' };
+  view?: { camera?: { pos: number[]; look: number[] }; time?: number; mode?: 'shaded' | 'hidden'; paletteKey?: string };
   chat?: unknown[];
   /** Unknown keys are preserved on save (SolverKit rule). */
   [k: string]: unknown;

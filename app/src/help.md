@@ -31,7 +31,7 @@ Right-click a row for its menu; **F2** renames, **Delete** removes, ⌘/Ctrl-cli
 - **Rename:** a display name for a part (scripts keep its id). Renaming a group updates the script.
 - **Remove from assembly:** takes a part out of this animation only. Restore it from **Removed**.
 - **Group…:** makes a group (`@name`) from the selection.
-- **Colour** (info box): base colour of the selection. The swatches are colours already in the model (yours first, then the CAD colours); the picker gives any colour. **Reset** goes back to the CAD colour.
+- **Colour** (info box): base colour of the selection. The swatches are colours already in the model (yours first, then the CAD colours); the picker gives any colour. A second row is a **palette** from a key colour (pick it with **Palette**): complementary, split complementary, triadic and analogous. In the script, `color TARGET ` offers the same colours; click the chip by a `#hex` to change it. **Reset** goes back to the CAD colour.
 - **Snapshots** (top bar): named start states (locks, hides, placements, camera). Save also records the camera.
 
 Select an unlocked part to move it with the gizmo: **W** move, **E** rotate, **R** reset, **Esc** deselect.

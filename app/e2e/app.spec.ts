@@ -340,4 +340,27 @@ test("the colour picker offers the colours already in the model", async ({ page 
   expect(swatches).toContain(vessel);             // then the model's own colours
   await page.locator(`#tree .info [data-swatch="${vessel}"]`).click();
   await expect.poll(async () => (await model(page, a.id)).colors).toEqual({ bolts: "#2e86de", head: vessel });
+  // the same colours in the script's color step: completion swatches, then a chip on the value
+  await page.locator("#script .cm-content").click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Meta+ArrowDown");
+  await page.keyboard.type("\ncolor head ");
+  const opts = page.locator(".cm-tooltip-autocomplete li");
+  await expect(opts.first()).toContainText(vessel);          // most recent base colour first
+  await expect(opts.first().locator(".cm-swatchOpt")).toBeVisible();
+  await expect(page.locator(".cm-tooltip-autocomplete")).toContainText("#cad1ee"); // the palette too
+  await expect(page.locator(".cm-tooltip-autocomplete")).toContainText("reset");
+  await page.keyboard.type("#2e"); await page.keyboard.press("Enter"); await page.keyboard.type(" 1s");
+  await expect(page.locator("#script .cm-content")).toContainText("color head #2e86de 1s");
+  await expect(page.locator("#script .status")).toHaveText("✓");
+  await page.locator("#script .cm-colorChip").first().dispatchEvent("mousedown");
+  await expect(page.locator(".cm-tooltip-autocomplete li").first()).toContainText("#");
+  // second row: a palette from the key colour #cad1ee (key, complementary, split ×2, triadic ×2, analogous ×2)
+  await page.keyboard.press("Escape");
+  await page.locator("#tree .row", { has: page.locator(".lbl", { hasText: /^head$/ }) }).first().click();
+  const pal = await page.locator('#tree .info [data-row=palette] [data-swatch]').evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.swatch));
+  expect(pal.length).toBe(8);
+  expect(pal[0]).toBe("#cad1ee");
+  expect(new Set(pal).size).toBe(8);
+  await page.locator('#tree .info [data-a=palkey]').evaluate((e: HTMLInputElement) => { e.value = "#c0392b"; e.dispatchEvent(new Event("change")); });
+  await expect.poll(async () => (await model(page, a.id)).view?.paletteKey).toBe("#c0392b");
+  await expect(page.locator('#tree .info [data-row=palette] [data-swatch]').first()).toHaveAttribute("data-swatch", "#c0392b");
 });

@@ -1,5 +1,6 @@
 import { host } from './host';
 import * as THREE from 'three';
+import { palette } from './palette';
 import type { BuiltScene } from '../scene/build';
 import { state, store, markDirty, isLocked, isHidden, isCad } from '../scene/state';
 
@@ -70,6 +71,9 @@ export interface TreeHooks {
   colorOf?: (spec: string) => string | undefined;
   /** Colours already used in the model (base colours first, then CAD material colours) – offered as swatches. */
   modelColors?: () => string[];
+  /** Key colour of the generated palette (second swatch row), and changing it. */
+  paletteKey?: () => string;
+  onPaletteKey?: (hex: string) => void;
   /** Set (hex) or clear (null) base colours. */
   onColor?: (specs: string[], hex: string | null) => void;
   /** Display name of a part (undefined: its CAD name). */
@@ -423,7 +427,13 @@ export class TreePanel {
     const used = (this.hooks.modelColors?.() ?? []).slice(0, 18);
     const swatches = used.length ? `<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:6px" title="Colours already in the model">${used.map((c) =>
       `<button data-swatch="${c}" title="${c}" style="width:16px;height:16px;padding:0;border-radius:3px;border:1px solid ${c === cur ? '#f2b705' : '#2b3540'};background:${c};cursor:pointer"></button>`).join('')}</div>` : '';
-    return `${swatches}<div style="margin-top:6px;display:flex;align-items:center;gap:6px">Colour
+    const key = this.hooks.paletteKey?.();
+    const sw = (c: string, t: string) => `<button data-swatch="${c}" title="${t}" style="width:16px;height:16px;padding:0;border-radius:3px;border:1px solid ${c === cur ? '#f2b705' : '#2b3540'};background:${c};cursor:pointer"></button>`;
+    const pal = key ? `<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:5px;align-items:center" data-row="palette">
+      <label style="display:flex;align-items:center;gap:4px;margin-right:4px;color:#7b8794;font-size:11px" title="Pick the key colour; the palette (complementary, split complementary, triadic, analogous) is built from it">Palette
+        <input type="color" data-a="palkey" value="${key}" style="width:30px;height:18px;padding:0;border:1px solid #2b3540;background:none;cursor:pointer"></label>
+      ${palette(key).map((p) => sw(p.hex, `${p.role} ${p.hex}`)).join('')}</div>` : '';
+    return `${swatches}${pal}<div style="margin-top:6px;display:flex;align-items:center;gap:6px">Colour
       <input type="color" data-a="color" value="${cur ?? '#cccccc'}" title="Any colour" style="width:34px;height:20px;padding:0;border:1px solid #2b3540;background:none">
       ${cur ? `<span style="font:11px ui-monospace,monospace">${cur}</span><button data-a="uncolor" title="Back to the CAD / default colour">Reset</button>` : '<span style="color:#7b8794">default</span>'}</div>`;
   }
@@ -431,6 +441,8 @@ export class TreePanel {
     const specs = this.selSpecs();
     const inp = this.info.querySelector<HTMLInputElement>('[data-a=color]');
     if (inp) inp.onchange = () => this.hooks.onColor?.(specs, inp.value);
+    const pk = this.info.querySelector<HTMLInputElement>('[data-a=palkey]');
+    if (pk) pk.onchange = () => { this.hooks.onPaletteKey?.(pk.value); this.updateInfo(); };
     this.info.querySelectorAll<HTMLElement>('[data-swatch]').forEach((b) => (b.onclick = () => this.hooks.onColor?.(specs, b.dataset.swatch!)));
     this.info.querySelector<HTMLElement>('[data-a=uncolor]')?.addEventListener('click', () => this.hooks.onColor?.(specs, null));
   }

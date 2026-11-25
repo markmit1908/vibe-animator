@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { DEFAULT_PALETTE_KEY, palette } from '../view/palette';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import GUI from 'lil-gui';
 import { buildScene } from '../scene/build';
@@ -304,6 +305,24 @@ rebuildChapters();
 onTimeline = () => { rebuildChapters(); if (!drag && gizmoReady) gizmoFor?.(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs); };
 
 // ---------- script panel (.anim) ----------
+let paletteKey = model.view?.paletteKey ?? DEFAULT_PALETTE_KEY;
+function modelColors(): string[] {
+    // base colours set in this animation (most recent first), then the model's own material colours (most common first)
+    const base = [...new Set(Object.values(colors).reverse())];
+    if (!materialColours) {
+      const count = new Map<string, number>();
+      built.root.traverse((x) => {
+        const m = x as THREE.Mesh;
+        const mat = (m.userData.baseMat0 ?? m.userData.origMat ?? m.material) as THREE.MeshToonMaterial | undefined;
+        if (!m.isMesh || !mat?.color || mat.side === THREE.BackSide || !m.visible) return;
+        const hex = `#${mat.color.getHexString()}`;
+        count.set(hex, (count.get(hex) ?? 0) + 1);
+      });
+      materialColours = [...count].sort((a, b) => b[1] - a[1]).map(([c]) => c);
+    }
+    return [...base, ...materialColours.filter((c) => !base.includes(c))];
+  }
+
 if (isAnim) {
   scriptPanel = new ScriptPanel(right, scriptName, animText, {
     change: (text) => {
@@ -319,6 +338,7 @@ if (isAnim) {
     seek: (t) => { player.playing = false; player.seek(t); gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs); },
     ids: () => [...Object.keys(store.groups).map((g) => `@${g}`), ...built.registry.keys()],
     cameraLine: () => cameraLine(probe),
+    colors: () => [...new Set([...modelColors(), ...palette(paletteKey).map((p) => p.hex)])],
   });
   scriptPanel.setErrors(scriptErrors);
   buildTimeline(); // again now the panel exists, so compile errors (e.g. locked parts) show in the editor with their fix
@@ -592,22 +612,9 @@ const tree = new TreePanel(built, scene3, {
     if (clicked && scriptPanel?.picking) scriptPanel.insertTarget(shortSpec(clicked.spec), clicked.add); // pick mode: into the script
   },
   colorOf: (spec) => colors[spec],
-  modelColors: () => {
-    // base colours set in this animation (most recent first), then the model's own material colours (most common first)
-    const base = [...new Set(Object.values(colors).reverse())];
-    if (!materialColours) {
-      const count = new Map<string, number>();
-      built.root.traverse((x) => {
-        const m = x as THREE.Mesh;
-        const mat = (m.userData.baseMat0 ?? m.userData.origMat ?? m.material) as THREE.MeshToonMaterial | undefined;
-        if (!m.isMesh || !mat?.color || mat.side === THREE.BackSide || !m.visible) return;
-        const hex = `#${mat.color.getHexString()}`;
-        count.set(hex, (count.get(hex) ?? 0) + 1);
-      });
-      materialColours = [...count].sort((a, b) => b[1] - a[1]).map(([c]) => c);
-    }
-    return [...base, ...materialColours.filter((c) => !base.includes(c))];
-  },
+  modelColors,
+  paletteKey: () => paletteKey,
+  onPaletteKey: (hex) => { paletteKey = hex; edit({ view: { ...(model.view ?? {}), paletteKey: hex } }); },
   labelOf: (id) => labels[id],
   onLabel: (id, l) => {
     if (l) labels[id] = l; else delete labels[id];
@@ -673,7 +680,7 @@ async function loadSnapshot(name: string) {
   renderSnapBar();
 }
 async function saveSnapshot(name: string) {
-  edit({ view: { camera: camView(), time: player.time, mode: drawing.enabled ? 'hidden' : 'shaded' } });
+  edit({ view: { camera: camView(), time: player.time, mode: drawing.enabled ? 'hidden' : 'shaded', paletteKey } });
   store.snapshots[name] = captureSnapshot(camView());
   store.active = name;
   await writeStore();

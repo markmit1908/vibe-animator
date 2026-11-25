@@ -3,12 +3,12 @@
  * Patterns follow SolverKit's ModelText: the text is canonical, diagnostics are lint marks,
  * completion is context-aware, and app-side edits are applied as minimal changes.
  */
-import { autocompletion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
+import { autocompletion, startCompletion, type Completion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { HighlightStyle, StreamLanguage, syntaxHighlighting } from '@codemirror/language';
 import { type Diagnostic, lintGutter, setDiagnostics } from '@codemirror/lint';
 import { EditorState, RangeSetBuilder, StateEffect, StateField } from '@codemirror/state';
-import { Decoration, type DecorationSet, EditorView, GutterMarker, gutter, keymap, lineNumbers } from '@codemirror/view';
+import { Decoration, type DecorationSet, EditorView, GutterMarker, gutter, keymap, lineNumbers, MatchDecorator, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
 import { ANIM_VERBS, type ParseError } from '../script/anim';
 import type { LineTiming } from '../timeline/compile';
@@ -45,6 +45,34 @@ const hl = HighlightStyle.define([
   { tag: tags.atom, color: '#89ddff' },
   { tag: tags.bracket, color: '#7b8794' },
 ]);
+
+// ---------- colour chips before #hex values (click: swatches) ----------
+class Chip extends WidgetType {
+  constructor(readonly hex: string, readonly at: number) { super(); }
+  eq(o: Chip) { return o.hex === this.hex && o.at === this.at; }
+  toDOM(view: EditorView) {
+    const el = document.createElement('span');
+    el.className = 'cm-colorChip'; el.style.background = this.hex; el.title = 'Change colour';
+    el.onmousedown = (e) => {
+      e.preventDefault();
+      view.dispatch({ selection: { anchor: this.at, head: this.at + this.hex.length } });
+      view.focus(); startCompletion(view);
+    };
+    return el;
+  }
+  ignoreEvent() { return true; }
+}
+const chipMatcher = new MatchDecorator({
+  regexp: /#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b/g,
+  decorate: (add, from, _to, m) => add(from, from, Decoration.widget({ widget: new Chip(m[0], from), side: -1 })),
+});
+const colorChips = ViewPlugin.fromClass(class {
+  decorations: DecorationSet;
+  constructor(v: EditorView) { this.decorations = chipMatcher.createDeco(v); }
+  update(u: ViewUpdate) { this.decorations = chipMatcher.updateDeco(u, this.decorations); }
+}, { decorations: (v) => v.decorations });
+/** Cursor at the colour of a `color`/`highlight` step (after its targets). */
+const COLOR_AT = /^\s*(color|highlight)\s+[^\s,]+(?:\s*,\s*[^\s,]+)*\s+(#?\w*)$/;
 
 // ---------- step timing gutter + active-step highlight ----------
 const setTimes = StateEffect.define<{ lines: Map<number, LineTiming>; active: Set<number> }>();
@@ -105,6 +133,8 @@ export interface ScriptHooks {
   ids(): string[];
   /** `camera … look …` line for the current view. */
   cameraLine(): string;
+  /** Colours to offer in `color`/`highlight` steps (the model's own first). */
+  colors?(): string[];
 }
 
 const CSS = `
@@ -119,6 +149,8 @@ const CSS = `
 .cm-activeStep { background: rgba(242,183,5,.10) !important; }
 .cm-stepTime { font: 10px ui-monospace, monospace; color: #7b8794; padding: 0 6px 0 4px; cursor: pointer; position: relative; min-width: 42px; }
 .cm-stepTime:hover { color: #f2b705; }
+.cm-colorChip { display: inline-block; width: 10px; height: 10px; border-radius: 2px; border: 1px solid #7b8794; margin: 0 3px -1px 0; cursor: pointer; }
+.cm-swatchOpt { display: inline-block; width: 12px; height: 12px; border-radius: 2px; border: 1px solid #7b8794; margin-right: 6px; vertical-align: -2px; }
 .cm-stepBar { position: absolute; left: 4px; right: 6px; bottom: 1px; height: 2px; background: #2b3540; border-radius: 1px; }
 `;
 
@@ -160,10 +192,21 @@ export class ScriptPanel {
     this.saved = text;
 
     const complete = (cx: CompletionContext): CompletionResult | null => {
-      const word = cx.matchBefore(/[@\w./#-]*/);
-      if (!word || (word.from === word.to && !cx.explicit)) return null;
       const line = cx.state.doc.lineAt(cx.pos);
       const before = line.text.slice(0, cx.pos - line.from);
+      // the colour of a color/highlight step: the colours already in the model, as swatches
+      const cm = before.match(COLOR_AT);
+      if (cm) {
+        const cols = this.hooks.colors?.() ?? [];
+        const extra = cm[1] === 'color' ? ['reset'] : ['spent', 'fresh', 'fuel'];
+        const options: Completion[] = [
+          ...cols.slice(0, 24).map((c, i) => ({ label: c, type: 'color', detail: i === 0 ? 'in the model' : undefined, boost: 99 - i })),
+          ...extra.map((w) => ({ label: w, type: 'keyword', boost: -1 })),
+        ];
+        return { from: cx.pos - cm[2].length, to: cx.pos + (line.text.slice(cx.pos - line.from).match(/^#?\w*/)?.[0].length ?? 0), options, validFor: /^#?\w*$/ };
+      }
+      const word = cx.matchBefore(/[@\w./#-]*/);
+      if (!word || (word.from === word.to && !cx.explicit)) return null;
       if (/^\s*[\w]*$/.test(before)) {
         return { from: word.from, options: ANIM_VERBS.map((v) => ({ label: v, type: 'keyword' })) };
       }
@@ -188,7 +231,14 @@ export class ScriptPanel {
           }),
           lineNumbers(), history(), lintGutter(),
           animLang, syntaxHighlighting(hl),
-          autocompletion({ override: [complete] }),
+          autocompletion({
+            override: [complete],
+            addToOptions: [{ position: 20, render: (c) => {
+              if (c.type !== 'color') return null;
+              const sw = document.createElement('span'); sw.className = 'cm-swatchOpt'; sw.style.background = c.label; return sw;
+            } }],
+          }),
+          colorChips,
           keymap.of([
             { key: 'Mod-s', preventDefault: true, run: () => { this.save(); return true; } },
             { key: 'Mod-Enter', preventDefault: true, run: () => { this.runToCursor(); return true; } },
