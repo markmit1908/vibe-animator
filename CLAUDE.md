@@ -18,6 +18,9 @@ used to illustrate the concept. Delivered live in a browser.
 - CAD (`cad_models` in core.yaml) is loaded **before** compiling (top-level await), so scripts can target CAD node ids (`<model>/<child>/…`).
 - Player resets only `tl.touched` ids each frame. Visibility = not faded (script) AND not cut (cutaway) AND not `userData.userHidden` (tree toggle). Keep all three when touching `.visible`.
 
+- Part state (`src/scene/state.ts`, `scenes/state.yaml` via the `/__state` endpoint in vite.config.ts): explicit `locked`/`hidden` flags by id, inherited by descendants. `reconcile()` in main.ts applies them. Locked → `matrixAutoUpdate=false` (and `matrixWorldAutoUpdate=false` for fully locked subtrees). Locked + hidden CAD → `CadManager.suppress` frees geometry; `restore` reloads it from the .glb by id.
+- Changing locks recompiles the script. Scripts may not target locked objects.
+
 ## Conventions
 - Y is up, units are metres, and the core base is at y = 0. The operating floor sits at the vessel flange (`floorY`), and locations are relative to it.
 - The machine's origin is the grapple tip.
@@ -29,7 +32,7 @@ used to illustrate the concept. Delivered live in a browser.
 ## CAD
 - `data/` holds raw CAD and is git-ignored. Never commit it; the plant STEP is 757 MB.
 - `tools/step2gltf.py` (uv inline deps, cadquery-ocp, Python <3.13) has three commands: `tree`, `audit`, `convert`. Parsing the plant model takes about 3 minutes and 6 GB, so run it in the background.
-- OCCT's glTF writer does not share meshes between instances, so `convert` runs `npx gltf-transform dedup` + `instance` afterwards. This only helps true STEP instances. The Shapr3D export bakes each copy in place, so those copies need canonicalising first (not done yet).
+- OCCT's glTF writer does not share meshes between instances, so `convert` re-instances baked copies (principal axes + vertex check), merges faces (one primitive per part), then runs `gltf-transform dedup`. Never use gltf-transform `instance`: it flattens the hierarchy and drops names.
 
 ## Testing
 No test suite yet. A quick headless check is to bundle or run (e.g. with `tsx`) a script that builds the scene, compiles the timeline, and seeks a `Player` to several times, then prints object positions.

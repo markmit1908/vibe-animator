@@ -60,7 +60,8 @@ palette:                # cel-shaded: off-white structure, copper accent, black 
 
 # CAD models shown alongside the generated model (glTF/.glb in public/, made with tools/step2gltf.py).
 # Every node is registered as <id>/<child>/... and appears in the assembly tree; scripts can target it.
-cad_models: []
+cad_models:
+  - {id: plant, file: cad/plant.glb, up: x, ground: true, position: [16, 0, 0], clip: false}
 #  - id: plant
 #    file: cad/plant.glb
 #    position: [0, 0, 0]       # metres

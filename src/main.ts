@@ -8,7 +8,8 @@ import { buildScene } from './scene/build';
 import { compile } from './timeline/compile';
 import { Player } from './timeline/player';
 import { applyCutaway, type CutMode } from './view/cutaway';
-import { loadCad } from './scene/cad';
+import { CadManager } from './scene/cad';
+import { loadState, isLocked, isHidden, isCad, state } from './scene/state';
 import { TreePanel } from './view/tree';
 
 const cfg = parse(coreYaml);
@@ -35,25 +36,67 @@ const subEl = document.getElementById('sub')!;
 const clockEl = document.getElementById('clock')!;
 
 // ---------- CAD models (glTF in public/) – loaded before compiling so scripts can target them ----------
+await loadState();
+const cad = new CadManager(built);
 try {
   if (cfg.cad_models?.length) {
     chapterEl.textContent = 'Loading CAD…';
-    await loadCad(cfg.cad_models, built);
+    await cad.load(cfg.cad_models);
   }
 } catch (e: any) {
   console.error(e);
   subEl.textContent = `CAD load failed: ${e.message}`;
 }
 
-let player: Player;
-try {
-  const tl = compile(script, built, script.camera ?? { pos: [12, 16, 14], look: [0, 5, 0] });
-  player = new Player(built, tl);
-} catch (e: any) {
-  chapterEl.textContent = 'Script error';
-  subEl.textContent = e.message;
-  throw e;
+// ---------- part state: hide / lock / suppress ----------
+const meshesUnder = (o: THREE.Object3D) => { const m: THREE.Mesh[] = []; o.traverse((x) => { if ((x as THREE.Mesh).isMesh) m.push(x as THREE.Mesh); }); return m; };
+
+/** Apply hide/lock flags to a subtree: visibility, matrix auto-update, CAD suppression. */
+async function reconcile(root: THREE.Object3D) {
+  const supp: THREE.Mesh[] = [], rest: THREE.Mesh[] = [];
+  const walk = (o: THREE.Object3D): boolean => {         // returns: whole subtree locked
+    const id = (o.userData.id ?? o.name) as string;
+    if (id && built.registry.get(id) === o) {
+      o.userData.userHidden = state.hidden[id] === true;
+      o.visible = !o.userData.userHidden && !o.userData.faded;
+    }
+    const locked = isLocked(o);
+    o.userData.suppressedRoot = isCad(o) && state.hidden[id] === true && locked;
+    if ((o as THREE.Mesh).isMesh && isCad(o)) (isHidden(o) && locked ? supp : rest).push(o as THREE.Mesh);
+    let all = locked;
+    for (const c of o.children) all = walk(c) && all;
+    // locked objects never move: skip their matrix work every frame
+    o.matrixAutoUpdate = !locked;
+    if (locked) o.updateMatrix();
+    o.matrixWorldAutoUpdate = !all;
+    return all;
+  };
+  root.updateMatrixWorld(true);
+  walk(root);
+  cad.suppress(supp);
+  await cad.restore(rest);
 }
+for (const o of built.root.children) await reconcile(o);
+
+let player!: Player;
+const defaultCam = script.camera ?? { pos: [12, 16, 14], look: [0, 5, 0] };
+function buildTimeline(): boolean {
+  try {
+    const tl = compile(script, built, defaultCam, isLocked);
+    const t = player?.time ?? 0, playing = player?.playing ?? false;
+    player = new Player(built, tl);
+    player.time = t; player.playing = playing;
+    subEl.textContent = '';
+    return true;
+  } catch (e: any) {
+    chapterEl.textContent = 'Script error';
+    subEl.textContent = e.message;
+    console.error(e);
+    return false;
+  }
+}
+if (!buildTimeline()) player = new Player(built, { tweens: [], steps: [], duration: 0, touched: [],
+  camera: { pos: new THREE.Vector3(...defaultCam.pos), look: new THREE.Vector3(...defaultCam.look), initPos: new THREE.Vector3(...defaultCam.pos), initLook: new THREE.Vector3(...defaultCam.look) } });
 camera.position.copy(player.tl.camera.pos);
 controls.target.copy(player.tl.camera.look);
 
@@ -87,7 +130,17 @@ player.tl.steps.filter((s) => s.kind === 'label').forEach((s) =>
   chapters.add({ go: () => { player.seek(s.t); player.playing = true; } }, 'go').name(`${s.t.toFixed(0).padStart(3)}s  ${s.value}`));
 
 // ---------- assembly tree + 3D picking ----------
-const tree = new TreePanel(built, scene3);
+const tree = new TreePanel(built, scene3, {
+  onChange: async (objs, what) => {
+    for (const o of objs) await reconcile(o);
+    if (what === 'locked') buildTimeline();
+  },
+  stats: () => {
+    const c = cad.stats(), r = renderer.info;
+    return `GPU geometries ${r.memory.geometries} · drawn ${(r.render.triangles / 1e6).toFixed(2)}M tris · ${r.render.calls} calls` +
+      (c.geometries ? `\nCAD meshes loaded ${c.geometries}` : '');
+  },
+});
 const sel = new URLSearchParams(location.search).get('select');
 if (sel) tree.selectId(sel);
 const raycaster = new THREE.Raycaster();
@@ -137,3 +190,21 @@ renderer.setAnimationLoop(() => {
   tree.update();
   renderer.render(scene3, camera);
 });
+
+// ?debug: dump CAD ids + stats into the DOM (for headless checks)
+if (new URLSearchParams(location.search).has('debug')) {
+  const pre = document.createElement('pre'); pre.id = 'debug'; pre.style.display = 'none';
+  const ids = [...built.registry.keys()].filter((k) => k.startsWith('plant'));
+  const supp: string[] = [];
+  built.root.traverse((o) => { if (o.userData.suppressed) supp.push(o.userData.id); });
+  const before = cad.stats();
+  // ?debug=restore: unhide everything and check suppressed geometry comes back
+  if (new URLSearchParams(location.search).get('debug') === 'restore') {
+    for (const k of Object.keys(state.hidden)) delete state.hidden[k];
+    for (const o of built.root.children) await reconcile(o);
+  }
+  const after: string[] = [];
+  built.root.traverse((o) => { if (o.userData.suppressed) after.push(o.userData.id); });
+  pre.textContent = JSON.stringify({ ids, supp, before, after: { supp: after, cad: cad.stats() } }, null, 1);
+  document.body.appendChild(pre);
+}

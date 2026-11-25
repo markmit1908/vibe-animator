@@ -1,199 +1,299 @@
 import * as THREE from 'three';
 import type { BuiltScene } from '../scene/build';
+import { state, saveState, isLocked, isHidden, isCad } from '../scene/state';
 
 /**
- * Left-hand assembly tree: browse, show/hide, search and select scene objects.
- * Selection shows the object's script id (copyable) so it can be used in refuel.yaml.
+ * Left-hand assembly tree.
+ *  - children are built only when a node is expanded
+ *  - only the rows on screen are in the DOM (virtual scrolling), so any size works
+ *  - ● show/hide, 🔒 lock/unlock (locked = never moves, not scriptable)
+ *  - hidden + locked CAD parts are suppressed (geometry freed) via the onChange hook
  */
 
 interface Node {
   label: string;
-  id?: string;               // registry id (scriptable) if any
-  objs: THREE.Object3D[];    // objects this node controls (virtual nodes control many)
-  children: Node[];
-  count?: string;            // badge, e.g. "×112"
+  id?: string;                 // registry id, if scriptable
+  obj?: THREE.Object3D;        // real object (virtual group nodes have none)
+  virtualKids?: Node[];        // children of virtual nodes
+  kids?: Node[];               // built lazily for real objects
+  badge?: string;
   parent?: Node;
+  depth: number;
 }
 
+const ROW = 22;
+
 const CSS = `
-#tree { position: fixed; top: 0; left: 0; bottom: 0; width: 320px; display: flex; flex-direction: column;
-  background: rgba(14,17,21,.94); color: #d7dde4; font: 12px/1.35 system-ui, sans-serif; border-right: 1px solid #222a33; z-index: 5; }
-#tree.collapsed { transform: translateX(-320px); }
+#tree { position: fixed; top: 0; left: 0; bottom: 0; width: 340px; display: flex; flex-direction: column;
+  background: rgba(14,17,21,.95); color: #d7dde4; font: 12px/1.35 system-ui, sans-serif; border-right: 1px solid #222a33; z-index: 5; }
+#tree.collapsed { transform: translateX(-340px); }
 #tree header { display: flex; gap: 6px; align-items: center; padding: 8px; border-bottom: 1px solid #222a33; }
 #tree header b { flex: 1; font-size: 13px; }
 #tree input[type=search] { margin: 8px; padding: 5px 8px; background: #0a0c0f; border: 1px solid #2b3540; color: inherit; border-radius: 4px; }
-#tree .rows { flex: 1; overflow: auto; padding-bottom: 8px; }
-#tree .row { display: flex; align-items: center; height: 22px; padding-right: 6px; white-space: nowrap; cursor: pointer; }
+#tree .scroll { flex: 1; overflow: auto; position: relative; }
+#tree .row { position: absolute; left: 0; right: 0; height: ${ROW}px; display: flex; align-items: center; padding-right: 6px; white-space: nowrap; cursor: pointer; }
 #tree .row:hover { background: #1b222a; }
 #tree .row.sel { background: #3a2a14; }
 #tree .caret { width: 16px; text-align: center; color: #7b8794; flex: none; }
-#tree .eye { width: 18px; flex: none; text-align: center; color: #9aa6b2; }
-#tree .eye.off { color: #444d57; }
-#tree .lbl { overflow: hidden; text-overflow: ellipsis; flex: 1; }
+#tree .tg { width: 18px; flex: none; text-align: center; color: #9aa6b2; font-size: 11px; }
+#tree .tg.off { color: #3d4650; }
+#tree .tg.inh { opacity: .45; }
+#tree .lbl { overflow: hidden; text-overflow: ellipsis; flex: 1; margin-left: 2px; }
 #tree .row.hidden .lbl { color: #5b6670; }
+#tree .row.supp .lbl { color: #5b6670; text-decoration: line-through; }
 #tree .badge { color: #7b8794; margin-left: 6px; }
 #tree .info { border-top: 1px solid #222a33; padding: 8px; font-size: 11px; color: #9aa6b2; min-height: 64px; }
 #tree .info code { display: block; color: #f2b705; word-break: break-all; margin: 3px 0; font: 11px ui-monospace, monospace; }
+#tree .stats { white-space: pre; border-top: 1px solid #222a33; padding: 6px 8px; font: 11px ui-monospace, monospace; color: #7b8794; }
 #tree button { background: #222a33; color: inherit; border: 1px solid #2b3540; border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 11px; }
-#tree-toggle { position: fixed; top: 8px; left: 328px; z-index: 6; }
+#tree-toggle { position: fixed; top: 8px; left: 348px; z-index: 6; background:#222a33; color:#d7dde4; border:1px solid #2b3540; border-radius:4px; padding:3px 8px; cursor:pointer; }
 body.tree-collapsed #tree-toggle { left: 8px; }
-body:not(.tree-collapsed) #chapter, body:not(.tree-collapsed) #sub { left: 372px !important; }
-body:not(.tree-collapsed) #clock { left: 344px !important; }
+body:not(.tree-collapsed) #chapter, body:not(.tree-collapsed) #sub { left: 392px !important; }
+body:not(.tree-collapsed) #clock { left: 364px !important; }
 body.tree-collapsed #chapter, body.tree-collapsed #sub { left: 52px !important; }
 `;
 
+export interface TreeHooks {
+  /** Called after visibility/lock changes on these objects (suppression, recompile…). */
+  onChange?: (objs: THREE.Object3D[], what: 'hidden' | 'locked') => void;
+  stats?: () => string;
+}
+
 export class TreePanel {
   private el: HTMLElement;
-  private rows: HTMLElement;
+  private scroll: HTMLElement;
+  private spacer: HTMLElement;
   private info: HTMLElement;
+  private statsEl: HTMLElement;
   private search: HTMLInputElement;
   private open = new Set<Node>();
   private roots: Node[] = [];
-  private byObj = new Map<THREE.Object3D, Node>();
+  private flat: Node[] = [];
   private selected?: Node;
   private box = new THREE.Box3Helper(new THREE.Box3(), 0xf2b705);
 
-  constructor(private scene: BuiltScene, private three: THREE.Scene, private onSelect?: (id?: string) => void) {
+  constructor(private scene: BuiltScene, three: THREE.Scene, private hooks: TreeHooks = {}) {
     const style = document.createElement('style'); style.textContent = CSS; document.head.appendChild(style);
     this.el = document.createElement('div'); this.el.id = 'tree';
-    this.el.innerHTML = `<header><b>Assembly</b><button data-a="collapse">Collapse all</button></header>
-      <input type="search" placeholder="Search parts…" /><div class="rows"></div><div class="info">Click a part in the tree or the 3D view.</div>`;
+    this.el.innerHTML = `<header><b>Assembly</b><span title="● visible   🔒 locked (never moves)   locked + hidden CAD = suppressed (freed from memory)" style="cursor:help;color:#7b8794">ⓘ</span><button data-a="collapse">Collapse all</button></header>
+      <input type="search" placeholder="Search parts… (Enter)" /><div class="scroll"><div class="spacer"></div></div>
+      <div class="info">Click a part in the tree or the 3D view.</div><div class="stats"></div>`;
     document.body.appendChild(this.el);
     const toggle = document.createElement('button'); toggle.id = 'tree-toggle'; toggle.textContent = '☰';
-    toggle.style.cssText = 'background:#222a33;color:#d7dde4;border:1px solid #2b3540;border-radius:4px;padding:3px 8px;cursor:pointer';
     toggle.onclick = () => { this.el.classList.toggle('collapsed'); document.body.classList.toggle('tree-collapsed'); };
     document.body.appendChild(toggle);
-    this.rows = this.el.querySelector('.rows')!;
+    this.scroll = this.el.querySelector('.scroll')!;
+    this.spacer = this.el.querySelector('.spacer')!;
     this.info = this.el.querySelector('.info')!;
+    this.statsEl = this.el.querySelector('.stats')!;
     this.search = this.el.querySelector('input')!;
-    this.search.oninput = () => this.render();
-    this.el.querySelector<HTMLElement>('[data-a=collapse]')!.onclick = () => { this.open.clear(); this.render(); };
+    let t: number | undefined;
+    this.search.oninput = () => { clearTimeout(t); t = window.setTimeout(() => this.refresh(), 200); };
+    this.scroll.onscroll = () => this.draw();
+    this.el.querySelector<HTMLElement>('[data-a=collapse]')!.onclick = () => { this.open.clear(); this.roots.forEach((r) => this.open.add(r)); this.refresh(); };
+    new ResizeObserver(() => this.draw()).observe(this.scroll);
     this.box.visible = false;
     three.add(this.box);
     this.rebuild();
   }
 
-  /** Rebuild the model (call after CAD loads). */
+  // ---------- model ----------
   rebuild() {
     const reg = this.scene.registry;
-    const node = (label: string, id: string | undefined, objs: THREE.Object3D[], children: Node[] = [], count?: string): Node => {
-      const n: Node = { label, id, objs, children, count };
-      children.forEach((c) => (c.parent = n));
-      if (objs.length === 1) this.byObj.set(objs[0], n);
-      return n;
-    };
-    this.byObj.clear();
-
-    // generated core: group blocks by column (virtual nodes)
-    const cols = new Map<string, Node[]>();
-    const fresh: Node[] = [];
+    const mk = (label: string, depth: number, extra: Partial<Node> = {}): Node => ({ label, depth, ...extra });
+    // generated core: blocks grouped by column (virtual nodes)
+    const cols = new Map<string, string[]>();
+    const fresh: string[] = [];
     for (const id of this.scene.blockIds) {
-      const obj = reg.get(id)!;
-      const [col, layer] = id.split('/');
-      const leaf = node(layer, id, [obj]);
-      if (col === 'fresh') fresh.push(node(id, id, [obj])); else (cols.get(col) ?? cols.set(col, []).get(col)!).push(leaf);
+      const [col] = id.split('/');
+      if (col === 'fresh') fresh.push(id); else (cols.get(col) ?? cols.set(col, []).get(col)!).push(id);
     }
-    const colNodes = [...cols.entries()].map(([c, kids]) => node(c, undefined, kids.flatMap((k) => k.objs), kids));
-    const generated = node('Generated model', undefined, [], [
-      node('core', undefined, colNodes.flatMap((c) => c.objs), colNodes, `${colNodes.length} columns`),
-      ...['vessel', 'head', 'bolts', 'barrel', 'machine'].filter((id) => reg.has(id)).map((id) => node(id, id, [reg.get(id)!])),
-      node('fresh fuel', undefined, fresh.flatMap((f) => f.objs), fresh),
-    ]);
+    const gen = mk('Generated model', 0);
+    const core = mk('core', 1, { badge: `${cols.size} columns`, parent: gen });
+    core.virtualKids = [...cols.entries()].map(([c, ids]) => {
+      const n = mk(c, 2, { parent: core });
+      n.virtualKids = ids.map((id) => mk(id.split('/')[1], 3, { id, obj: reg.get(id), parent: n }));
+      return n;
+    });
+    const freshN = mk('fresh fuel', 1, { parent: gen });
+    freshN.virtualKids = fresh.map((id) => mk(id, 2, { id, obj: reg.get(id), parent: freshN }));
+    gen.virtualKids = [core, ...['vessel', 'head', 'bolts', 'barrel', 'machine'].filter((id) => reg.has(id))
+      .map((id) => mk(id, 1, { id, obj: reg.get(id), parent: gen })), freshN];
 
-    // CAD models: mirror the Object3D hierarchy
-    const mirror = (o: THREE.Object3D): Node => {
-      const kids = o.children.map(mirror);
-      const inst = (o as THREE.InstancedMesh).isInstancedMesh ? `×${(o as THREE.InstancedMesh).count}` : undefined;
-      const id = o.userData.id as string;
-      return node(o.name || id.split('/').pop()!, id, [o], kids, inst ?? (kids.length ? `${kids.length}` : undefined));
-    };
-    const cad = this.scene.root.children.filter((o) => o.userData.cad).map(mirror);
-    this.roots = [generated, ...(cad.length ? [node('CAD', undefined, [], cad)] : [])];
-    this.open.add(generated);
-    if (cad.length) this.open.add(this.roots[1]);
-    this.render();
+    const cadRoots = this.scene.root.children.filter((o) => o.userData.cad);
+    this.roots = [gen];
+    this.open.add(gen);
+    if (cadRoots.length) {
+      const cad = mk('CAD', 0);
+      cad.virtualKids = cadRoots.map((o) => this.objNode(o, 1, cad));
+      this.roots.push(cad);
+      this.open.add(cad);
+    }
+    this.refresh();
   }
 
-  private isHidden(n: Node) { return n.objs.length > 0 && n.objs.every((o) => o.userData.userHidden); }
-
-  private setHidden(n: Node, hidden: boolean) {
-    for (const o of n.objs) { o.userData.userHidden = hidden; o.visible = !hidden && !o.userData.faded; }
-    for (const c of n.children) this.setHidden(c, hidden);
+  private objNode(o: THREE.Object3D, depth: number, parent?: Node): Node {
+    const inst = (o as THREE.InstancedMesh).isInstancedMesh ? `×${(o as THREE.InstancedMesh).count}` : undefined;
+    const label = o.name && o.name !== 'model' ? o.name : (o.userData.id as string).split('/').pop()!;
+    return { label, depth, parent, id: o.userData.id ?? o.name, obj: o, badge: inst ?? (o.children.length ? String(o.children.length) : undefined) };
   }
 
-  private render() {
+  private kids(n: Node): Node[] {
+    if (n.virtualKids) return n.virtualKids;
+    if (!n.obj || n.obj.userData.kind === 'block') return [];
+    if (!n.kids) {
+      // generated groups (vessel, head…) have unnamed internals – don't list them
+      n.kids = isCad(n.obj) ? n.obj.children.filter((c) => c.userData.id).map((c) => this.objNode(c, n.depth + 1, n)) : [];
+    }
+    return n.kids;
+  }
+
+  private objsOf(n: Node): THREE.Object3D[] {
+    if (n.obj) return [n.obj];
+    return (n.virtualKids ?? []).flatMap((k) => this.objsOf(k));
+  }
+
+  // ---------- flatten + virtual draw ----------
+  private refresh() {
     const q = this.search.value.trim().toLowerCase();
-    const frag = document.createDocumentFragment();
-    let rendered = 0;
-    const MAX = 3000;
-    const row = (n: Node, depth: number, showPath = false) => {
-      if (rendered++ > MAX) return;
-      const r = document.createElement('div');
-      r.className = 'row' + (n === this.selected ? ' sel' : '') + (this.isHidden(n) ? ' hidden' : '');
-      r.style.paddingLeft = `${depth * 12}px`;
-      const caret = n.children.length ? (this.open.has(n) ? '▾' : '▸') : '';
-      const label = showPath && n.id ? n.id : n.label;
-      r.innerHTML = `<span class="caret">${caret}</span><span class="eye ${this.isHidden(n) ? 'off' : ''}">●</span>
-        <span class="lbl" title="${n.id ?? n.label}">${escape(label)}</span>${n.count ? `<span class="badge">${n.count}</span>` : ''}`;
-      (r.children[0] as HTMLElement).onclick = (e) => { e.stopPropagation(); this.open.has(n) ? this.open.delete(n) : this.open.add(n); this.render(); };
-      (r.children[1] as HTMLElement).onclick = (e) => { e.stopPropagation(); this.setHidden(n, !this.isHidden(n)); this.render(); };
-      r.onclick = () => this.select(n, false);
-      r.ondblclick = () => { this.open.has(n) ? this.open.delete(n) : this.open.add(n); this.render(); };
-      frag.appendChild(r);
-      if (!q && this.open.has(n)) n.children.forEach((c) => row(c, depth + 1));
-    };
+    const out: Node[] = [];
     if (q) {
-      const walk = (n: Node) => { if (n.label.toLowerCase().includes(q) || n.id?.toLowerCase().includes(q)) row(n, 0, true); n.children.forEach(walk); };
+      // search walks the whole registry (fast; nothing rendered except matches on screen)
+      const walk = (n: Node) => {
+        if (n.label.toLowerCase().includes(q) || n.id?.toLowerCase().includes(q)) out.push({ ...n, depth: 0, label: n.id ?? n.label, parent: n.parent });
+        this.kids(n).forEach(walk);
+      };
       this.roots.forEach(walk);
-    } else this.roots.forEach((n) => row(n, 0));
-    if (rendered > MAX) { const m = document.createElement('div'); m.style.padding = '6px'; m.textContent = `… more (refine search)`; frag.appendChild(m); }
-    this.rows.replaceChildren(frag);
-    this.rows.querySelector('.sel')?.scrollIntoView({ block: 'nearest' });
+    } else {
+      const walk = (n: Node) => { out.push(n); if (this.open.has(n)) this.kids(n).forEach(walk); };
+      this.roots.forEach(walk);
+    }
+    this.flat = out;
+    this.spacer.style.height = `${out.length * ROW}px`;
+    this.draw();
   }
 
-  /** Select a tree node (from the tree, or from a 3D pick). */
+  private draw() {
+    const top = this.scroll.scrollTop, h = this.scroll.clientHeight;
+    const from = Math.max(0, Math.floor(top / ROW) - 10), to = Math.min(this.flat.length, Math.ceil((top + h) / ROW) + 10);
+    const frag = document.createDocumentFragment();
+    frag.appendChild(this.spacer);
+    for (let i = from; i < to; i++) frag.appendChild(this.row(this.flat[i], i));
+    this.scroll.replaceChildren(frag);
+    this.statsEl.textContent = this.hooks.stats?.() ?? '';
+  }
+
+  private row(n: Node, i: number) {
+    const objs = this.objsOf(n);
+    const hidden = objs.length > 0 && objs.every(isHidden);
+    const locked = objs.length > 0 && objs.every(isLocked);
+    const explicitH = n.id !== undefined && n.id in state.hidden;
+    const explicitL = n.id !== undefined && n.id in state.locked;
+    const supp = n.obj?.userData.suppressedRoot;
+    const r = document.createElement('div');
+    const sameAsSel = this.selected && (n === this.selected || (n.id && n.id === this.selected.id));
+    r.className = 'row' + (sameAsSel ? ' sel' : '') + (hidden ? ' hidden' : '') + (supp ? ' supp' : '');
+    r.style.top = `${i * ROW}px`;
+    r.style.paddingLeft = `${n.depth * 12}px`;
+    const hasKids = !this.search.value && this.kids(n).length > 0;
+    r.innerHTML = `<span class="caret">${hasKids ? (this.open.has(n) ? '▾' : '▸') : ''}</span>
+      <span class="tg ${hidden ? 'off' : ''} ${explicitH ? '' : 'inh'}" title="show / hide">●</span>
+      <span class="tg ${locked ? '' : 'off'} ${explicitL ? '' : 'inh'}" title="lock / unlock">${locked ? '🔒' : '🔓'}</span>
+      <span class="lbl" title="${esc(n.id ?? n.label)}">${esc(n.label)}</span>${n.badge ? `<span class="badge">${n.badge}</span>` : ''}`;
+    const [caret, eye, lock] = r.children as unknown as HTMLElement[];
+    caret.onclick = (e) => { e.stopPropagation(); this.toggleOpen(n); };
+    eye.onclick = (e) => { e.stopPropagation(); this.setFlag(n, 'hidden', !hidden); };
+    lock.onclick = (e) => { e.stopPropagation(); this.setFlag(n, 'locked', !locked); };
+    r.onclick = () => this.select(n, false);
+    r.ondblclick = () => this.toggleOpen(n);
+    return r;
+  }
+
+  private toggleOpen(n: Node) { this.open.has(n) ? this.open.delete(n) : this.open.add(n); this.refresh(); }
+
+  /** Set a flag on a node: explicit flag on its id(s); descendants' explicit flags are cleared so they inherit. */
+  private setFlag(n: Node, what: 'hidden' | 'locked', value: boolean) {
+    const objs = this.objsOf(n);
+    const flags = state[what];
+    for (const o of objs) {
+      const id = (o.userData.id ?? o.name) as string;
+      o.traverse((d) => { const did = (d.userData.id ?? d.name) as string; if (did && did !== id) delete flags[did]; });
+      flags[id] = value;
+    }
+    saveState();
+    this.hooks.onChange?.(objs, what);
+    this.refresh();
+    this.updateInfo();
+  }
+
+  // ---------- selection ----------
   select(n: Node | undefined, reveal: boolean) {
     this.selected = n;
-    if (n && reveal) { this.search.value = ''; for (let p = n.parent; p; p = p.parent) this.open.add(p); }
+    if (n && reveal) {
+      this.search.value = '';
+      for (let p = n.parent; p; p = p.parent) this.open.add(p);
+    }
     this.updateInfo();
-    this.render();
-    this.onSelect?.(n?.id);
+    this.refresh();
+    if (n && reveal) {
+      const i = this.flat.findIndex((x) => x === n || (n.id && x.id === n.id));
+      if (i >= 0) this.scroll.scrollTop = Math.max(0, i * ROW - this.scroll.clientHeight / 2);
+    }
   }
 
   /** Select by registry id (e.g. from ?select=). */
-  selectId(id: string) {
-    const obj = this.scene.registry.get(id);
-    if (obj) this.pick(obj);
-  }
+  selectId(id: string) { const o = this.scene.registry.get(id); if (o) this.pick(o); }
 
-  /** Select whatever registered object contains this 3D object. */
+  /** Select the registered object containing this 3D object (from a 3D pick). */
   pick(obj: THREE.Object3D | undefined) {
-    let o = obj;
-    while (o && !this.byObj.has(o)) o = o.parent ?? undefined;
-    this.select(o ? this.byObj.get(o) : undefined, true);
+    if (!obj) return this.select(undefined, false);
+    // chain of registered ancestors, root first
+    const chain: THREE.Object3D[] = [];
+    for (let o: THREE.Object3D | null = obj; o; o = o.parent) if (this.scene.registry.get((o.userData.id ?? o.name) as string) === o) chain.unshift(o);
+    if (!chain.length) return this.select(undefined, false);
+    // walk the tree model down the chain, materialising lazy children as needed
+    let level = this.roots;
+    let found: Node | undefined;
+    const search = (nodes: Node[], target: THREE.Object3D): Node | undefined => {
+      for (const n of nodes) {
+        if (n.obj === target) return n;
+        if (!n.obj) { const r = search(this.kids(n), target); if (r) return r; }
+      }
+    };
+    for (const o of chain) {
+      const n = search(level, o);
+      if (!n) break;
+      found = n;
+      level = this.kids(n);
+    }
+    this.select(found, true);
   }
 
   private updateInfo() {
     const n = this.selected;
     if (!n) { this.info.textContent = 'Click a part in the tree or the 3D view.'; this.box.visible = false; return; }
     const box = new THREE.Box3();
-    n.objs.forEach((o) => box.expandByObject(o));
-    const size = box.getSize(new THREE.Vector3());
+    this.objsOf(n).forEach((o) => box.expandByObject(o));
     this.box.box.copy(box); this.box.visible = !box.isEmpty();
-    const c = box.getCenter(new THREE.Vector3());
-    this.info.innerHTML = `<div>${escape(n.label)}${n.count ? ` <span class="badge">${n.count}</span>` : ''}</div>
-      ${n.id ? `<code>${escape(n.id)}</code><button data-a="copy">Copy id</button>` : '<div><i>group (not scriptable by id)</i></div>'}
-      <div style="margin-top:4px">size ${fmt(size)} m · centre ${fmt(c)}</div>`;
+    const size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+    const objs = this.objsOf(n);
+    const locked = objs.every(isLocked);
+    this.info.innerHTML = `<div>${esc(n.label)}${n.badge ? ` <span class="badge">${n.badge}</span>` : ''} · ${locked ? '🔒 locked' : '🔓 movable'}</div>
+      ${n.id ? `<code>${esc(n.id)}</code><button data-a="copy">Copy id</button>` : '<div><i>group (not scriptable by id)</i></div>'}
+      ${box.isEmpty() ? '' : `<div style="margin-top:4px">size ${fmt(size)} m · centre ${fmt(c)}</div>`}`;
     this.info.querySelector<HTMLElement>('[data-a=copy]')?.addEventListener('click', () => navigator.clipboard?.writeText(n.id!));
   }
 
-  /** Keep the selection box glued to animated objects. */
+  /** Per frame: keep selection box on animated objects; refresh stats occasionally. */
+  private frame = 0;
   update() {
-    if (!this.selected || !this.box.visible) return;
-    this.box.box.makeEmpty();
-    this.selected.objs.forEach((o) => this.box.box.expandByObject(o));
+    if (this.selected && this.box.visible && !this.objsOf(this.selected).every(isLocked)) {
+      this.box.box.makeEmpty();
+      this.objsOf(this.selected).forEach((o) => this.box.box.expandByObject(o));
+    }
+    if (++this.frame % 30 === 0) this.statsEl.textContent = this.hooks.stats?.() ?? '';
   }
 }
 
 const fmt = (v: THREE.Vector3) => `${v.x.toFixed(2)}, ${v.y.toFixed(2)}, ${v.z.toFixed(2)}`;
-const escape = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));

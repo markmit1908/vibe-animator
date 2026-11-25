@@ -37,7 +37,8 @@ function substitute(node: any, vars: Record<string, any>): any {
 
 const KINDS = ['pick', 'place', 'move', 'highlight', 'fade', 'label', 'cutaway', 'camera', 'wait', 'parallel', 'repeat', 'call'];
 
-export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]; look: number[] }): Timeline {
+export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]; look: number[] },
+  isLocked: (o: THREE.Object3D) => boolean = () => false): Timeline {
   const tweens: Tween[] = [];
   const steps: StepEvent[] = [];
   const macros: Record<string, any[]> = script.macros ?? {};
@@ -51,6 +52,7 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
     if (!s) {
       const obj = scene.registry.get(id);
       if (!obj) throw new Error(`Unknown object id "${id}"`);
+      if (isLocked(obj)) throw new Error(`"${id}" is locked – unlock it in the assembly tree to animate it`);
       s = { pos: obj.position.clone(), color: firstColor(obj), opacity: 1 };
       vs.set(id, s);
     }

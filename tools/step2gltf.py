@@ -176,6 +176,7 @@ def cmd_convert(doc, st, a):
     log(f"meshed {n} shapes; writing {a.output}")
 
     w = RWGltf_CafWriter(TCollection_AsciiString(a.output), a.output.endswith(".glb"))
+    w.SetMergeFaces(True)  # one primitive per part instead of one per B-rep face (draw calls!)
     w.SetNodeNameFormat(RWMesh_NameFormat.RWMesh_NameFormat_ProductOrInstance)
     w.SetMeshNameFormat(RWMesh_NameFormat.RWMesh_NameFormat_Product)
     conv = w.ChangeCoordinateSystemConverter()
@@ -192,10 +193,12 @@ def cmd_convert(doc, st, a):
 
 
 def optimize(path):
-    """Share identical meshes (dedup) and turn repeated nodes into GPU instances."""
+    """Share identical meshes (dedup). The `instance` pass is deliberately not used:
+    it moves instanced nodes to the scene root and drops their names, destroying the
+    assembly tree the viewer relies on."""
     import os, subprocess
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    for step in ("dedup", "instance"):
+    for step in ("dedup",):
         log(f"gltf-transform {step}")
         subprocess.run(["npx", "gltf-transform", step, path, path], cwd=root, check=True,
                        stdout=subprocess.DEVNULL)
@@ -451,7 +454,7 @@ def main():
                    help="don't rebuild instancing for copies baked in place")
     c.add_argument("--match-tol", type=float, default=0.05, help="vertex match tolerance for re-instancing, mm")
     c.add_argument("--no-optimize", dest="optimize", action="store_false",
-                   help="skip the gltf-transform dedup + GPU-instancing pass")
+                   help="skip the gltf-transform dedup pass")
     a = ap.parse_args()
     doc, st = load(a.step)
     if a.cmd == "tree":

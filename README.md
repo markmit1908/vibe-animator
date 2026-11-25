@@ -16,9 +16,18 @@ Controls: **Space** play/pause, drag to orbit (turns off the scripted camera),
 GUI panel for speed, scrubbing, cutaway mode, X-ray shells and chapter jumps.
 
 **Assembly tree** (left, ☰ toggles it): browse the generated model and loaded CAD,
-show or hide parts with ●, search by name, and click a row or the part in 3D to select it.
-The selected part's script id is shown with a copy button.
-URL params: `?t=42` opens at 42 s, `?select=R1-1/L5` selects a part.
+search by name, and click a row or the part in 3D to select it (its script id is shown with a copy button).
+Children are built when you expand a node and only on-screen rows are drawn, so trees of any size work.
+
+- ● **show/hide**
+- 🔒 **lock/unlock**: locked parts never move. They skip per-frame matrix updates and can't be used in scripts.
+  CAD defaults to locked and the generated model to unlocked. Unlock what the animation moves.
+- **Locked + hidden CAD parts are suppressed**: their geometry is freed from GPU and browser memory
+  (shared meshes once no visible copy uses them). Showing them again reloads the geometry from the file.
+- Flags are saved to `scenes/state.yaml` through the dev server, and children inherit from parents.
+
+The panel footer shows live GPU geometry, triangle and draw-call counts.
+URL params: `?t=42` opens at 42 s, `?select=R1-1/L5` selects a part, `?debug` dumps CAD ids/stats into a hidden `<pre id=debug>`.
 
 ## Files
 
@@ -74,7 +83,7 @@ uv run tools/step2gltf.py convert data/model.step -o public/cad/model.glb \
     --include 'V-0100*' --exclude '*Screw*' '*Magnet*' --min-size 50 --deflection 2
 ```
 
-After writing, `convert` runs gltf-transform `dedup` + `instance`, so identical parts share one mesh and draw as GPU instances (`--no-optimize` skips this).
+`convert` merges each part's faces into one mesh and rebuilds instancing for copies baked in place. It then runs gltf-transform `dedup`, so identical parts share one mesh. The `instance` pass is not used because it flattens the assembly tree.
 The converter keeps the assembly tree, part names and colours. It converts mm to m and Z-up to Y-up (use `--up y` if the model is already Y-up).
 Reading a large STEP is slow: the 757 MB plant model takes about 3 minutes and 6 GB of RAM.
 
@@ -85,10 +94,11 @@ as separate copies instead of instances, and unnamed, empty or surface-only part
 2. Add it to `core.yaml`:
    ```yaml
    cad_models:
-     - {id: plant, file: cad/plant.glb, position: [0, 0, 0], rotation_deg: [0, 0, 0]}
+     - {id: plant, file: cad/plant.glb, up: x, ground: true, position: [16, 0, 0]}
    ```
+   `up` corrects the model's up axis (`z` default, `x`, `-x`, `y`, `-y`). `ground: true` stands the model on `position`, centred.
 3. Every node appears in the assembly tree and can be used in scripts as `plant/<child>/<grandchild>…`.
-   Duplicate sibling names get a `#2`, `#3`… suffix. GPU-instanced parts (`×N`) move as one object.
+   Duplicate sibling names get `_1`, `_2`… suffixes (from Three.js's glTF loader). Ids are stable across reloads.
 
 ## Visual style
 
@@ -107,5 +117,7 @@ in `palette:` in `core.yaml`.
 - [ ] Outlines for imported CAD
 - [ ] Video export
 - [x] STEP→glTF conversion script (`tools/step2gltf.py`)
-- [x] glTF dedup + GPU instancing pass (gltf-transform, runs automatically in `convert`)
-- [ ] Re-instance copies that the CAD export baked in place (Shapr3D)
+- [x] glTF dedup pass (shared meshes; hierarchy kept)
+- [x] Rebuild instancing for copies baked in place (Shapr3D)
+- [x] Lock / hide / suppress parts from the assembly tree
+- [ ] Batch locked repeated parts into InstancedMesh at runtime (fewer draw calls)
