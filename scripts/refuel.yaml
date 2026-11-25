@@ -51,7 +51,7 @@ timeline:
 
   - label: "Remove top reflector"
     sub: "Column R1-1"
-  - camera: {pos: [7, 15, 8], look: [0, 8, 0]}
+  - camera: {pos: [11, 19, 14], look: [0.5, 8.5, 0.5]}
     dur: 2
   - repeat:
       var: i
@@ -72,7 +72,7 @@ timeline:
           args: {b: "R1-1/L{i}", k: "{9 - i}", rack: spent_rack}
 
   - label: "Load fresh fuel"
-  - camera: {pos: [6, 12, 9], look: [0, 4, 0]}
+  - camera: {pos: [10, 17, 13], look: [0, 8, 1]}
     dur: 2
   - repeat:
       var: k

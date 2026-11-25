@@ -91,7 +91,7 @@ window.addEventListener('resize', () => {
 
 // ---------- loop ----------
 const clock = new THREE.Clock();
-player.seek(0);
+player.seek(Number(new URLSearchParams(location.search).get('t') ?? 0));
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1);
   if (player.playing) player.tick(dt); else player.seek(player.time);
