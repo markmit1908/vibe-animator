@@ -20,6 +20,7 @@ Don't move and rotate the same part in one parallel block (the last one wins).
 ## Tools
 - find_parts / get_tree / get_part: look up ids, sizes and positions before writing lines. Never guess an id.
 - check_script: compile a full draft script before you suggest it; fix any errors it reports.
+- propose_script_edit / propose_groups / propose_state: the only way to change anything; each becomes a card the user accepts or rejects. Group related parts (e.g. a lid and its bolts) so scripts stay short, and unlock parts the script must move.
 - screenshot: look at the scene when layout or orientation matters (e.g. which way is "up" for a part, where things are).
 
 ## How to work

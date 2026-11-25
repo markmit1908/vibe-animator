@@ -16,7 +16,7 @@ import { Triad } from './view/triad';
 import { ScriptPanel } from './view/scriptPanel';
 import { AssistPanel } from './view/assistPanel';
 import { ASSIST_SYSTEM } from './assist/system';
-import { readTools, proposeTools, lineDiff, type ToolDeps } from './assist/tools';
+import { readTools, proposeTools, modelProposeTools, lineDiff, type ToolDeps } from './assist/tools';
 import type { Proposal } from './assist/loop';
 import { parseAnim, toActions, type ParseError } from './script/anim';
 import { ScriptError } from './timeline/compile';
@@ -252,7 +252,56 @@ const toolDeps: ToolDeps = {
     return { data: cv.toDataURL('image/jpeg', 0.85).split(',')[1], width: w, height: h, note };
   },
 };
-const tools = [...readTools(toolDeps), ...proposeTools({ checkScript: toolDeps.checkScript, currentScript: () => scriptPanel?.text ?? '' })];
+/** ids, globs (*) and @groups -> registry ids */
+function resolveIds(specs: string[]) {
+  const ids = new Set<string>(), unknown: string[] = [];
+  for (const sp of specs) {
+    const s0 = String(sp);
+    if (s0.startsWith('@')) { const g = store.groups[s0.slice(1)]; if (g) g.forEach((x) => ids.add(x)); else unknown.push(s0); continue; }
+    if (s0.includes('*')) {
+      const re = new RegExp('^' + s0.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');
+      let hit = false;
+      for (const id of built.registry.keys()) if (re.test(id)) { ids.add(id); hit = true; }
+      if (!hit) unknown.push(s0);
+      continue;
+    }
+    if (built.registry.has(s0)) ids.add(s0); else unknown.push(s0);
+  }
+  return { ids: [...ids], unknown };
+}
+const tools = [
+  ...readTools(toolDeps),
+  ...proposeTools({ checkScript: toolDeps.checkScript, currentScript: () => scriptPanel?.text ?? '' }),
+  ...modelProposeTools({ resolve: resolveIds, groups: () => store.groups }),
+];
+
+/** Apply accepted group changes (ancestor-covered members dropped, as the tree does). */
+function applyGroupChanges(changes: { action: string; name: string; ids: string[] }[]) {
+  for (const c of changes) {
+    if (c.action === 'delete') { delete store.groups[c.name]; continue; }
+    const cur = new Set(c.action === 'create' ? [] : store.groups[c.name] ?? []);
+    if (c.action === 'remove') c.ids.forEach((x) => cur.delete(x)); else c.ids.forEach((x) => cur.add(x));
+    const objs = [...cur].map((x) => built.registry.get(x)).filter(Boolean) as THREE.Object3D[];
+    const covered = (o: THREE.Object3D) => { for (let p = o.parent; p; p = p.parent) if (objs.includes(p)) return true; return false; };
+    store.groups[c.name] = objs.filter((o) => !covered(o)).map(idOfObj);
+  }
+  markDirty(); tree.rebuild(); buildTimeline();
+}
+/** Apply accepted lock/hide changes like the tree's toggles (explicit flag, descendants inherit). */
+async function applyStateChanges(changes: { ids: string[]; lock?: boolean; hide?: boolean }[]) {
+  const touched: THREE.Object3D[] = [];
+  for (const c of changes) for (const id of c.ids) {
+    const o = built.registry.get(id); if (!o) continue;
+    for (const [flag, v] of [['locked', c.lock], ['hidden', c.hide]] as const) {
+      if (v === undefined) continue;
+      o.traverse((dsc) => { const did = idOfObj(dsc); if (did && did !== id) delete state[flag][did]; });
+      state[flag][id] = v;
+    }
+    touched.push(o);
+  }
+  for (const o of touched) await reconcile(o);
+  markDirty(); tree.redraw(); buildTimeline();
+}
 
 // ---------- proposal preview: play a proposed script without touching the editor ----------
 let previewing: Proposal | undefined;
@@ -276,6 +325,22 @@ const assist = new AssistPanel(right, {
   context: async () => [{ type: 'text', text: await assistContext() }],
   tools: () => tools,
   renderProposal: (p, el, decide) => {
+    if (p.kind === 'groups' || p.kind === 'state') {
+      const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+      const lines = p.kind === 'groups'
+        ? (p.changes as any[]).map((c) => `${c.action} <b>@${esc(c.name)}</b>${c.ids.length ? ` – ${c.ids.length} part${c.ids.length > 1 ? 's' : ''}: ${esc(c.ids.slice(0, 4).map((x: string) => x.split('/').pop()).join(', '))}${c.ids.length > 4 ? ' …' : ''}` : ''}`)
+        : (p.changes as any[]).map((c) => `${[c.lock === true ? '🔒 lock' : c.lock === false ? '🔓 unlock' : '', c.hide === true ? 'hide' : c.hide === false ? 'show' : ''].filter(Boolean).join(' + ')} – ${esc((c.targets as string[]).join(', '))} (${c.ids.length} part${c.ids.length === 1 ? '' : 's'})`);
+      const probs = (p.problems as string[] | undefined) ?? [];
+      el.innerHTML = `<ul style="margin:6px 0;padding-left:18px">${lines.map((l) => `<li>${l}</li>`).join('')}</ul>
+        ${probs.length ? `<div class="err">${probs.map(esc).join('<br>')}</div>` : ''}
+        ${p.state ? '' : `<div style="display:flex;gap:6px"><button data-a="accept" ${p.check.ok ? '' : 'disabled'}>Accept</button><button data-a="reject">Reject</button></div>`}`;
+      el.querySelector<HTMLElement>('[data-a=accept]')?.addEventListener('click', async () => {
+        if (p.kind === 'groups') applyGroupChanges(p.changes as any); else await applyStateChanges(p.changes as any);
+        decide('accepted');
+      });
+      el.querySelector<HTMLElement>('[data-a=reject]')?.addEventListener('click', () => decide('rejected'));
+      return;
+    }
     if (p.kind !== 'script edit') return;
     const diff = lineDiff(String(p.base ?? ''), String(p.text));
     // show changes with 2 lines of context
@@ -624,4 +689,25 @@ if (new URLSearchParams(location.search).get('debug') === 'proposal' && scriptPa
   for (let r = await g.next(); !r.done; r = await g.next()) if (r.value.type === 'proposal') msg.proposals.push(r.value.proposal);
   assist.history.push({ role: 'user', content: 'Lift the head 3 m' }, msg);
   assist.refreshCards();
+}
+
+// ?debug=model-proposals: run propose_groups / propose_state and apply them (headless check; nothing is saved)
+if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
+  const run = async (name: string, input: any) => {
+    const g = tools.find((x) => x.name === name)!.run(input); let p: any, r = await g.next();
+    for (; !r.done; r = await g.next()) if (r.value.type === 'proposal') p = r.value.proposal;
+    return { p, result: r.value.content };
+  };
+  const out: any = {};
+  const g1 = await run('propose_groups', { summary: 'Group the head and its bolts', changes: [{ action: 'create', name: 'lid-set', parts: ['head', 'bolts'] }] });
+  out.groupsCheck = g1.p.check; out.groupsResult = g1.result;
+  applyGroupChanges(g1.p.changes); out.groupsAfter = store.groups['lid-set'];
+  const g2 = await run('propose_groups', { summary: 'bad', changes: [{ action: 'add', name: 'nope', parts: ['ghost'] }] });
+  out.badCheck = g2.p.check; out.badProblems = g2.p.problems;
+  const s1 = await run('propose_state', { summary: 'Unlock and show the lid set', changes: [{ targets: ['@lid-set', 'R1-1/L1*'], lock: false, hide: false }] });
+  out.stateCheck = s1.p.check;
+  await applyStateChanges(s1.p.changes);
+  out.after = { headLocked: isLocked(built.registry.get('head')!), headHidden: isHidden(built.registry.get('head')!), L10hidden: isHidden(built.registry.get('R1-1/L10')!), dirty: isDirty() };
+  const pre = document.createElement('pre'); pre.id = 'debug2'; pre.style.display = 'none';
+  pre.textContent = JSON.stringify(out, null, 1); document.body.appendChild(pre);
 }

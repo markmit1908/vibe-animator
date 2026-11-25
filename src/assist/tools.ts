@@ -204,3 +204,83 @@ export function lineDiff(a: string, b: string): [string, string][] {
   while (j < m) out.push(['+', B[j++]]);
   return out;
 }
+
+// ---------------------------------------------------------------- group / state proposals
+export interface ModelProposeDeps {
+  /** Expand ids, globs (*) and @groups to registry ids; unknown entries are returned separately. */
+  resolve: (specs: string[]) => { ids: string[]; unknown: string[] };
+  groups: () => Record<string, string[]>;
+}
+
+export function modelProposeTools(d: ModelProposeDeps): AssistTool[] {
+  return [
+    {
+      name: 'propose_groups',
+      description: 'Propose changes to user groups (named sets of parts, used in scripts as @name). Actions: create (new group with parts), add / remove (parts to/from an existing group), delete (the group only – parts are unaffected). Parts are ids, globs with *, or other @groups. The user accepts or rejects.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          summary: { type: 'string' },
+          changes: { type: 'array', items: { type: 'object', properties: {
+            action: { type: 'string', enum: ['create', 'add', 'remove', 'delete'] },
+            name: { type: 'string', description: 'Group name without @ (letters, digits, - _)' },
+            parts: { type: 'array', items: { type: 'string' } },
+          }, required: ['action', 'name'] } },
+        },
+        required: ['summary', 'changes'],
+      },
+      writing: 'group changes',
+      validate: (i) => check(i, { summary: 'string' }) ?? (Array.isArray(i.changes) && i.changes.length ? undefined : '"changes" must be a non-empty array'),
+      async *run(i) {
+        const groups = d.groups();
+        const problems: string[] = [];
+        const changes = i.changes.map((c: any) => {
+          const name = String(c.name ?? '').replace(/^@/, '');
+          if (!/^[\w.-]+$/.test(name)) problems.push(`bad group name "${c.name}"`);
+          if (!['create', 'add', 'remove', 'delete'].includes(c.action)) problems.push(`unknown action "${c.action}"`);
+          if ((c.action === 'add' || c.action === 'remove' || c.action === 'delete') && !groups[name]) problems.push(`group @${name} does not exist`);
+          if (c.action === 'create' && groups[name]) problems.push(`group @${name} already exists (use add)`);
+          const r = c.action === 'delete' ? { ids: [], unknown: [] } : d.resolve(c.parts ?? []);
+          if (c.action !== 'delete' && !r.ids.length) problems.push(`@${name}: no parts matched`);
+          r.unknown.forEach((u) => problems.push(`unknown part "${u}"`));
+          return { action: c.action, name, ids: r.ids };
+        });
+        const ok = !problems.length;
+        const label = ok ? `✓ ${changes.length} change${changes.length > 1 ? 's' : ''}` : `${problems.length} problem${problems.length > 1 ? 's' : ''}`;
+        yield { type: 'proposal', proposal: { kind: 'groups', summary: i.summary, check: { ok, label }, changes, problems } };
+        return { content: ok ? `Proposed (${label}); waiting for the user.` : `Proposed with problems:\n${problems.join('\n')}\nFix them and propose again.` };
+      },
+    },
+    {
+      name: 'propose_state',
+      description: 'Propose lock/unlock and hide/show changes for parts (ids, globs or @groups). Parts must be unlocked before a script can animate them; hidden + locked CAD parts are unloaded from memory. Changes go into the working snapshot (unsaved until the user saves). The user accepts or rejects.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          summary: { type: 'string' },
+          changes: { type: 'array', items: { type: 'object', properties: {
+            targets: { type: 'array', items: { type: 'string' } },
+            lock: { type: 'boolean', description: 'true = lock, false = unlock' },
+            hide: { type: 'boolean', description: 'true = hide, false = show' },
+          }, required: ['targets'] } },
+        },
+        required: ['summary', 'changes'],
+      },
+      writing: 'state changes',
+      validate: (i) => check(i, { summary: 'string' }) ?? (Array.isArray(i.changes) && i.changes.length ? undefined : '"changes" must be a non-empty array'),
+      async *run(i) {
+        const problems: string[] = [];
+        const changes = i.changes.map((c: any) => {
+          const r = d.resolve(c.targets ?? []);
+          r.unknown.forEach((u) => problems.push(`unknown target "${u}"`));
+          if (c.lock === undefined && c.hide === undefined) problems.push('a change needs lock and/or hide');
+          return { targets: c.targets, ids: r.ids, lock: c.lock, hide: c.hide };
+        });
+        const ok = !problems.length;
+        const n = changes.reduce((a: number, c: any) => a + c.ids.length, 0);
+        yield { type: 'proposal', proposal: { kind: 'state', summary: i.summary, check: { ok, label: ok ? `✓ ${n} part${n === 1 ? '' : 's'}` : `${problems.length} problem(s)` }, changes, problems } };
+        return { content: ok ? `Proposed (${n} parts); waiting for the user.` : `Problems:\n${problems.join('\n')}` };
+      },
+    },
+  ];
+}
