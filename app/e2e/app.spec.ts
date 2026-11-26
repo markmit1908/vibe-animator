@@ -758,3 +758,27 @@ test("stencil section caps: touching parts get flat caps in their own colour (no
     expect(Math.max(...first)).toBeLessThan(Math.max(...expected[i]));
   }
 });
+
+test("assist: propose_script_patch proposes small edits as a full diff card; bad finds are errors", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Patch", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "P"\nwait 2s\nwait 1s' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Patch");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const r = await page.evaluate(async () => {
+    const s = (window as any).__studio, t = s.tools.find((x: any) => x.name === "propose_script_patch");
+    const run = async (input: any) => { const bad = t.validate(input); if (bad) return { bad };
+      const g = t.run(input); let p: any, x = await g.next(); for (; !x.done; x = await g.next()) if (x.value.type === "proposal") p = x.value; return { p, result: x.value }; };
+    const ok = await run({ summary: "Lift the head", edits: [{ find: "wait 2s", replace: "wait 2s\nmove head by [0,3,0] 4s" }] });
+    const missing = await run({ summary: "x", edits: [{ find: "wait 9s", replace: "" }] });
+    const twice = await run({ summary: "x", edits: [{ find: "wait", replace: "pause" }] });
+    const empty = await run({ summary: "x", edits: [] });
+    return { text: ok.p?.text, ok: ok.p?.check.ok, missing: missing.result?.is_error, twice: twice.result?.content, empty: empty.bad };
+  });
+  expect(r.text).toBe('label "P"\nwait 2s\nmove head by [0,3,0] 4s\nwait 1s\n');
+  expect(r.ok).toBe(true);
+  expect(r.missing).toBe(true);
+  expect(r.twice).toContain("more than once");
+  expect(r.empty).toContain("non-empty");
+});

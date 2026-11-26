@@ -105,7 +105,7 @@ function AssistTab({ host, bus }: { host: AssistHost; bus: Bus }) {
   const [chat, setChat] = useState<ChatMessage[]>(() => host.chat());
   const [tick, setTick] = useState(0);
   const [seed, setSeed] = useState<AssistSeed | null>(null);
-  const [effort, setEffort] = useState<Effort>("medium");
+  const [effort, setEffort] = useState<Effort>("low")   // fast by default; medium/high for harder requests;
   const [status, setStatus] = useState<{ ok: boolean; text: string }>({ ok: true, text: "checking…" });
   useEffect(() => {
     bus.refresh = () => { setChat(host.chat()); setTick((t) => t + 1); };

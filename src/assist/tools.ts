@@ -3,7 +3,7 @@
  * and look at the scene (screenshot). They run in the browser against the live scene.
  */
 import * as THREE from 'three';
-import type { AssistTool, ToolResult } from './loop';
+import type { AssistEvent, AssistTool, ToolResult } from './loop';
 
 export interface ToolDeps {
   registry: Map<string, THREE.Object3D>;
@@ -121,7 +121,7 @@ export function readTools(d: ToolDeps): AssistTool[] {
     },
     {
       name: 'check_script',
-      description: 'Parse and compile a complete draft .anim script without applying it. Returns errors (line: message) or the duration and each step\'s start–end time. Use it before proposing script changes.',
+      description: 'Parse and compile a complete draft .anim script without applying it. Returns errors (line: message) or the duration and each step\'s start–end time. Only for looking at timings or trying ideas – the propose tools compile the script themselves.',
       input_schema: { type: 'object', properties: { text: { type: 'string', description: 'The whole script' } }, required: ['text'] },
       writing: 'a draft script',
       validate: (i) => check(i, { text: 'string' }),
@@ -161,7 +161,7 @@ export function proposeTools(d: ProposeDeps): AssistTool[] {
   return [
     {
       name: 'propose_script_edit',
-      description: 'Propose a new version of the whole .anim script. The user sees a diff with a compile check and can preview, accept or reject it. Send the COMPLETE script text (not a fragment), keeping lines you are not changing exactly as they are. Run check_script first and only propose a script that compiles.',
+      description: 'Propose a new version of the whole .anim script. The user sees a diff with a compile check and can preview, accept or reject it. Send the COMPLETE script text, keeping lines you are not changing exactly as they are. For a change to part of the script use propose_script_patch instead (faster). It compiles the script itself and reports errors – no need to call check_script first.',
       input_schema: {
         type: 'object',
         properties: {
@@ -172,25 +172,58 @@ export function proposeTools(d: ProposeDeps): AssistTool[] {
       },
       writing: 'a script edit',
       validate: (i) => check(i, { text: 'string', summary: 'string' }),
+      async *run(i) { return yield* propose(i.text, i.summary); },
+    },
+    {
+      name: 'propose_script_patch',
+      description: 'Propose a change to the .anim script as small edits – preferred for changes to part of the script (much faster than sending the whole script). Each edit replaces one exact piece of the current script text ("find", copied from the script text without the line-number prefixes shown in the context; it must occur exactly once – include a whole line or two for context) with "replace" (empty to delete; to insert, find a line and replace it with that line plus the new ones). The edits apply in order. The user sees the diff with a compile check, and can preview, accept or reject it.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          edits: { type: 'array', items: { type: 'object', properties: { find: { type: 'string' }, replace: { type: 'string' } }, required: ['find', 'replace'] }, description: 'Exact find/replace edits, applied in order' },
+          summary: { type: 'string', description: 'One line: what changes' },
+        },
+        required: ['edits', 'summary'],
+      },
+      writing: 'a script edit',
+      validate: (i) => {
+        const bad = check(i, { summary: 'string' });
+        if (bad) return bad;
+        if (!Array.isArray(i.edits) || !i.edits.length) return '"edits" must be a non-empty array';
+        for (const e of i.edits) if (!e || typeof e.find !== 'string' || typeof e.replace !== 'string' || !e.find) return 'each edit needs a non-empty "find" and a "replace" string';
+      },
       async *run(i) {
+        let text = d.currentScript();
+        for (const [k, e] of (i.edits as { find: string; replace: string }[]).entries()) {
+          const at = text.indexOf(e.find);
+          if (at < 0) return { content: `Edit ${k + 1}: "find" text not found in the script (it must match exactly, including spaces). Nothing proposed.`, is_error: true };
+          if (text.indexOf(e.find, at + 1) >= 0) return { content: `Edit ${k + 1}: "find" text occurs more than once – include more surrounding text. Nothing proposed.`, is_error: true };
+          text = text.slice(0, at) + e.replace + text.slice(at + e.find.length);
+        }
+        return yield* propose(text, i.summary);
+      },
+    },
+  ];
+
+  /** A script proposal from the complete new text: compile check, locked parts to unlock, the card. */
+  async function* propose(text0: string, summary: string): AsyncGenerator<AssistEvent, ToolResult, void> {
         const base = d.currentScript();
-        const text = i.text.endsWith('\n') ? i.text : `${i.text}\n`;
+        const text = text0.endsWith('\n') ? text0 : `${text0}\n`;
         if (text === base) return { content: 'That is identical to the current script – nothing to propose.', is_error: true };
         const r = d.checkScript(text);
         const ok = r.errors.length === 0;
         const unlock = r.locked ?? [];
         const names = unlock.slice(0, 4).map((x) => x.split('/').pop()).join(', ') + (unlock.length > 4 ? ` … ${unlock.length - 4} more` : '');
         const label = ok ? `✓ compiles · ${r.duration?.toFixed(1)} s${unlock.length ? ` · unlocks ${unlock.length} part${unlock.length === 1 ? '' : 's'}` : ''}` : `${r.errors.length} error${r.errors.length > 1 ? 's' : ''}`;
-        yield { type: 'proposal', kind: 'script edit', summary: i.summary, check: { ok, label }, base, text, errors: r.errors, unlock };
+        yield { type: 'proposal', kind: 'script edit', summary, check: { ok, label }, base, text, errors: r.errors, unlock };
         return {
           content: ok
             ? `Proposed (${label}).${unlock.length ? ` Accepting it also unlocks the ${unlock.length} locked part(s) it animates (${names}), so don't propose a separate unlock.` : ''} The user will preview/accept or reject it; don't repeat the script in your reply – summarise the change in a sentence or two.`
-            : `Proposed, but it does not compile:\n${r.errors.map((e) => `line ${e.line}: ${e.message}`).join('\n')}\nFix it with check_script and propose again.`,
+            : `Proposed, but it does not compile:\n${r.errors.map((e) => `line ${e.line}: ${e.message}`).join('\n')}\nNothing was applied – propose again with all your edits, fixed (still against the current script).`,
         };
-      },
-    },
-  ];
+  }
 }
+
 
 /** Line diff (LCS) for proposal cards: [' '|'+'|'-', line]. */
 export function lineDiff(a: string, b: string): [string, string][] {
