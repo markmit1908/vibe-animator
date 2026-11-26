@@ -40,16 +40,17 @@ export class DrawingMode {
     this.mat = new THREE.ShaderMaterial({
       uniforms: {
         tNormal: { value: this.rt.texture }, tDepth: { value: this.rt.depthTexture },
-        texel: { value: new THREE.Vector2() }, near: { value: 0.1 }, far: { value: 100 },
+        texel: { value: new THREE.Vector2() }, near: { value: 0.1 }, far: { value: 100 }, logDepth: { value: 0 },
         thickness: { value: 1 }, nThr: { value: 0.25 }, dThr: { value: 0.004 },
         lineColor: { value: this.lineColor }, paper: { value: this.paperColor }, clearBg: { value: 0 }, overlay: { value: 0 },
       },
       vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
       fragmentShader: `
         uniform sampler2D tNormal; uniform sampler2D tDepth; uniform vec2 texel;
-        uniform float near; uniform float far; uniform float thickness; uniform float nThr; uniform float dThr;
+        uniform float near; uniform float far; uniform float logDepth; uniform float thickness; uniform float nThr; uniform float dThr;
         uniform vec3 lineColor; uniform vec3 paper; uniform float clearBg; uniform float overlay; varying vec2 vUv;
-        float lin(float d){ return (near * far) / (far - d * (far - near)); }
+        // view distance from a depth value: three's logarithmic depth is log2(1 + w) / log2(far + 1)
+        float lin(float d){ return logDepth > 0.5 ? exp2(d * log2(far + 1.0)) - 1.0 : (near * far) / (far - d * (far - near)); }
         void main(){
           float d0 = texture2D(tDepth, vUv).r;
           vec3 n0 = texture2D(tNormal, vUv).xyz * 2.0 - 1.0;
@@ -108,6 +109,7 @@ export class DrawingMode {
     const u = this.mat.uniforms;
     u.texel.value.set(1 / size.x, 1 / size.y);
     u.near.value = camera.near; u.far.value = camera.far;
+    u.logDepth.value = r.capabilities.logarithmicDepthBuffer ? 1 : 0;
     u.thickness.value = this.thickness * r.getPixelRatio();
     u.nThr.value = this.normalThreshold; u.dThr.value = this.depthThreshold;
     u.overlay.value = this.overlay ? 1 : 0;

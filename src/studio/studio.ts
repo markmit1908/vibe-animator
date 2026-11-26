@@ -103,7 +103,9 @@ const animText: string = joinLines(model.script?.text);
 let script: any = toActions(parseAnim(animText).steps);
 let scriptErrors: ParseError[] = parseAnim(animText).errors;
 // ---------- renderer / scene ----------
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); // alpha: PNG export with a transparent background
+// alpha: PNG export with a transparent background; logarithmic depth: precision across the whole plant (less z-fighting
+// where parts touch). The hidden-line pass decodes it (drawing.ts lin()).
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, logarithmicDepthBuffer: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(W(), H());
 renderer.localClippingEnabled = true;
@@ -906,7 +908,7 @@ function viewFrom(dir: [number, number, number]) {
   camera.position.copy(c).addScaledVector(new THREE.Vector3(...dir).normalize(), r / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.05);
   camera.up.set(0, 1, 0);
   controls.target.copy(c);
-  camera.near = Math.max(0.01, r / 500); camera.far = r * 20; camera.updateProjectionMatrix();
+  camera.near = Math.max(0.005, r / 5000); camera.far = r * 20; camera.updateProjectionMatrix(); // log depth: a small near is fine
   controls.update();
 }
 let lastView = 'view';
