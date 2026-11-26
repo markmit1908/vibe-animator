@@ -59,7 +59,7 @@ const edit = (patch: Partial<AnimModel>) => {
   if (THUMB_KEYS.some((k) => k in patch)) scheduleThumb();
 };
 /** Edits that change what the card image shows. */
-const THUMB_KEYS = ['script', 'colors', 'snapshots', 'groups', 'labels', 'removed', 'views', 'scene', 'keyframe', 'shapes'];
+const THUMB_KEYS = ['script', 'colors', 'snapshots', 'groups', 'folders', 'labels', 'removed', 'views', 'scene', 'keyframe', 'shapes'];
 let thumbTimer: number | undefined;
 /** Re-render the card image once things have been quiet for a moment. */
 function scheduleThumb(delay = 2000) {
@@ -70,12 +70,12 @@ function scheduleThumb(delay = 2000) {
 // ---------- undo / redo (⌘/Ctrl+Z, ⇧⌘Z / Ctrl+Y) of the animation's state ----------
 // Every change goes through edit(): before the first change of a burst (400 ms), the state as it was is pushed.
 // Script typing has the editor's own undo; script changes made by code (gizmo write-back, an accepted proposal) undo here.
-type UndoKey = 'colors' | 'snapshots' | 'groups' | 'labels' | 'removed' | 'script' | 'views' | 'keyframe' | 'shapes';
-const UNDO_KEYS: UndoKey[] = ['colors', 'snapshots', 'groups', 'labels', 'removed', 'script', 'views', 'keyframe', 'shapes'];
+type UndoKey = 'colors' | 'snapshots' | 'groups' | 'folders' | 'labels' | 'removed' | 'script' | 'views' | 'keyframe' | 'shapes';
+const UNDO_KEYS: UndoKey[] = ['colors', 'snapshots', 'groups', 'folders', 'labels', 'removed', 'script', 'views', 'keyframe', 'shapes'];
 type DocState = Partial<Record<UndoKey, any>>;
 const clone = <T,>(x: T): T => (x === undefined ? x : JSON.parse(JSON.stringify(x)));
 const docNow: DocState = {
-  colors: model.colors ?? {}, snapshots: model.snapshots ?? { active: 'default', items: {} }, groups: model.groups ?? {},
+  colors: model.colors ?? {}, snapshots: model.snapshots ?? { active: 'default', items: {} }, groups: model.groups ?? {}, folders: model.folders ?? {},
   labels: model.labels ?? {}, removed: model.removed ?? [], views: model.views ?? {}, keyframe: model.keyframe, shapes: model.shapes ?? [], script: model.script ? { language: 'anim', text: joinLines(model.script.text) } : undefined,
 };
 const undoStack: DocState[] = [], redoStack: DocState[] = [];
@@ -138,8 +138,8 @@ const subEl = root.querySelector<HTMLElement>('#sub')!;
 const clockEl = root.querySelector<HTMLElement>('#clock')!;
 
 // ---------- CAD models (glTF in public/) – loaded before compiling so scripts can target them ----------
-setStore({ active: model.snapshots?.active ?? 'default', snapshots: model.snapshots?.items ?? {}, groups: model.groups ?? {} });
-setStoreWriter((st) => edit({ snapshots: { active: st.active, items: st.snapshots }, groups: st.groups }));
+setStore({ active: model.snapshots?.active ?? 'default', snapshots: model.snapshots?.items ?? {}, groups: model.groups ?? {}, folders: model.folders ?? {} });
+setStoreWriter((st) => edit({ snapshots: { active: st.active, items: st.snapshots }, groups: st.groups, folders: st.folders }));
 const cad = new CadManager(built, io.fileUrl);
 try {
   if (cfg.cad_models?.length) {
@@ -552,14 +552,14 @@ const tools = [
 /** Apply accepted group changes (ancestor-covered members dropped, as the tree does). */
 function applyGroupChanges(changes: { action: string; name: string; ids: string[] }[]) {
   for (const c of changes) {
-    if (c.action === 'delete') { delete store.groups[c.name]; continue; }
+    if (c.action === 'delete') { delete store.groups[c.name]; for (const f of Object.values(store.folders)) { const i = f.indexOf(c.name); if (i >= 0) f.splice(i, 1); } continue; }
     const cur = new Set(c.action === 'create' ? [] : store.groups[c.name] ?? []);
     if (c.action === 'remove') c.ids.forEach((x) => cur.delete(x)); else c.ids.forEach((x) => cur.add(x));
     const objs = [...cur].map((x) => built.registry.get(x)).filter(Boolean) as THREE.Object3D[];
     const covered = (o: THREE.Object3D) => { for (let p = o.parent; p; p = p.parent) if (objs.includes(p)) return true; return false; };
     store.groups[c.name] = objs.filter((o) => !covered(o)).map(idOfObj);
   }
-  edit({ groups: JSON.parse(JSON.stringify(store.groups)) });
+  edit({ groups: JSON.parse(JSON.stringify(store.groups)), folders: JSON.parse(JSON.stringify(store.folders)) });
   tree.rebuild(); buildTimeline();
 }
 /** Apply accepted lock/hide changes like the tree's toggles (explicit flag, descendants inherit). */
@@ -725,7 +725,7 @@ const tree = new TreePanel(built, scene3, {
     if (colors[`@${from}`]) { colors[`@${to}`] = colors[`@${from}`]; delete colors[`@${from}`]; edit({ colors: { ...colors } }); }
   },
   onColor: (specs, hex) => setColors(specs, hex),
-  onGroups: () => { buildTimeline(); edit({ groups: JSON.parse(JSON.stringify(store.groups)) }); }, // groups are part of the animation: saved at once
+  onGroups: () => { buildTimeline(); edit({ groups: JSON.parse(JSON.stringify(store.groups)), folders: JSON.parse(JSON.stringify(store.folders)) }); }, // groups are part of the animation: saved at once
   stats: () => {
     const c = cad.stats(), r = renderer.info;
     return `GPU geometries ${r.memory.geometries} · drawn ${(r.render.triangles / 1e6).toFixed(2)}M tris · ${r.render.calls} calls` +
@@ -1070,7 +1070,7 @@ const undoToast = document.createElement('div');
 undoToast.style.cssText = 'position:absolute;left:50%;bottom:16px;transform:translateX(-50%);z-index:8;background:rgba(14,17,21,.95);color:#d7dde4;border:1px solid #2b3540;border-radius:6px;padding:5px 12px;font:12px system-ui;display:none;pointer-events:none';
 host().appendChild(undoToast);
 let toastTimer: number | undefined;
-const WHAT: Record<UndoKey, string> = { colors: 'colour', snapshots: 'move / lock / hide', groups: 'groups', labels: 'rename', removed: 'remove / restore', script: 'script edit', views: 'views', keyframe: 'thumbnail', shapes: 'shapes' };
+const WHAT: Record<UndoKey, string> = { colors: 'colour', snapshots: 'move / lock / hide', groups: 'groups', folders: 'folders', labels: 'rename', removed: 'remove / restore', script: 'script edit', views: 'views', keyframe: 'thumbnail', shapes: 'shapes' };
 async function restoreDoc(d: DocState, verb: string) {
   const what = UNDO_KEYS.filter((k) => d[k] !== undefined && JSON.stringify(d[k]) !== JSON.stringify(docNow[k])).map((k) => WHAT[k]);
   undoing = true;
@@ -1078,6 +1078,7 @@ async function restoreDoc(d: DocState, verb: string) {
     const t = player.time;
     player.seek(0);
     if (d.groups) store.groups = clone(d.groups);
+    if (d.folders) store.folders = clone(d.folders);
     if (d.snapshots) {
       store.active = d.snapshots.active; store.snapshots = clone(d.snapshots.items);
       useSnapshot(store.snapshots[store.active] ?? { locked: {}, hidden: {} });
@@ -1102,7 +1103,7 @@ async function restoreDoc(d: DocState, verb: string) {
     }
     buildTimeline({ atStart: true });
     player.seek(Math.min(t, player.duration));
-    edit({ colors: { ...colors }, snapshots: { active: store.active, items: clone(store.snapshots) }, groups: clone(store.groups), labels: { ...labels }, removed: [...removed], views: clone(views), shapes: clone(shapes) });
+    edit({ colors: { ...colors }, snapshots: { active: store.active, items: clone(store.snapshots) }, groups: clone(store.groups), folders: clone(store.folders), labels: { ...labels }, removed: [...removed], views: clone(views), shapes: clone(shapes) });
     tree.rebuild();
     gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs);
     updateTools(); renderSnapBar(); markDirty(false);

@@ -21,6 +21,7 @@ interface Node {
   kids?: Node[];               // built lazily for real objects
   badge?: string;
   group?: string;              // a user group node ("@name")
+  folder?: string;             // a folder of groups (path "a/b"; "" = the Groups section)
   memberOf?: string;           // direct member row of this group
   removedRow?: boolean;        // a row of the Removed section
   parent?: Node;
@@ -51,6 +52,8 @@ const CSS = `
 #tree .row.hidden .lbl { color: #5b6670; }
 #tree .row.supp .lbl { color: #5b6670; text-decoration: line-through; }
 #tree .badge { color: #7b8794; margin-left: 6px; }
+#tree .row.drop { outline: 1px dashed #f2b705; outline-offset: -2px; }
+#tree .row .fold { color: #c9a45c; margin-right: 3px; }
 #tree .info { border-top: 1px solid #222a33; padding: 8px; font-size: 11px; color: #9aa6b2; min-height: 64px; }
 #tree .info code { display: block; color: #f2b705; word-break: break-all; margin: 3px 0; font: 11px ui-monospace, monospace; }
 #tree .stats { white-space: pre; border-top: 1px solid #222a33; padding: 6px 8px; font: 11px ui-monospace, monospace; color: #7b8794; }
@@ -172,14 +175,32 @@ export class TreePanel {
     const cadRoots = this.scene.root.children.filter((o) => o.userData.cad);
     this.roots = this.scene.blockIds.length || reg.has('vessel') ? [gen] : [];
     this.open.add(gen);
-    const groups = Object.entries(store.groups ?? {});
-    if (groups.length) {
-      const g = mk('Groups', 0);
-      g.virtualKids = groups.sort(([a], [b]) => a.localeCompare(b)).map(([name, ids]) => {
-        const gn = mk(name, 1, { parent: g, group: name, id: `@${name}`, badge: `${ids.length}` });
-        gn.virtualKids = ids.filter((id) => reg.has(id)).map((id) => ({ ...this.objNode(reg.get(id)!, 2, gn), label: this.hooks.labelOf?.(id) ?? id, memberOf: name }));
+    const groupNames = Object.keys(store.groups ?? {});
+    const folderPaths = Object.keys(store.folders ?? {});
+    if (groupNames.length || folderPaths.length) {
+      // groups, in folders (display only; a folder may hold folders): path "a/b" → group names
+      const inFolder = new Map<string, string>();
+      for (const [path, names] of Object.entries(store.folders)) for (const n of names) if (store.groups[n]) inFolder.set(n, path);
+      const paths = new Set<string>();
+      for (const path of folderPaths) { const segs = path.split('/'); for (let i = 1; i <= segs.length; i++) paths.add(segs.slice(0, i).join('/')); }
+      const groupNode = (name: string, depth: number, parent: Node) => {
+        const ids = store.groups[name];
+        const gn = mk(name, depth, { parent, group: name, id: `@${name}`, badge: `${ids.length}` });
+        gn.virtualKids = ids.filter((id) => reg.has(id)).map((id) => ({ ...this.objNode(reg.get(id)!, depth + 1, gn), label: this.hooks.labelOf?.(id) ?? id, memberOf: name }));
         return gn;
-      });
+      };
+      const fill = (parent: Node, path: string, depth: number): Node[] => {
+        const subs = [...paths].filter((x) => parentPath(x) === path).sort(natural).map((x) => {
+          const f = mk(x.slice(x.lastIndexOf('/') + 1), depth, { parent, folder: x });
+          f.virtualKids = fill(f, x, depth + 1);
+          f.badge = `${this.groupsIn(f).length}`;
+          if (this.openFolders.has(x)) this.open.add(f);
+          return f;
+        });
+        return [...subs, ...groupNames.filter((n) => (inFolder.get(n) ?? '') === path).sort(natural).map((n) => groupNode(n, depth, parent))];
+      };
+      const g = mk('Groups', 0, { folder: '' });
+      g.virtualKids = fill(g, '', 1);
       this.roots.unshift(g);
       this.open.add(g);
     }
@@ -244,6 +265,19 @@ export class TreePanel {
     return (n.virtualKids ?? []).flatMap((k) => this.objsOf(k));
   }
 
+  /** Group names in a folder node (and its sub-folders). */
+  private groupsIn(n: Node): string[] {
+    return (n.virtualKids ?? []).flatMap((k) => (k.group ? [k.group] : k.folder !== undefined ? this.groupsIn(k) : []));
+  }
+  /** Script spec of a row: "@group", a folder's groups ("@a, @b"), or the id. */
+  private specOf(n: Node): string | undefined {
+    if (n.group) return `@${n.group}`;
+    if (n.folder !== undefined) { const gs = this.groupsIn(n); return gs.length ? gs.map((g) => `@${g}`).join(', ') : undefined; }
+    return n.id;
+  }
+  /** Folders the user opened (kept across rebuilds). */
+  private openFolders = new Set<string>();
+
   // ---------- flatten + virtual draw ----------
   private refresh() {
     const q = this.search.value.trim().toLowerCase();
@@ -290,7 +324,7 @@ export class TreePanel {
     r.innerHTML = `<span class="caret">${hasKids ? (this.open.has(n) ? '▾' : '▸') : ''}</span>
       <span class="tg ${hidden ? 'off' : ''} ${explicitH ? '' : 'inh'}" title="show / hide">●</span>
       <span class="tg ${locked ? '' : 'off'} ${explicitL ? '' : 'inh'}" title="lock / unlock">${locked ? '🔒' : '🔓'}</span>
-      <span class="lbl" title="${esc(n.id ?? n.label)}">${esc(n.label)}</span>${(() => { const c = this.hooks.colorOf?.(n.group ? `@${n.group}` : n.id ?? ''); return c ? `<span style="width:9px;height:9px;border-radius:2px;margin-left:6px;flex:none;background:${c}"></span>` : ''; })()}${n.badge ? `<span class="badge">${n.badge}</span>` : ''}`;
+      <span class="lbl" title="${esc(n.id ?? n.folder ?? n.label)}">${n.folder ? '<span class="fold">▤</span>' : ''}${esc(n.label)}</span>${(() => { const c = this.hooks.colorOf?.(n.group ? `@${n.group}` : n.id ?? ''); return c ? `<span style="width:9px;height:9px;border-radius:2px;margin-left:6px;flex:none;background:${c}"></span>` : ''; })()}${n.badge ? `<span class="badge">${n.badge}</span>` : ''}`;
     const [caret, eye, lock] = r.children as unknown as HTMLElement[];
     caret.onclick = (e) => { e.stopPropagation(); this.toggleOpen(n); };
     eye.onclick = (e) => { e.stopPropagation(); this.setFlag(n, 'hidden', !hidden); };
@@ -302,10 +336,32 @@ export class TreePanel {
       this.menu(e.clientX, e.clientY);
     };
     r.ondblclick = () => this.toggleOpen(n);
+    // drag groups / folders onto a folder (or the Groups heading = top level)
+    if (n.group || n.folder) {
+      r.draggable = true;
+      r.ondragstart = (e) => {
+        const drag = this.sel.includes(n) ? this.sel.filter((x) => x.group || x.folder) : [n];
+        e.dataTransfer!.setData('text/x-groups', JSON.stringify(drag.map((x) => (x.group ? { group: x.group } : { folder: x.folder }))));
+        e.dataTransfer!.effectAllowed = 'move';
+      };
+    }
+    if (n.folder !== undefined) {
+      r.ondragover = (e) => { if (e.dataTransfer?.types.includes('text/x-groups')) { e.preventDefault(); r.classList.add('drop'); } };
+      r.ondragleave = () => r.classList.remove('drop');
+      r.ondrop = (e) => {
+        e.preventDefault(); r.classList.remove('drop');
+        try { this.moveTo(JSON.parse(e.dataTransfer!.getData('text/x-groups')), n.folder!); } catch { /* not ours */ }
+      };
+    }
     return r;
   }
 
-  private toggleOpen(n: Node) { this.open.has(n) ? this.open.delete(n) : this.open.add(n); this.refresh(); }
+  private toggleOpen(n: Node) {
+    const opening = !this.open.has(n);
+    opening ? this.open.add(n) : this.open.delete(n);
+    if (n.folder) opening ? this.openFolders.add(n.folder) : this.openFolders.delete(n.folder);
+    this.refresh();
+  }
 
   /** Set a flag on a node: explicit flag on its id(s); descendants' explicit flags are cleared so they inherit. */
   private setFlag(n: Node, what: 'hidden' | 'locked', value: boolean) {
@@ -330,8 +386,8 @@ export class TreePanel {
     } else this.sel = n ? [n] : [];
     this.highlight();
     const one = this.sel.length === 1 ? this.sel[0] : undefined;
-    const clicked = n && (n.group ? `@${n.group}` : n.id);
-    this.hooks.onSelect?.(one?.obj, one ? (one.group ? `@${one.group}` : one.id) : undefined, this.sel.flatMap((x) => this.objsOf(x)),
+    const clicked = n && this.specOf(n);
+    this.hooks.onSelect?.(one?.obj, one && one.folder === undefined ? (one.group ? `@${one.group}` : one.id) : undefined, this.sel.flatMap((x) => this.objsOf(x)),
       clicked && this.sel.includes(n!) ? { spec: clicked, add: additive } : undefined);
     if (n && reveal) {
       this.search.value = '';
@@ -372,7 +428,7 @@ export class TreePanel {
     const search = (nodes: Node[], target: THREE.Object3D): Node | undefined => {
       for (const n of nodes) {
         if (n.obj === target) return n;
-        if (!n.obj && !n.group && !n.removedRow) { const r = search(this.kids(n), target); if (r) return r; }
+        if (!n.obj && !n.group && n.folder === undefined && !n.removedRow) { const r = search(this.kids(n), target); if (r) return r; }
       }
     };
     for (const o of chain) { const n = search(level, o); if (!n) continue; found = n; level = this.kids(n); }
@@ -436,6 +492,18 @@ export class TreePanel {
       this.wireColor();
       return;
     }
+    if (n.folder !== undefined) {
+      const gs = this.groupsIn(n);
+      this.info.innerHTML = `<div><span class="fold">▤</span> ${n.folder ? esc(n.folder) : 'Groups'} · ${gs.length} group${gs.length === 1 ? '' : 's'}, ${this.objsOf(n).length} parts</div>
+        <div style="margin-top:3px;color:#7b8794">Drag groups or folders onto a folder to file them. Folders are for the tree only; scripts use the groups.</div>
+        <div style="margin-top:4px"><button data-a="newfolder">New folder…</button>${n.folder ? ` <button data-a="frename">Rename</button> <button data-a="fdelete">Delete folder</button>` : ''}</div>${gs.length ? this.colorRow() : ''}`;
+      const on = (a: string, f: () => void) => this.info.querySelector<HTMLElement>(`[data-a=${a}]`)?.addEventListener('click', f);
+      on('newfolder', () => this.newFolder(n.folder!));
+      on('frename', () => this.renameSelected());
+      on('fdelete', () => this.removeSelected());
+      this.wireColor();
+      return;
+    }
     const box = new THREE.Box3();
     this.objsOf(n).forEach((o) => box.expandByObject(o));
     const size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
@@ -444,7 +512,7 @@ export class TreePanel {
     this.info.innerHTML = `<div>${esc(n.label)}${n.badge ? ` <span class="badge">${n.badge}</span>` : ''} · ${locked ? '🔒 locked' : '🔓 movable'}</div>
       ${n.id ? `<code>${esc(n.id)}</code><button data-a="copy">Copy id</button>` : '<div><i>group (not scriptable by id)</i></div>'}
       ${box.isEmpty() ? '' : `<div style="margin-top:4px">size ${fmt(size)} m · centre ${fmt(c)}</div>`}
-      <div style="margin-top:4px">${n.group ? `<button data-a="ungroup">Delete group</button> <button data-a="rename">Rename</button>`
+      <div style="margin-top:4px">${n.group ? `<button data-a="ungroup">Delete group</button> <button data-a="rename">Rename</button> <button data-a="movefolder">Move to folder…</button>`
         : n.memberOf ? `<button data-a="unmember">Remove from ${esc(n.memberOf)}</button>`
         : n.removedRow ? `<button data-a="restore">Restore</button>`
         : n.id ? `<button data-a="group">Group…</button> <button data-a="partrename" title="F2">Rename</button> <button data-a="partremove" title="Delete">Remove</button>` : ''}</div>`;
@@ -457,7 +525,7 @@ export class TreePanel {
   // ---------- base colours ----------
   /** Specs of the selection: "@group" for group rows, ids for parts (virtual folders: their parts). */
   private selSpecs(): string[] {
-    return [...new Set(this.sel.flatMap((n) => (n.group ? [`@${n.group}`] : n.id ? [n.id] : this.objsOf(n).map((o) => (o.userData.id ?? o.name) as string))))];
+    return [...new Set(this.sel.flatMap((n) => (n.group ? [`@${n.group}`] : n.folder !== undefined ? this.groupsIn(n).map((g) => `@${g}`) : n.id ? [n.id] : this.objsOf(n).map((o) => (o.userData.id ?? o.name) as string))))];
   }
   private colorRow() {
     if (!this.hooks.onColor) return '';
@@ -523,6 +591,7 @@ export class TreePanel {
     on('partrename', () => this.renameSelected());
     on('partremove', () => this.removeSelected());
     on('restore', () => this.restoreSelected());
+    on('movefolder', () => this.moveSelectedPrompt());
     on('unmember', () => {
       const n = this.selected!;
       store.groups[n.memberOf!] = store.groups[n.memberOf!].filter((id) => id !== n.id);
@@ -535,12 +604,25 @@ export class TreePanel {
   lastDeletedGroup?: { name: string; ids: string[] };
 
   private partIds(nodes = this.sel) {
-    return [...new Set(nodes.filter((n) => !n.group && !n.removedRow).flatMap((n) => (n.id && n.obj ? [n.id] : this.objsOf(n).map((o) => (o.userData.id ?? o.name) as string))))];
+    return [...new Set(nodes.filter((n) => !n.group && n.folder === undefined && !n.removedRow).flatMap((n) => (n.id && n.obj ? [n.id] : this.objsOf(n).map((o) => (o.userData.id ?? o.name) as string))))];
   }
 
   renameSelected() {
     const n = this.selected;
     if (!n || this.sel.length !== 1) return;
+    if (n.folder !== undefined) {
+      if (!n.folder) return;
+      const leaf = prompt('Rename folder', n.label)?.trim();
+      if (!leaf || leaf === n.label) return;
+      if (leaf.includes('/')) return alert('Folder names can\'t contain "/".');
+      this.materialize();
+      const parent = parentPath(n.folder), to = parent ? `${parent}/${leaf}` : leaf;
+      if (Object.keys(store.folders).some((p) => p === to || p.startsWith(`${to}/`))) return alert(`A folder "${leaf}" already exists here.`);
+      store.folders = Object.fromEntries(Object.entries(store.folders).map(([p, gs]) => [p === n.folder || p.startsWith(`${n.folder}/`) ? to + p.slice(n.folder!.length) : p, gs]));
+      for (const p of [...this.openFolders]) if (p === n.folder || p.startsWith(`${n.folder}/`)) { this.openFolders.delete(p); this.openFolders.add(to + p.slice(n.folder.length)); }
+      this.sel = []; this.groupsChanged();
+      return;
+    }
     if (n.group) {
       const to = prompt('Rename group (script lines using it are updated)', n.group)?.trim().replace(/\s+/g, '-');
       if (!to || to === n.group) return;
@@ -548,6 +630,7 @@ export class TreePanel {
       if (store.groups[to]) return alert(`A group @${to} already exists.`);
       this.hooks.onGroupRename?.(n.group, to);
       store.groups[to] = store.groups[n.group]; delete store.groups[n.group];
+      for (const gs of Object.values(store.folders)) { const i = gs.indexOf(n.group); if (i >= 0) gs[i] = to; }
       this.sel = []; this.groupsChanged();
       return;
     }
@@ -558,12 +641,28 @@ export class TreePanel {
   }
 
   removeSelected() {
+    const fold = this.sel.length === 1 ? this.sel[0].folder : undefined;
+    if (fold) {
+      const n = this.sel[0];
+      if (!confirm(`Delete folder "${n.label}"? Its groups and folders move up a level; groups and parts are not deleted.`)) return;
+      this.materialize();
+      const up = parentPath(fold);
+      const next: Record<string, string[]> = {};
+      for (const [p, gs] of Object.entries(store.folders)) {
+        const q = p === fold ? up : p.startsWith(`${fold}/`) ? (up ? `${up}/` : '') + p.slice(fold.length + 1) : p;
+        if (q) next[q] = [...(next[q] ?? []), ...gs]; // top level: groups simply leave the folder
+        else if (p !== fold) next[p] = gs;
+      }
+      store.folders = next;
+      this.sel = []; this.groupsChanged();
+      return;
+    }
     const groups = this.sel.filter((n) => n.group).map((n) => n.group!);
     if (groups.length === 1 && this.sel.length === 1) {
       const g = groups[0];
       if (!confirm(`Delete group "@${g}"? Its parts are not affected.`)) return;
       this.lastDeletedGroup = { name: g, ids: store.groups[g] };
-      delete store.groups[g]; this.sel = []; this.groupsChanged();
+      delete store.groups[g]; this.unfile([g]); this.sel = []; this.groupsChanged();
       return;
     }
     const ids = this.partIds();
@@ -584,7 +683,14 @@ export class TreePanel {
     const many = this.sel.length > 1;
     const items: [string, () => void][] = [];
     if (n.removedRow) items.push([`Restore${many ? ` ${this.sel.length} parts` : ''}`, () => this.restoreSelected()]);
-    else if (n.group && !many) items.push(['Rename group…  F2', () => this.renameSelected()], ['Delete group  ⌫', () => this.removeSelected()]);
+    else if (n.folder !== undefined && !many) {
+      items.push(['New folder…', () => this.newFolder(n.folder!)]);
+      if (n.folder) items.push(['Rename folder…  F2', () => this.renameSelected()], ['Move to folder…', () => this.moveSelectedPrompt()], ['Delete folder  ⌫', () => this.removeSelected()]);
+    }
+    else if (this.sel.every((x) => x.group || x.folder)) {
+      if (!many) items.push(['Rename group…  F2', () => this.renameSelected()], ['Delete group  ⌫', () => this.removeSelected()]);
+      items.push([`Move to folder…${many ? ` (${this.sel.length})` : ''}`, () => this.moveSelectedPrompt()]);
+    }
     else {
       if (!many && n.id && n.obj) items.push(['Rename (display name)…  F2', () => this.renameSelected()]);
       if (this.partIds().length) items.push([`Remove from assembly${many ? ` (${this.partIds().length})` : ''}  ⌫`, () => this.removeSelected()]);
@@ -614,6 +720,56 @@ export class TreePanel {
     setTimeout(() => addEventListener('mousedown', close, true));
   }
 
+  // ---------- folders of groups (tree only) ----------
+  /** Take groups out of whatever folder holds them. */
+  /** Make implied parent folders explicit (so they survive their children moving away). */
+  private materialize() {
+    for (const p of Object.keys(store.folders)) { const segs = p.split('/'); for (let i = 1; i < segs.length; i++) store.folders[segs.slice(0, i).join('/')] ??= []; }
+  }
+  private unfile(names: string[]) {
+    for (const gs of Object.values(store.folders)) for (const g of names) { const i = gs.indexOf(g); if (i >= 0) gs.splice(i, 1); }
+  }
+  /** New folder inside `parent` ("" = top level); the selected groups go into it. */
+  newFolder(parent = '') {
+    const leaf = prompt('New folder name')?.trim();
+    if (!leaf) return;
+    if (leaf.includes('/')) return alert('Folder names can\'t contain "/".');
+    const path = parent ? `${parent}/${leaf}` : leaf;
+    if (!Object.keys(store.folders).some((p) => p === path || p.startsWith(`${path}/`))) store.folders[path] = [];
+    this.openFolders.add(path); if (parent) this.openFolders.add(parent);
+    const gs = this.sel.filter((n) => n.group).map((n) => n.group!);
+    if (gs.length) { this.unfile(gs); store.folders[path].push(...gs); }
+    this.sel = []; this.groupsChanged();
+  }
+  /** Move groups and folders into folder `to` ("" = top level). */
+  moveTo(items: { group?: string; folder?: string }[], to: string) {
+    this.materialize();
+    const groups = items.filter((i) => i.group && store.groups[i.group]).map((i) => i.group!);
+    this.unfile(groups);
+    if (to) (store.folders[to] ??= []).push(...groups);
+    for (const { folder } of items) {
+      if (!folder || to === folder || to.startsWith(`${folder}/`)) continue; // not into itself
+      const leaf = folder.slice(folder.lastIndexOf('/') + 1), dest = to ? `${to}/${leaf}` : leaf;
+      if (dest === folder) continue;
+      if (Object.keys(store.folders).some((p) => p === dest || p.startsWith(`${dest}/`))) { alert(`"${leaf}" already exists there.`); continue; }
+      store.folders = Object.fromEntries(Object.entries(store.folders).map(([p, gs]) => [p === folder || p.startsWith(`${folder}/`) ? dest + p.slice(folder.length) : p, gs]));
+      if (this.openFolders.delete(folder)) this.openFolders.add(dest);
+    }
+    if (to) this.openFolders.add(to);
+    this.groupsChanged();
+  }
+  /** Ask for a folder and move the selected groups / folders there. */
+  moveSelectedPrompt() {
+    const items = this.sel.filter((n) => n.group || n.folder).map((n) => (n.group ? { group: n.group } : { folder: n.folder }));
+    if (!items.length) return;
+    const all = [...new Set(Object.keys(store.folders).flatMap((p) => p.split('/').map((_, i, a) => a.slice(0, i + 1).join('/'))))].sort(natural);
+    const to = prompt(`Move to folder (a/b makes nested folders; empty = top level)${all.length ? `\nFolders: ${all.join(', ')}` : ''}`)?.trim();
+    if (to === undefined) return;
+    const path = to.split('/').map((s) => s.trim()).filter(Boolean).join('/');
+    if (path && !(path in store.folders)) store.folders[path] = [];
+    this.moveTo(items, path);
+  }
+
   private groupsChanged() {
     markDirty();
     this.highlight();
@@ -629,5 +785,7 @@ export class TreePanel {
   }
 }
 
+const parentPath = (p: string) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
+const natural = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true });
 const fmt = (v: THREE.Vector3) => `${v.x.toFixed(2)}, ${v.y.toFixed(2)}, ${v.z.toFixed(2)}`;
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));

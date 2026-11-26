@@ -21,11 +21,12 @@ export interface Snapshot extends PartState {
   placements?: Record<string, Placement>;
 }
 /** groups: user-defined assemblies (name -> member ids), shared by all snapshots, scriptable as "@name". */
-export interface SnapshotFile { active: string; snapshots: Record<string, Snapshot>; groups: Record<string, string[]> }
+/** folders: tree folders for groups (path "a/b" -> group names), display only – scripts don't see them. */
+export interface SnapshotFile { active: string; snapshots: Record<string, Snapshot>; groups: Record<string, string[]>; folders?: Record<string, string[]> }
 
 /** The working state (what the viewer currently shows). */
 export const state: PartState & { placements: Record<string, Placement> } = { locked: {}, hidden: {}, placements: {} };
-export const store: SnapshotFile = { active: 'default', snapshots: {}, groups: {} };
+export const store: SnapshotFile & { folders: Record<string, string[]> } = { active: 'default', snapshots: {}, groups: {}, folders: {} };
 
 let dirty = false;
 const listeners = new Set<() => void>();
@@ -43,7 +44,7 @@ export async function writeStore() {
 
 /** Replace the store (SolverKit: from the model file) – the working state follows the active snapshot. */
 export function setStore(s: SnapshotFile) {
-  store.active = s.active; store.snapshots = s.snapshots; store.groups = s.groups ?? {};
+  store.active = s.active; store.snapshots = s.snapshots; store.groups = s.groups ?? {}; store.folders = s.folders ?? {};
   if (!store.snapshots[store.active]) store.snapshots[store.active] = { locked: {}, hidden: {} };
 }
 

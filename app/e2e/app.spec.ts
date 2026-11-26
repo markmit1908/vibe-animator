@@ -486,6 +486,55 @@ test("floating tools: blank / unblank the selection, and group it", async ({ pag
   await expect.poll(async () => (await model(page, a.id)).groups).toEqual({ "lid-set": ["head", "bolts"] });
 });
 
+test("group folders in the tree: create, file by menu and by drag, select and hide a folder, rename, delete", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Group folder test", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "F"\nmove @lid by [0,1,0] 1s' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } },
+    groups: { lid: ["head", "bolts"], ves: ["vessel"], mach: ["machine"] }, folders: { Top: ["lid"] } };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Group folder test");
+  const status = page.locator("#script .status");
+  await expect(status).toHaveText("✓", { timeout: 15_000 });
+  const row = (t: string) => page.locator("#tree .row", { has: page.locator(".lbl", { hasText: new RegExp(`^(▤)?${t}$`) }) }).first();
+  const menu = async (r: ReturnType<typeof row>, item: RegExp) => { await r.click({ button: "right" }); await page.getByRole("menuitem", { name: item }).click(); };
+
+  // a saved folder shows its groups when opened; the lid group isn't at the top level
+  await expect(row("Top")).toBeVisible();
+  await expect(row("lid")).toHaveCount(0);
+  await row("Top").locator(".caret").click();
+  await expect(row("lid")).toBeVisible();
+  // selecting a folder selects its groups' parts
+  await row("Top").click();
+  await expect(page.locator("#tree .info")).toContainText("1 group, 2 parts");
+  // the eye hides every part in the folder
+  await row("Top").locator(".tg").first().click();
+  await expect.poll(async () => (await model(page, a.id)).snapshots.items.default.hidden).toEqual({ head: true, bolts: true });
+  await row("Top").locator(".tg").first().click();
+  await expect.poll(async () => (await model(page, a.id)).snapshots.items.default.hidden).toEqual({ head: false, bolts: false });
+
+  // new folder from the Groups heading, then file a group with "Move to folder…"
+  page.once("dialog", (d) => d.accept("Plant"));
+  await menu(row("Groups"), /^New folder/);
+  await expect(row("Plant")).toBeVisible();
+  page.once("dialog", (d) => d.accept("Plant"));
+  await menu(row("ves"), /^Move to folder/);
+  await expect.poll(async () => (await model(page, a.id)).folders).toEqual({ Top: ["lid"], Plant: ["ves"] });
+  // drag a group onto a folder, and a folder into another (nested)
+  await row("mach").dragTo(row("Plant"));
+  await expect.poll(async () => (await model(page, a.id)).folders).toEqual({ Top: ["lid"], Plant: ["ves", "mach"] });
+  await row("Top").dragTo(row("Plant"));
+  await expect.poll(async () => (await model(page, a.id)).folders).toEqual({ Plant: ["ves", "mach"], "Plant/Top": ["lid"] });
+  // rename and delete: groups move up a level; the script is untouched
+  page.once("dialog", (d) => d.accept("Lid parts"));
+  await menu(row("Top"), /^Rename folder/);
+  await expect.poll(async () => (await model(page, a.id)).folders).toEqual({ Plant: ["ves", "mach"], "Plant/Lid parts": ["lid"] });
+  page.once("dialog", (d) => d.accept());
+  await menu(row("Plant"), /^Delete folder/);
+  await expect.poll(async () => (await model(page, a.id)).folders).toEqual({ "Lid parts": ["lid"] });
+  expect(Object.keys((await model(page, a.id)).groups).sort()).toEqual(["lid", "mach", "ves"]);
+  await expect(status).toHaveText("✓");
+});
+
 test("undo / redo (⌘Z / ⇧⌘Z): colour, blank and group changes; the script editor keeps its own undo", async ({ page }) => {
   await page.goto("/");
   const m = { name: "Undo", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },

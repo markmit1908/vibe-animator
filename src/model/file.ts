@@ -44,6 +44,8 @@ export interface AnimModel {
   script: { language: 'anim'; text: Lines };
   snapshots: { active: string; items: Record<string, Snapshot> };
   groups: Record<string, string[]>;
+  /** Tree folders for groups: folder path ("a/b") → group names (display only). */
+  folders?: Record<string, string[]>;
   /** Base colours: part id or "@group" → "#rrggbb" (a part's own colour wins over its group's). */
   colors?: Record<string, string>;
   /** Parts removed from this animation's assembly (the CAD file is untouched). */
@@ -67,7 +69,7 @@ export const joinLines = (l: Lines | undefined) => (Array.isArray(l) ? l.join('\
 export const splitLines = (s: string): string[] => s.replace(/\n$/, '').split('\n');
 
 /** Key order for writing (stable diffs); unknown keys follow in their own order. */
-const ORDER = ['name', 'uuid', 'solver', 'format', 'description', 'scene', 'script', 'snapshots', 'groups', 'colors', 'removed', 'labels', 'views', 'keyframe', 'shapes', 'view', 'chat'];
+const ORDER = ['name', 'uuid', 'solver', 'format', 'description', 'scene', 'script', 'snapshots', 'groups', 'folders', 'colors', 'removed', 'labels', 'views', 'keyframe', 'shapes', 'view', 'chat'];
 
 export function canonical(m: AnimModel): string {
   const out: Record<string, unknown> = {};

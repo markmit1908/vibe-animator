@@ -44,11 +44,11 @@ class Store(ModelStore):
     SOLVER = "refuel-anim"
     FORMAT = 1
     # the model's fields, in file order (src/model/file.ts in the repo root)
-    MODEL_FIELDS = ("name", "uuid", "solver", "format", "scene", "script", "snapshots", "groups", "colors", "removed", "labels", "views", "keyframe", "shapes", "view", "chat", "thumbnail")
+    MODEL_FIELDS = ("name", "uuid", "solver", "format", "scene", "script", "snapshots", "groups", "folders", "colors", "removed", "labels", "views", "keyframe", "shapes", "view", "chat", "thumbnail")
     FILE_FIELDS = ("description",)
     LINES = ("description",)
     # view state and the chat don't change what the animation is
-    HASH_EXCLUDED = ("view", "chat", "thumbnail", "keyframe")
+    HASH_EXCLUDED = ("view", "chat", "thumbnail", "keyframe", "folders")
 
 
 _stores: dict[Path, Store] = {}

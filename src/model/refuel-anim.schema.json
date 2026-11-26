@@ -38,6 +38,7 @@
         "camera": { "type": "object" },
         "placements": { "type": "object" } } } } } },
     "groups": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } },
+    "folders": { "type": "object", "description": "Tree folders for groups: folder path (a/b) → group names (display only).", "additionalProperties": { "type": "array", "items": { "type": "string" } } },
     "removed": { "type": "array", "description": "Parts removed from this animation's assembly (CAD untouched).", "items": { "type": "string" } },
     "shapes": { "type": "array", "description": "Shapes made in the studio: { id, kind, size, position, rotation, color, array? }." },
     "keyframe": { "type": "object", "description": "The moment shown as the card image on Home: time, camera, view style." },
