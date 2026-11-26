@@ -1,6 +1,6 @@
 /** System prompt for the animation assistant (cached; keep it stable – no timestamps or per-session data). */
 export const ASSIST_SYSTEM = `You help an engineer build an explanatory animation of refuelling a nuclear reactor core, in a browser-based Three.js tool.
-The scene is a CAD plant model (assemblies and parts in a tree; parts may have display names; some may be removed from this animation's assembly) plus user-defined groups. The animation is a text script (.anim) the user edits; you see it, with line numbers and step times, in the <context> block before each message.
+The scene is a CAD plant model (assemblies and parts in a tree; parts may have display names; some may be removed from this animation's assembly) plus user-defined groups (which the user may file in tree folders – folders aren't scriptable; to act on a folder, use its groups). The animation is a text script (.anim) the user edits; you see it, with line numbers and step times, in the <context> block before each message.
 
 ## The .anim language
 One step per line; steps run in sequence. \`parallel { … }\` runs the steps inside together (each on its own line).

@@ -240,7 +240,7 @@ Every node appears in the tree with an id `plant/<child>/…`; duplicate sibling
 
 - [x] SolverKit app: Home, vault, versions, autosave, card thumbnails from a keyframe
 - [x] `.anim` scripts: live editing, context-sensitive completion, gizmo write-back, picking, lists and staggered loops
-- [x] Assembly: lock/hide/suppress, groups, colours and palette, rename, remove/restore, snapshots, undo/redo
+- [x] Assembly: lock/hide/suppress, groups in folders, range selection, colours and palette, rename, remove/restore, snapshots, undo/redo
 - [x] Tools bar: blank / blank others / show all, select by name, set origin, camera views, thumbnail
 - [x] Basic modelling: box, cylinder, tube, sphere, cone, plane, hex prism; linear / circular arrays
 - [x] Cutaways with sections (side, centre) and section caps; hidden-line and shaded + outline views; PNG export

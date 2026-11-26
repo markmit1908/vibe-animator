@@ -24,6 +24,7 @@
 - [ ] Camera views: also store the field of view and offer an ease per `camera` step
 - [ ] Undo: cover snapshot Save-as / delete and the palette key
 - [ ] Tools bar: more utility tools (isolate, select by group, measure)
+- [ ] Group folders: drag a part onto a group row to add it; folder colours/locks as their own setting (now they apply to the groups' parts)
 - [ ] Untested: the Undo delete quick-fix click; a script `list` name clashing with a tree group
 
 ## AI assist
@@ -38,6 +39,3 @@
 - [ ] AssistPanel: styles for `.assist-reply` Markdown (now in app/src/index.css)
 - [ ] AssistPanel: slots for a header (effort, status) and code-block actions ("Insert into script")
 - [ ] Card thumbnails for non-React views: a documented `putThumb` path (we call the store directly)
-
-## Housekeeping
-- [ ] Delete the merged `solverkit-migration` branch
