@@ -183,6 +183,7 @@ Every node appears in the tree with an id `plant/<child>/…`; duplicate sibling
 - [x] AI assist with proposals; hidden-line drawing; PNG export
 - [x] STEP → glTF with multi-body splitting and re-instancing
 - [ ] Real dimensions for the placeholder reactor
-- [ ] Section caps on clipped shells, 3D callout labels, outlines for imported CAD
+- [x] Section caps on cut parts
+- [ ] 3D callout labels, outlines for imported CAD
 - [ ] Video export
 - [ ] Batch locked repeated parts into InstancedMesh at runtime (fewer draw calls)
