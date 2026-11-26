@@ -724,3 +724,22 @@ test("section caps: a cut solid shows a darker cap face (off with nocap / the Ca
   const noCap = await centre();
   expect(noCap).not.toBe(dark);                               // no cap: we see into the box (its far inside wall)
 });
+
+test("CAD back faces are culled (no z-fighting) unless a cut is active (caps)", async ({ page }) => {
+  await page.goto("/");
+  const { readFileSync } = await import("node:fs");
+  await api(page).put("/api/files/CAD/small.glb?overwrite=true", { data: readFileSync(new URL("./fixtures/small.glb", import.meta.url)) });
+  const m = { name: "Cull", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [{ id: "plant", file: "CAD/small.glb" }] },
+    script: { language: "anim", text: 'label "C"\nwait 1s\ncutaway half' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Cull");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const sides = (t: number) => page.evaluate(async (t) => {
+    const s = (window as any).__studio; s.player.playing = false; s.player.seek(t);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const out = new Set<number>(); s.built.root.traverse((x: any) => { if (x.isMesh && x.material.userData.cullable) out.add(x.material.side); });
+    return [...out];
+  }, t);
+  expect(await sides(0.5)).toEqual([0]);   // FrontSide: culled
+  expect(await sides(1.5)).toEqual([2]);   // DoubleSide while cut: the caps
+});

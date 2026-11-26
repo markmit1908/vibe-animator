@@ -111,6 +111,7 @@ export class CadManager {
           color: src.color ?? new THREE.Color(0xdddddd), gradientMap: ramp, side: THREE.DoubleSide,
           clippingPlanes: this.scene.clipPlanes, clipIntersection: true, // the cutaway cuts CAD too
         }));
+        mat.userData.cullable = true;   // closed solids: back faces are culled unless a cut shows them (caps)
         this.matCache.set(src, mat);
       }
       mesh.material = mat;

@@ -7,7 +7,7 @@ import { buildScene } from '../scene/build';
 import { compile } from '../timeline/compile';
 import { Player } from '../timeline/player';
 import { fitVerticalCylinder, planeHeight } from '../scene/origin';
-import { capUniforms, withCaps } from '../view/caps';
+import { capUniforms, updateCulling, withCaps } from '../view/caps';
 import { applyCutaway, cutLine, DEFAULT_SIDES, type Cut, type CutMode, type CutSide } from '../view/cutaway';
 import { CadManager } from '../scene/cad';
 import { setStore, setStoreWriter, store, useSnapshot, captureSnapshot, writeStore, markDirty, isDirty, onDirtyChange,
@@ -1306,6 +1306,7 @@ renderer.setAnimationLoop(() => {
 
   const cutNow = ui.cutaway === 'script' ? (player.current('cutaway')?.value ?? 'none') as Cut | CutMode : uiCut();
   applyCutaway(built, cutNow);
+  updateCulling(built.root, capUniforms.cutActive.value > 0);
   capUniforms.capOn.value = ui.caps && !(typeof cutNow === 'object' && cutNow.nocap) ? 1 : 0;
 
   if (ui.followCamera) { camera.position.copy(player.tl.camera.pos); controls.target.copy(player.tl.camera.look); }

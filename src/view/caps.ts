@@ -32,6 +32,18 @@ export function withCaps<M extends THREE.Material>(mat: M): M {
   return mat;
 }
 
+/** Back-face culling for closed solids (materials marked userData.cullable, and their clones): culled unless a cut is
+ *  active, when the back faces are the section caps. Culling removes z-fighting between a part's inside faces and its
+ *  neighbours' outside faces. Run each frame (cheap: only changes a material when it differs). */
+export function updateCulling(root: THREE.Object3D, cutActive: boolean) {
+  const side = cutActive ? THREE.DoubleSide : THREE.FrontSide;
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    for (const mat of [m.material, m.userData.origMat] as THREE.Material[]) if (mat?.userData?.cullable && mat.side !== side) { mat.side = side; mat.needsUpdate = true; }
+  });
+}
+
 /** The edge pass's normal material: back faces get one fixed normal, so the cap's boundary is a crease line. */
 export function withCapNormal(mat: THREE.MeshNormalMaterial) {
   mat.onBeforeCompile = (sh) => capped(sh, 'gl_FragColor = vec4(0.5, 0.5, 0.0, 1.0);');
