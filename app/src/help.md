@@ -18,7 +18,7 @@ New, Duplicate, Rename, Delete (to the trash), folders and versions for your ani
 - **Script / Assist** (tabs under the controls).
 
 **View toolbar:**
-- **Shaded / Shaded + outline / Hidden line:** ⚙ sets the line style (used by both line views).
+- **Shaded / Shaded + outline / Hidden line:** ⚙ sets the line style (both line views): **Silhouette weight** (outlines) and **Edge weight** (creases, and where parts touch) separately, crease angle, outline sensitivity, colours.
 - **Iso / Front / Top / Side / Fit**
 - **⤓ PNG:** 2× resolution, transparent background
 

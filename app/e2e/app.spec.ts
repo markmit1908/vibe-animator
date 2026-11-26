@@ -782,3 +782,29 @@ test("assist: propose_script_patch proposes small edits as a full diff card; bad
   expect(r.twice).toContain("more than once");
   expect(r.empty).toContain("non-empty");
 });
+
+test("hidden line: a line where two parts touch flush (part ids), smooth lines, separate silhouette weight", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await page.goto("/");
+  const m = { name: "Joints", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] },
+    script: { language: "anim", text: 'camera [8,1.5,0] look [0,1.5,0]\nlabel "J"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Joints");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  await page.locator("#viewbar button", { hasText: "Hidden line" }).click();
+  // looking straight at the stack's side (x = 1 face): the joints at y = 1 and y = 2 are flush – only the part ids differ
+  const column = await page.evaluate(async () => {
+    const s = (window as any).__studio; s.addTestStack();
+    await new Promise((r) => setTimeout(r, 300));
+    s.drawFrame();
+    const cv = s.renderer.domElement as HTMLCanvasElement;
+    const c2 = document.createElement("canvas"); c2.width = cv.width; c2.height = cv.height; const g = c2.getContext("2d")!; g.drawImage(cv, 0, 0);
+    const at = (y: number) => { const v = new s.THREE.Vector3(1, y, 0.3).project(s.camera); return [Math.round((v.x + 1) / 2 * cv.width), Math.round((1 - v.y) / 2 * cv.height)]; };
+    const lum = (p: number[]) => { const d = g.getImageData(p[0], p[1], 1, 1).data; return (d[0] + d[1] + d[2]) / 3; };
+    return { joint1: lum(at(1)), joint2: lum(at(2)), mid: lum(at(0.5)), mid2: lum(at(1.5)) };
+  });
+  expect(column.joint1).toBeLessThan(140);     // a line at each joint
+  expect(column.joint2).toBeLessThan(140);
+  expect(column.mid).toBeGreaterThan(220);     // paper inside the faces
+  expect(column.mid2).toBeGreaterThan(220);
+});

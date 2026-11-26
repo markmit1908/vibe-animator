@@ -932,7 +932,7 @@ function exportPng() {
 }
 {
   const css = document.createElement('style');
-  css.textContent = `#viewbar { position: absolute; top: 8px; right: 468px; z-index: 6; display: flex; gap: 4px; padding: 4px; background: rgba(14,17,21,.9); border: 1px solid #2b3540; border-radius: 6px; font: 12px system-ui; }
+  css.textContent = `#viewbar { position: absolute; top: 8px; right: 468px; z-index: 7; display: flex; gap: 4px; padding: 4px; background: rgba(14,17,21,.9); border: 1px solid #2b3540; border-radius: 6px; font: 12px system-ui; }
     #viewbar { flex-wrap: wrap; justify-content: flex-end; max-width: calc(100% - 396px - 476px); }
     .studio-root.tree-collapsed #viewbar { max-width: calc(100% - 56px - 476px); }
     .studio-root.right-collapsed #viewbar { right: 48px; max-width: calc(100% - 396px - 56px); }
@@ -957,7 +957,8 @@ function exportPng() {
     <button data-a="png" title="Save the view as a PNG at 2× resolution, with a transparent background">⤓ PNG</button>
     <button data-a="cfg" title="Hidden-line settings">⚙</button>
     <div class="pop" hidden>
-      <label>Line weight <input type="range" data-k="thickness" min="0.5" max="4" step="0.25"><span></span></label>
+      <label>Silhouette weight <input type="range" data-k="sil" min="0.5" max="6" step="0.25"><span></span></label>
+      <label>Edge weight <input type="range" data-k="thickness" min="0.5" max="6" step="0.25"><span></span></label>
       <label>Crease angle <input type="range" data-k="angle" min="5" max="90" step="1"><span></span></label>
       <label>Outline sensitivity <input type="range" data-k="depth" min="1" max="20" step="1"><span></span></label>
       <label>Line colour <input type="color" data-k="line"></label>
@@ -981,19 +982,19 @@ function exportPng() {
   bar.querySelector<HTMLElement>('[data-a=png]')!.onclick = exportPng;
 
   // hidden-line settings (remembered in this browser)
-  const DEF = { thickness: 1, angle: 41, depth: 4, line: '#111111', paper: '#ffffff' };
+  const DEF = { sil: 2.5, thickness: 1.25, angle: 41, depth: 4, line: '#111111', paper: '#ffffff' };
   let cfg = { ...DEF };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem('hiddenLine') ?? '{}')); } catch { /* storage unavailable */ }
   const pop = bar.querySelector<HTMLElement>('.pop')!;
   const apply = () => {
-    drawing.thickness = cfg.thickness;
+    drawing.thickness = cfg.thickness; drawing.silThickness = cfg.sil;
     drawing.normalThreshold = 1 - Math.cos(THREE.MathUtils.degToRad(cfg.angle));
     drawing.depthThreshold = cfg.depth / 1000;
     drawing.lineColor.set(cfg.line); drawing.paperColor.set(cfg.paper);
     pop.querySelectorAll<HTMLInputElement>('input').forEach((i) => {
       const v = (cfg as any)[i.dataset.k!]; i.value = String(v);
       const out = i.nextElementSibling as HTMLElement | null;
-      if (out?.tagName === 'SPAN') out.textContent = i.dataset.k === 'angle' ? `${v}°` : i.dataset.k === 'thickness' ? `${v}px` : String(v);
+      if (out?.tagName === 'SPAN') out.textContent = i.dataset.k === 'angle' ? `${v}°` : i.dataset.k === 'thickness' || i.dataset.k === 'sil' ? `${v}px` : String(v);
     });
     try { localStorage.setItem('hiddenLine', JSON.stringify(cfg)); } catch { /* ignore */ }
   };
@@ -1398,13 +1399,13 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 }
 
 // read-only handle for tests and debugging
-(window as any).__studio = { built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, capUniforms, withCaps, caps, renderer, scene3, drawFrame, THREE,
+(window as any).__studio = { built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
   /** tests: three touching boxes stacked (the joints are where back-face caps failed), each with a hole */
   addTestStack: () => {
     const cols = [0x6fa86f, 0x6f8fd0, 0xd08f6f];
     cols.forEach((col, i) => {
       const m = withCaps(new THREE.MeshToonMaterial({ color: col, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));
-      const b = new THREE.Mesh(new THREE.BoxGeometry(2, 1, 2), m); b.position.y = 0.5 + i; built.root.add(b);
+      const b = new THREE.Mesh(new THREE.BoxGeometry(2, 1, 2), m); b.position.y = 0.5 + i; b.userData.id = `test-block-${i}`; built.root.add(b);
     });
   },
   /** tests: a closed 2 m box at the origin with a capped, clipped part material */

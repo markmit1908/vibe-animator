@@ -30,7 +30,7 @@ use the **Import old project (.zip)…** link on Home; the model goes into `CAD/
 | **Script / Assist** (right, tabs) | The `.anim` editor, and the AI assistant. |
 
 **View toolbar:**
-- **Shaded / Shaded + outline / Hidden line:** hidden line draws visible edges only, black on white; shaded + outline draws those edges over the cel-shaded view. ⚙ sets line weight, crease angle, sensitivity and colours.
+- **Shaded / Shaded + outline / Hidden line:** hidden line draws visible edges only, black on white; shaded + outline draws those edges over the cel-shaded view. Lines are anti-aliased: silhouettes/outlines (against the background or a part behind) and edges (creases, and the boundary wherever two parts touch) have their own weights in ⚙, with crease angle, outline sensitivity and colours. ⚙ sets line weight, crease angle, sensitivity and colours.
 - **Cutaway** (Controls → View): **Caps** on/off and **Cap shade**; `script` follows the script; or choose half / quarter, which side it removes, and **Centre cut on selection**. **⤓ Insert this cut into the script** writes it as a `cutaway` line.
 - **Iso / Front / Top / Side / Fit:** frame everything visible.
 - **⤓ PNG:** saves the view at 2× resolution with a transparent background (no grid). In hidden-line mode the parts keep their white fill.

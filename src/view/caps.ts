@@ -18,32 +18,77 @@ export const capUniforms = {
   cutActive: { value: 0 },
   /** cap colour = part colour × this */
   capShade: { value: 0.55 },
-  /** 1 during the cap-colour pass: part materials draw only back faces, flat */
-  capPass: { value: 0 },
-  /** the part being drawn in the cap-colour pass (hashed mesh id, 0..1) – kept in alpha: each part's own section */
-  capId: { value: 0 },
 };
 
-/** Part materials: the cap-colour pass hook. Idempotent; call again on clones (clone() doesn't copy onBeforeCompile). */
+/** Part materials: mark them as parts (capped, outlined per part). Idempotent; call again on clones. */
 export function withCaps<M extends THREE.Material>(mat: M): M {
   if ((mat as any).color === undefined || mat.side === THREE.BackSide) return mat; // outline hulls etc.
   mat.userData.capped = true;
-  mat.onBeforeCompile = (sh) => {
-    sh.uniforms.capPass = capUniforms.capPass; sh.uniforms.capShade = capUniforms.capShade; sh.uniforms.capId = capUniforms.capId;
-    sh.fragmentShader = 'uniform float capPass; uniform float capShade; uniform float capId;\n' + sh.fragmentShader.replace(/\}\s*$/,
-      '  if (capPass > 0.5) { if (gl_FrontFacing) discard; gl_FragColor = vec4(linearToOutputTexel(vec4(diffuseColor.rgb * capShade, 1.0)).rgb, capId); }\n}');
-  };
-  mat.customProgramCacheKey = () => 'caps2';
   mat.forceSinglePass = true; // transparent double-sided materials would otherwise render in two flipped passes
   return mat;
 }
 
-const noop = () => {};
-/** Before a part is drawn in the cap-colour pass: its id (golden-ratio hash of the mesh id, so neighbours differ). */
-function setCapId(this: THREE.Mesh, _r: THREE.WebGLRenderer, _s: THREE.Scene, _c: THREE.Camera, _g: THREE.BufferGeometry, mat: THREE.Material) {
-  capUniforms.capId.value = (this.id * 0.6180339887) % 1;
-  (mat as any).uniformsNeedUpdate = true;
+const VERT = `#include <common>
+#include <logdepthbuf_pars_vertex>
+#include <clipping_planes_pars_vertex>
+varying vec3 vN;
+void main() {
+  vN = normalize(normalMatrix * normal);
+  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+  gl_Position = projectionMatrix * mvPosition;
+  #include <logdepthbuf_vertex>
+  #include <clipping_planes_vertex>
+}`;
+const FRAG = (body: string) => `#include <common>
+#include <logdepthbuf_pars_fragment>
+#include <clipping_planes_pars_fragment>
+uniform float partId; uniform vec3 partColor; uniform float capShade;
+varying vec3 vN;
+void main() {
+  #include <clipping_planes_fragment>
+  ${body}
+  #include <logdepthbuf_fragment>
+}`;
+/**
+ * Override materials whose per-part values (id, colour) are set as each mesh is drawn (onPartRender) – a ShaderMaterial,
+ * because three re-uploads a built-in material's uniforms only when the material changes between draws.
+ *  - "normals": the line views' normal pass – rgb = view-space normal, alpha = part id
+ *  - "capColour": the caps' colour pass – back faces only, rgb = part colour × shade (linear), alpha = part id
+ */
+export function partPassMaterial(kind: 'normals' | 'capColour', planes: THREE.Plane[]) {
+  const m = new THREE.ShaderMaterial({
+    uniforms: { partId: { value: 0 }, partColor: { value: new THREE.Color() }, capShade: capUniforms.capShade },
+    vertexShader: VERT,
+    fragmentShader: FRAG(kind === 'normals'
+      ? 'vec3 n = normalize(vN) * (gl_FrontFacing ? 1.0 : -1.0); gl_FragColor = vec4(n * 0.5 + 0.5, partId);'
+      : 'gl_FragColor = vec4(partColor * capShade, partId);'),
+    side: kind === 'normals' ? THREE.DoubleSide : THREE.BackSide,
+    clipping: true, clippingPlanes: planes, clipIntersection: true,
+  });
+  m.userData.partPass = true;
+  return m;
 }
+
+/** The id of the part a mesh belongs to (its nearest registered ancestor), hashed to 0..1 (golden ratio: neighbours differ). */
+function partHash(m: THREE.Mesh): number {
+  let h = m.userData.partHash as number | undefined;
+  if (h === undefined) {
+    let p: THREE.Object3D | null = m;
+    while (p && p.userData.id === undefined) p = p.parent;
+    h = m.userData.partHash = (((p ?? m).id * 0.6180339887) % 1) * 0.98 + 0.01;
+  }
+  return h;
+}
+/** Before a mesh is drawn with a part-pass material: its part id and colour. */
+function onPartRender(this: THREE.Mesh, _r: THREE.WebGLRenderer, _s: THREE.Scene, _c: THREE.Camera, _g: THREE.BufferGeometry, mat: THREE.Material) {
+  if (!mat.userData.partPass) return;
+  const u = (mat as THREE.ShaderMaterial).uniforms;
+  u.partId.value = partHash(this);
+  const own = this.material as THREE.MeshToonMaterial;
+  if (own?.color) u.partColor.value.copy(own.color);
+  (mat as THREE.ShaderMaterial).uniformsNeedUpdate = true;
+}
+export function partHook(m: THREE.Mesh) { if (m.onBeforeRender !== onPartRender) m.onBeforeRender = onPartRender; }
 
 export class SectionCaps {
   private colourRT = new THREE.WebGLRenderTarget(1, 1);
@@ -58,10 +103,12 @@ export class SectionCaps {
   private trim = new THREE.Plane();
   private res = new THREE.Vector2();
   private idsMode = { value: 0 };
+  private colourMat: THREE.ShaderMaterial;
   private box?: THREE.Box3;
   private boxAge = 0;
 
   constructor(private planes: THREE.Plane[]) {
+    this.colourMat = partPassMaterial('capColour', planes);
     const stencilTest: THREE.MeshBasicMaterialParameters = {
       stencilWrite: true, stencilFunc: THREE.EqualStencilFunc, stencilRef: 1, stencilFuncMask: 1, stencilWriteMask: 0,
       stencilFail: THREE.KeepStencilOp, stencilZFail: THREE.KeepStencilOp, stencilZPass: THREE.KeepStencilOp,
@@ -73,25 +120,12 @@ export class SectionCaps {
       // shaded: the part's colour; line views: its id as a direction (so neighbouring parts' sections are outlined)
       sh.fragmentShader = 'uniform sampler2D capTex; uniform vec2 capRes; uniform float capIds;\n' + sh.fragmentShader.replace('#include <map_fragment>',
         `vec4 cap = texture2D(capTex, gl_FragCoord.xy / capRes);
-         diffuseColor.rgb = capIds > 0.5 ? vec3(0.5 + 0.5 * cos(cap.a * 6.2832), 0.5 + 0.5 * sin(cap.a * 6.2832), 0.95) : cap.rgb;`);
+         diffuseColor.rgb = capIds > 0.5 ? vec3(0.5 + 0.5 * cos(cap.a * 6.2832), 0.5 + 0.5 * sin(cap.a * 6.2832), 0.95) : cap.rgb;`).replace(/\}\s*$/, '  if (capIds > 0.5) gl_FragColor.a = cap.a;   // the part id, as in the normal pass\n}');
     };
     this.capMat.toneMapped = false;
     this.quad = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.capMat);
     this.quad.frustumCulled = false;
     this.quadScene.add(this.quad);
-  }
-
-  /** During the cap-colour pass each part sets its id before it's drawn. */
-  private tagParts(scene: THREE.Scene, on: boolean) {
-    scene.traverseVisible((o) => {
-      const m = o as THREE.Mesh;
-      if (!m.isMesh || (m.material as THREE.Material)?.userData?.capped !== true) return;
-      m.onBeforeRender = on ? setCapId : noop;
-      // no blending in the cap pass (a fading part's alpha would mix the colour; alpha holds the id there)
-      const mat = m.material as THREE.Material;
-      if (on) { mat.userData.capWasTransparent = mat.transparent; mat.transparent = false; }
-      else if (mat.userData.capWasTransparent !== undefined) { mat.transparent = mat.userData.capWasTransparent; delete mat.userData.capWasTransparent; }
-    });
   }
 
   /** Is anything to cap now? */
@@ -126,13 +160,12 @@ export class SectionCaps {
       // cap colours: nearest back face per pixel, part colour × shade
       {   // (line views too: different part colours make the parts' section outlines)
         if (this.colourRT.width !== this.res.x || this.colourRT.height !== this.res.y) this.colourRT.setSize(this.res.x, this.res.y);
-        capUniforms.capPass.value = 1;
-        this.tagParts(scene, true);
+        scene.traverseVisible((o) => { if ((o as THREE.Mesh).isMesh) partHook(o as THREE.Mesh); });
         r.setRenderTarget(this.colourRT);
         r.autoClear = true; r.setClearColor(0x000000, 0);
+        scene.overrideMaterial = this.colourMat;
         r.render(scene, camera);
-        capUniforms.capPass.value = 0;
-        this.tagParts(scene, false);
+        scene.overrideMaterial = ov;
       }
       r.setRenderTarget(target);
       r.autoClear = false;
@@ -174,7 +207,6 @@ export class SectionCaps {
       }
     } finally {
       scene.background = bg; scene.overrideMaterial = ov; r.autoClear = ac;
-      capUniforms.capPass.value = 0;
       r.setRenderTarget(prevTarget);
       restore();
     }
