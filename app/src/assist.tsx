@@ -1,5 +1,5 @@
 // The Studio's Assist tab: SolverKit's AssistPanel (composer, streaming, Stop/Edit/Regenerate/Copy/Clear, proposal
-// queue) over the studio's assist loop (AssistHost). Our proposal kinds (script edit, groups, part state) are
+// queue) over the studio's assist loop (AssistHost). Our proposal kinds (script edit, groups, part state, shapes) are
 // registered here as SolverKit proposal kinds. The studio is plain DOM, so this mounts its own React root.
 import { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -9,6 +9,7 @@ import { Button } from "@solverkit/ui";
 import { Pause, Play } from "lucide-react";
 import type { AssistHost, AssistMount, Effort } from "../../src/assist/host";
 import type { ChatMessage, Proposal } from "../../src/assist/loop";
+import { sizeKeys, type ShapeChange } from "../../src/assist/tools";
 
 interface View { host: AssistHost; script: string; previewing?: string }
 
@@ -78,6 +79,22 @@ function registerKinds() {
     render: (p: SkProposal, _v: View, onDecide?: (a: boolean) => void) => (
       <ChangeCard p={p} title="Groups" onDecide={onDecide} lines={(p.changes as { action: string; name: string; ids: string[] }[]).map((c) =>
         <>{c.action} <b>@{c.name}</b>{c.ids.length ? ` – ${plural(c.ids.length)}: ${short(c.ids)}` : ""}</>)} />
+    ),
+  });
+  proposalKinds.register({
+    id: "shapes",
+    queueLabel: () => "Shapes",
+    render: (p: SkProposal, _v: View, onDecide?: (a: boolean) => void) => (
+      <ChangeCard p={p} title="Shapes" onDecide={onDecide} lines={(p.changes as ShapeChange[]).map((c) => {
+        if (c.action === "delete") return <>delete <b>{c.name}</b></>;
+        const d = c.def!, keys = sizeKeys(d.kind);
+        const arr = d.array ? (d.array.type === "linear" ? ` · ×${d.array.count} in a row, step [${d.array.step}]` : ` · ×${d.array.count} round [${d.array.centre}], ${d.array.angle}°`) : "";
+        return <>
+          {c.action} <b>{c.rename ? `${c.name} → ${c.rename}` : c.name}</b>: {d.kind} {keys.map((k, i) => `${k.replace(/_/g, " ")} ${d.size[i]}`).join(", ")} m
+          {` at [${d.position.join(", ")}]`}{d.rotation.some((r) => r) ? `, rotated [${d.rotation.join(", ")}]°` : ""}{arr}
+          {" "}<span className="inline-block size-2.5 rounded-sm border align-middle" style={{ background: d.color }} />
+        </>;
+      })} />
     ),
   });
   proposalKinds.register({

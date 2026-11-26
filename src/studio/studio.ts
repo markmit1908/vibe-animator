@@ -24,7 +24,7 @@ import type { AssistHost, AssistMount } from '../assist/host';
 import { assistClient, migrateChat, runAssist, type ChatMessage } from '../assist/loop';
 import type Anthropic from '@anthropic-ai/sdk';
 import { ASSIST_SYSTEM } from '../assist/system';
-import { readTools, proposeTools, modelProposeTools, type ToolDeps } from '../assist/tools';
+import { readTools, proposeTools, modelProposeTools, type ToolDeps, type ShapeChange } from '../assist/tools';
 import type { Proposal } from '../assist/loop';
 import { parseAnim, toActions, type ParseError } from '../script/anim';
 import { ScriptError } from '../timeline/compile';
@@ -546,8 +546,24 @@ function resolveIds(specs: string[]) {
 const tools = [
   ...readTools(toolDeps),
   ...proposeTools({ checkScript: toolDeps.checkScript, currentScript: () => scriptPanel?.text ?? '' }),
-  ...modelProposeTools({ resolve: resolveIds, groups: () => store.groups }),
+  ...modelProposeTools({ resolve: resolveIds, groups: () => store.groups, shapes: () => shapes }),
 ];
+
+/** Apply accepted shape changes (assist): create / update (incl. rename – the script follows) / delete, then rebuild once. */
+async function applyShapeChanges(changes: ShapeChange[]) {
+  let rename: [string, string] | undefined;
+  for (const c of changes) {
+    if (c.action === 'delete') { shapes = shapes.filter((s) => s.id !== c.name); continue; }
+    if (c.action === 'create') { if (!shapes.some((s) => s.id === c.def!.id)) shapes.push(clone(c.def!)); continue; }
+    const i = shapes.findIndex((s) => s.id === c.name);
+    if (i < 0) continue;
+    shapes[i] = clone(c.def!);
+    if (c.rename) { renameShapeRefs(c.name, c.rename); rename = [c.name, c.rename]; }
+  }
+  await syncShapes(true, rename);
+  const made = changes.filter((c) => c.action !== 'delete').map((c) => built.registry.get(shapePartId(c.def!.id))).filter(Boolean) as THREE.Object3D[];
+  if (made.length) tree.selectObjects(made);
+}
 
 /** Apply accepted group changes (ancestor-covered members dropped, as the tree does). */
 function applyGroupChanges(changes: { action: string; name: string; ids: string[] }[]) {
@@ -636,6 +652,7 @@ const assistHost: AssistHost = {
   accept: async (p) => {
     if (p.kind === 'groups') { applyGroupChanges(p.changes as any); return; }
     if (p.kind === 'state') { await applyStateChanges(p.changes as any); return; }
+    if (p.kind === 'shapes') { await applyShapeChanges(p.changes as ShapeChange[]); return; }
     if (p.kind !== 'script edit' || !scriptPanel) return;
     if (previewing) previewProposal(undefined);
     const unlock = (p.unlock as string[] | undefined) ?? [];
@@ -676,6 +693,7 @@ ${numbered}
 Current time: ${player.time.toFixed(2)} s${player.playing ? ' (playing)' : ' (paused)'}
 Selection: ${sel}${selBox && !selBox.isEmpty() ? ` – bbox centre [${selBox.getCenter(new THREE.Vector3()).toArray().map((v) => v.toFixed(2))}], size [${selBox.getSize(new THREE.Vector3()).toArray().map((v) => v.toFixed(2))}] m` : ''}
 Camera views: ${Object.keys(views).map((v) => `${v} (pos [${views[v].pos.map((x) => x.toFixed(1))}], look [${views[v].look.map((x) => x.toFixed(1))}])`).join(', ') || 'none'}
+Shapes: ${shapes.map((s) => `${s.id} (${s.kind} [${s.size}] at [${s.position}]${s.rotation.some((r) => r) ? ` rot [${s.rotation}]°` : ''}${s.array ? `, ×${s.array.count} ${s.array.type}` : ''})`).join(', ') || 'none'}
 Groups: ${Object.entries(store.groups).map(([g, ids]) => { const f = Object.entries(store.folders).find(([, gs]) => gs.includes(g))?.[0]; return `@${g} (${ids.length} members${f ? `, folder ${f}` : ''})`; }).join(', ') || 'none'}
 Snapshot: ${store.active}. Explicitly hidden: ${hidden.length ? hidden.slice(0, 20).join(', ') + (hidden.length > 20 ? ` … ${hidden.length - 20} more` : '') : 'none'}. Unlocked (animatable) CAD: ${unlocked.length ? unlocked.slice(0, 20).join(', ') + (unlocked.length > 20 ? ' …' : '') : 'none – CAD is locked by default'}.
 

@@ -30,6 +30,7 @@
 ## AI assist
 - [ ] Try a live chat after the switch to SolverKit's AssistPanel (tests use injected proposals, no API calls)
 - [ ] Teach the assistant the palette and the thumbnail keyframe
+- [ ] Shapes from the assistant: let a script proposal reference shapes proposed in the same turn (today: shape first, script after it's accepted)
 - [ ] Optional faster model (e.g. Sonnet) for routine edits, chosen in the Assist header
 
 ## SolverKit (propose in the SolverKit repo; see app/docs/SOLVERKIT.md)

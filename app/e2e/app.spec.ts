@@ -851,6 +851,45 @@ test("assist: propose_script_patch proposes small edits as a full diff card; bad
   expect(r.empty).toContain("non-empty");
 });
 
+test("assist: propose_shapes makes, changes and deletes shapes through an accepted card", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "AI shapes", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "S"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "AI shapes");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  await page.locator("#right [data-t=assist]").click();
+  // checks: bad sizes / names / kinds are problems, not cards you can accept
+  const bad = await page.evaluate(async () => {
+    const s = (window as any).__studio, t = s.tools.find((x: any) => x.name === "propose_shapes");
+    const g = t.run({ summary: "x", changes: [{ action: "create", name: "p", kind: "tube", size: { outer_radius: 0.1, inner_radius: 0.2 } },
+      { action: "create", name: "9x", kind: "box" }, { action: "update", name: "ghost" }, { action: "create", name: "q", kind: "torus" }] });
+    let x = await g.next(); let p: any; for (; !x.done; x = await g.next()) p = x.value; return { ok: p.check.ok, problems: p.problems };
+  });
+  expect(bad.ok).toBe(false);
+  expect(bad.problems.join(" | ")).toMatch(/inner_radius must be less.*bad shape name.*no shape "ghost".*kind must be/);
+  // the user's request: a 6 m tube, 0.3 m inner / 0.6 m outer diameter, standing on the floor (y = 0)
+  const propose = (changes: any[], summary: string) => page.evaluate(async ({ changes, summary }) => {
+    const s = (window as any).__studio, t = s.tools.find((x: any) => x.name === "propose_shapes");
+    let p: any; const g = t.run({ summary, changes }); for (let r = await g.next(); !r.done; r = await g.next()) if (r.value.type === "proposal") { const { type, ...x } = r.value; p = x; }
+    s.assist.host.onChat([...s.assist.host.chat(), { role: "user", content: summary }, { role: "assistant", content: "Here it is.", proposal: p }]);
+    s.assist.mount.refresh();
+  }, { changes, summary });
+  await propose([{ action: "create", name: "pipe", kind: "tube", size: { outer_radius: 0.3, inner_radius: 0.15, height: 6 }, position: [2, 3, 0], color: "#4a90d9" }], "A 6 m tube");
+  const card = page.getByTestId("proposal").last();
+  await expect(card).toContainText("create pipe: tube outer radius 0.3, inner radius 0.15, height 6 m at [2, 3, 0]");
+  await card.getByRole("button", { name: "Accept" }).click();
+  await expect.poll(async () => (await model(page, a.id)).shapes).toEqual([{ id: "pipe", kind: "tube", size: [0.3, 0.15, 6], position: [2, 3, 0], rotation: [0, 0, 0], color: "#4a90d9" }]);
+  expect(await page.evaluate(() => !!(window as any).__studio.built.registry.get("shapes/pipe"))).toBe(true);
+  // an update renames it and lays it along X (sizes kept); then delete
+  await propose([{ action: "update", name: "pipe", rename: "duct", rotation: [0, 0, 90] }], "Lay it down");
+  await page.getByTestId("proposal").last().getByRole("button", { name: "Accept" }).click();
+  await expect.poll(async () => (await model(page, a.id)).shapes?.[0]).toMatchObject({ id: "duct", rotation: [0, 0, 90], size: [0.3, 0.15, 6] });
+  await propose([{ action: "delete", name: "duct" }], "Remove it");
+  await page.getByTestId("proposal").last().getByRole("button", { name: "Accept" }).click();
+  await expect.poll(async () => (await model(page, a.id)).shapes).toEqual([]);
+});
+
 test("hidden line: a line where two parts touch flush (part ids), smooth lines, separate silhouette weight", async ({ page }) => {
   await page.setViewportSize({ width: 1200, height: 800 });
   await page.goto("/");

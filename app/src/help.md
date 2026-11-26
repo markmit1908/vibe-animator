@@ -120,5 +120,5 @@ each @layer3 stagger 0.2s order ring {
 
 Ask about the model or describe animation steps.
 - It looks things up in the tree, checks its scripts compile, and can take screenshots.
-- Every change comes as a card you **Accept** or **Reject**: script edits (with **▶ Preview**), groups, and lock/hide/colour/remove changes.
+- Every change comes as a card you **Accept** or **Reject**: script edits (with **▶ Preview**), groups, lock/hide/colour/remove changes, and shapes (make, change or delete – e.g. “a 6 m tube, 600 mm OD”).
 - Code blocks in replies have **Insert into script**.

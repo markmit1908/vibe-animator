@@ -4,6 +4,7 @@
  */
 import * as THREE from 'three';
 import type { AssistEvent, AssistTool, ToolResult } from './loop';
+import { KINDS, SIZES, validName, type ShapeDef, type ShapeKind } from '../scene/shapes';
 
 export interface ToolDeps {
   registry: Map<string, THREE.Object3D>;
@@ -248,10 +249,106 @@ export interface ModelProposeDeps {
   /** Expand ids, globs (*) and @groups to registry ids; unknown entries are returned separately. */
   resolve: (specs: string[]) => { ids: string[]; unknown: string[] };
   groups: () => Record<string, string[]>;
+  /** The studio's shapes (basic modelling). */
+  shapes?: () => ShapeDef[];
+}
+
+/** Size field names per kind for the assistant: "outer radius" → outer_radius, "width (x)" → width. */
+export const sizeKeys = (k: ShapeKind) => SIZES[k].map((f) => f.label.replace(/\s*\(.*\)/, '').trim().replace(/\s+/g, '_'));
+const SIZE_DOC = KINDS.map((k) => `${k} {${sizeKeys(k).join(', ')}}`).join('; ');
+const vec3 = { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 };
+
+/** One shape change, checked: the full new definition (create/update) or the name (delete). */
+export interface ShapeChange { action: 'create' | 'update' | 'delete'; name: string; rename?: string; def?: ShapeDef }
+
+function shapeChanges(input: any[], existing: ShapeDef[]): { changes: ShapeChange[]; problems: string[] } {
+  const problems: string[] = [];
+  const names = new Set(existing.map((s) => s.id));
+  const changes: ShapeChange[] = [];
+  for (const c of input) {
+    const name = String(c.name ?? '').trim();
+    const action = c.action;
+    if (!['create', 'update', 'delete'].includes(action)) { problems.push(`unknown action "${action}"`); continue; }
+    if (action === 'create' ? names.has(name) : !names.has(name)) { problems.push(action === 'create' ? `a shape "${name}" already exists (use update)` : `no shape "${name}"`); continue; }
+    if (!validName(name)) { problems.push(`bad shape name "${name}" (letters, digits, - _; not starting with a digit)`); continue; }
+    if (action === 'delete') { names.delete(name); changes.push({ action, name }); continue; }
+    const base = existing.find((s) => s.id === name);
+    const kind = (c.kind ?? base?.kind) as ShapeKind;
+    if (!KINDS.includes(kind)) { problems.push(`${name}: kind must be one of ${KINDS.join(', ')}`); continue; }
+    // sizes: named fields (missing ones keep the current value, or the default); an array in SIZES order is accepted too
+    const keys = sizeKeys(kind);
+    const cur = base && base.kind === kind ? base.size : SIZES[kind].map((f) => f.def);
+    const size = Array.isArray(c.size) ? keys.map((_, i) => Number(c.size[i] ?? cur[i]))
+      : keys.map((k, i) => Number(c.size?.[k] ?? cur[i]));
+    const unknownKeys = c.size && !Array.isArray(c.size) ? Object.keys(c.size).filter((k) => !keys.includes(k)) : [];
+    if (unknownKeys.length) problems.push(`${name}: ${kind} sizes are ${keys.join(', ')} (not ${unknownKeys.join(', ')})`);
+    if (size.some((v) => !(v > 0))) problems.push(`${name}: sizes must be positive metres`);
+    if (kind === 'tube' && size[1] >= size[0]) problems.push(`${name}: inner_radius must be less than outer_radius`);
+    const v3 = (v: unknown, dflt: number[], what: string) => {
+      if (v === undefined) return dflt;
+      if (!Array.isArray(v) || v.length !== 3 || v.some((x) => !Number.isFinite(Number(x)))) { problems.push(`${name}: ${what} must be [x, y, z]`); return dflt; }
+      return v.map(Number);
+    };
+    const color = c.color ?? base?.color ?? '#c8d0d9';
+    if (!/^#[0-9a-fA-F]{6}$/.test(color)) problems.push(`${name}: colour must be #rrggbb`);
+    let array = c.array === null ? undefined : base?.array;
+    if (c.array) {
+      const n = Math.round(Number(c.array.count));
+      if (!(n >= 2 && n <= 500)) problems.push(`${name}: array count must be 2..500`);
+      if (c.array.type === 'linear') array = { type: 'linear', count: n, step: v3(c.array.step, [1, 0, 0], 'array step') };
+      else if (c.array.type === 'circular') {
+        const ce = c.array.centre ?? [0, 0];
+        if (!Array.isArray(ce) || ce.length !== 2) problems.push(`${name}: circular array centre is [x, z]`);
+        array = { type: 'circular', count: n, centre: (Array.isArray(ce) ? ce : [0, 0]).map(Number), angle: Number(c.array.angle ?? 360) };
+      } else problems.push(`${name}: array type is linear or circular`);
+    }
+    let rename: string | undefined;
+    if (action === 'update' && c.rename && c.rename !== name) {
+      rename = String(c.rename).trim();
+      if (!validName(rename) || names.has(rename)) problems.push(`can't rename ${name} to "${rename}"`);
+      else { names.delete(name); names.add(rename); }
+    }
+    if (action === 'create') names.add(name);
+    const def: ShapeDef = { id: rename ?? name, kind, size: size.map((v) => +v.toFixed(6)), position: v3(c.position, base?.position ?? [0, 0, 0], 'position'),
+      rotation: v3(c.rotation, base?.rotation ?? [0, 0, 0], 'rotation'), color, ...(array ? { array } : {}) };
+    changes.push({ action, name, rename, def });
+  }
+  return { changes, problems };
 }
 
 export function modelProposeTools(d: ModelProposeDeps): AssistTool[] {
   return [
+    ...(d.shapes ? [{
+      name: 'propose_shapes',
+      description: `Propose making, changing or deleting shapes – simple solids the user models in the studio (they appear under Shapes in the tree and are parts the script can animate by name; they start unlocked). Kinds and their sizes (metres): ${SIZE_DOC}. Every shape is centred on its position, its axis along Y (upright): a cylinder/tube/cone/hex of height h standing on a surface at height y has position y + h/2; rotate it [90,0,0] to lie along Z or [0,0,90] to lie along X. Rotation is degrees about X, Y, Z. Optional array: linear {count, step [x,y,z]} or circular {count, centre [x,z], angle (360 = evenly round)}; copies are named <name>-0, <name>-1… For update, give only what changes (rename to change the name – the script follows); array null removes it. A shape exists only once the user accepts the card.`,
+      input_schema: {
+        type: 'object',
+        properties: {
+          summary: { type: 'string' },
+          changes: { type: 'array', items: { type: 'object', properties: {
+            action: { type: 'string', enum: ['create', 'update', 'delete'] },
+            name: { type: 'string', description: 'Shape name (letters, digits, - _), e.g. pipe' },
+            kind: { type: 'string', enum: KINDS },
+            size: { type: 'object', description: `Named sizes in metres for the kind: ${SIZE_DOC}`, additionalProperties: { type: 'number' } },
+            position: { ...vec3, description: 'Centre [x, y, z] in metres' },
+            rotation: { ...vec3, description: 'Degrees about X, Y, Z' },
+            color: { type: 'string', description: '#rrggbb' },
+            array: { type: ['object', 'null'] },
+            rename: { type: 'string' },
+          }, required: ['action', 'name'] } },
+        },
+        required: ['summary', 'changes'],
+      },
+      writing: 'shapes',
+      validate: (i: any) => check(i, { summary: 'string' }) ?? (Array.isArray(i.changes) && i.changes.length ? undefined : '"changes" must be a non-empty array'),
+      async *run(i: any) {
+        const { changes, problems } = shapeChanges(i.changes, d.shapes!());
+        const ok = !problems.length;
+        const label = ok ? `✓ ${changes.length} shape${changes.length > 1 ? 's' : ''}` : `${problems.length} problem${problems.length > 1 ? 's' : ''}`;
+        yield { type: 'proposal', kind: 'shapes', summary: i.summary, check: { ok, label }, changes, problems } as AssistEvent;
+        return { content: ok ? `Proposed (${label}); waiting for the user. Once accepted, each shape is a part named as given (array copies <name>-0…), unlocked.` : `Problems:\n${problems.join('\n')}\nFix them and propose again.` };
+      },
+    } satisfies AssistTool] : []),
     {
       name: 'propose_groups',
       description: 'Propose changes to user groups (named sets of parts, used in scripts as @name). Actions: create (new group with parts), add / remove (parts to/from an existing group), delete (the group only – parts are unaffected). Parts are ids, globs with *, or other @groups. The user accepts or rejects.',

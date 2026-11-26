@@ -181,7 +181,7 @@ each @layer3 stagger 0.2s order ring {   # $ = the item, $i = its index (0, 1, 2
 ## AI assist (Assist tab)
 
 A chat with Claude (`claude-opus-5-5`). It sees the script (with step times and errors), the current time, selection,
-groups, lock/hide state and the top of the assembly tree.
+groups (and their folders), shapes, lock/hide state and the top of the assembly tree.
 
 **What it can look up:** search parts, read bounding boxes and positions, browse the tree, compile a draft script, and take a screenshot.
 
@@ -189,6 +189,7 @@ groups, lock/hide state and the top of the assembly tree.
 - **script edits:** a diff with a compile check and **▶ Preview**. Accept also unlocks every locked part the new script animates (listed on the card).
 - **groups:** create, add, remove, delete.
 - **part state:** lock/unlock, hide/show, base colours, remove/restore.
+- **shapes:** make, change (including rename, sizes, position, rotation, colour, arrays) or delete studio shapes – e.g. *“a 6 m tube, 300 mm bore, 600 mm OD, standing on the floor”*. The card lists each shape's sizes and position; once accepted the shape is in the tree and can be animated by name (ask for the script steps after).
 
 The panel is SolverKit's Assist panel: Send/Stop (Esc gives the prompt back), Edit in place, Regenerate, Copy, **Clear**, and an **Accept all / Reject all** queue of waiting changes. Every code block in a reply has **Insert into script**; **Effort** sets how hard the model thinks (default *low*, the fastest; use medium/high for harder requests). Script changes are proposed as small edits (only the changed lines are sent), shown as a full diff.
 The conversation is saved in the animation file.
