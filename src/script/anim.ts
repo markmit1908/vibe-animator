@@ -11,6 +11,7 @@
  *   pivot @lid [0,12,0]                            # pivot travels with @lid
  *   hide @shielding 1s     show @shielding     fade @bolts to 0.2 2s
  *   cutaway half -z at @reactor                  # section: side removed (x|-x|y|-y|z|-z), centred on a point or target
+ *   thumbnail outline                              # this moment is the card image on Home (shaded|outline|hidden)
  *   blank ~V-005202-001 1s                        # ~text: every part whose name contains text
  *   blank @lid 1s · unblank @lid · unblank all · blank others @core 1s   # blank works on locked parts too
  *   highlight @spent #c0392b 1s                    # or palette name
@@ -59,7 +60,7 @@ export interface AnimStep {
 export interface ParseError { line: number; from: number; to: number; message: string; fix?: { label: string; run: () => void } }
 export interface AnimDoc { steps: AnimStep[]; errors: ParseError[] }
 
-const VERBS = ['list', 'each', 'move', 'rotate', 'blank', 'unblank', 'hide', 'show', 'fade', 'highlight', 'color', 'label', 'camera', 'cutaway', 'wait', 'pivot', 'parallel'];
+const VERBS = ['list', 'each', 'move', 'rotate', 'blank', 'unblank', 'hide', 'show', 'fade', 'highlight', 'color', 'label', 'camera', 'cutaway', 'wait', 'pivot', 'parallel', 'thumbnail'];
 export const ANIM_VERBS = VERBS;
 
 interface Tok { t: 'word' | 'str' | 'vec' | 'num' | 'dur' | 'color' | 'brace'; v: any; from: number; to: number }
@@ -218,6 +219,14 @@ export function parseAnim(text: string): AnimDoc {
         if (peek()?.t === 'word' && peek()!.v === 'nocap') step.flag = arg(toks[k++]);   // leave the cut open
         tail(); break;
       }
+      case 'thumbnail': {                               // thumbnail [shaded|outline|hidden]: this moment is the card image
+        if (peek()?.t === 'word') {
+          const x = toks[k++];
+          if (!['shaded', 'outline', 'hidden'].includes(String(x.v))) err(x.from, x.to, 'Expected shaded | outline | hidden');
+          step.word = arg(x);
+        }
+        tail(); break;
+      }
       case 'wait': tail(); if (!step.dur) err(step.from, step.to, 'Expected a duration, e.g. wait 2s'); break;
       case 'list': {
         // list @name = a, b, F1-*-3, @group   (any spacing around "=" and ",")
@@ -284,6 +293,7 @@ export function toActions(steps: AnimStep[]): { camera?: any; timeline: any[] } 
       case 'color': return { ...base, highlight: tgt, color: s.word?.value ?? 'reset', dur: s.dur?.value ?? 0 };
       case 'label': return { ...base, label: s.text![0]?.value, sub: s.text![1]?.value };
       case 'camera': return { ...base, camera: s.word ? { view: s.word.value } : { pos: s.vec!.value, look: s.look?.value }, dur: s.dur?.value ?? 0 };
+      case 'thumbnail': return { ...base, thumbnail: s.word?.value ?? 'shaded' };
       case 'cutaway': return { ...base, cutaway: { mode: s.word!.value, sides: s.items?.value ? s.items.value.split(',') : undefined, at: s.vec?.value, of: tgt, nocap: !!s.flag } };
       case 'wait': return { ...base, wait: s.dur!.value };
       case 'parallel': return { ...base, parallel: s.children!.map((c) => [conv(c)]) };

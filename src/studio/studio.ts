@@ -37,6 +37,8 @@ export interface StudioIO {
   fileUrl(path: string): string;
   /** The assist key proxy. */
   assist: { base: string; status: string };
+  /** Send the card image shown on Home (an <svg>). */
+  putThumb?(svg: string): Promise<unknown> | void;
   /** Mount the assist panel (SolverKit's AssistPanel) into `el`. */
   mountAssist?(el: HTMLElement, host: AssistHost): AssistMount;
 }
@@ -53,18 +55,27 @@ const edit = (patch: Partial<AnimModel>) => {
   if (disposed) return;
   recordUndo(patch);
   io.edit(patch);
+  if (THUMB_KEYS.some((k) => k in patch)) scheduleThumb();
 };
+/** Edits that change what the card image shows. */
+const THUMB_KEYS = ['script', 'colors', 'snapshots', 'groups', 'labels', 'removed', 'views', 'scene', 'keyframe'];
+let thumbTimer: number | undefined;
+/** Re-render the card image once things have been quiet for a moment. */
+function scheduleThumb(delay = 2000) {
+  clearTimeout(thumbTimer);
+  thumbTimer = window.setTimeout(() => { if (!disposed) void renderThumb(); }, delay);
+}
 
 // ---------- undo / redo (⌘/Ctrl+Z, ⇧⌘Z / Ctrl+Y) of the animation's state ----------
 // Every change goes through edit(): before the first change of a burst (400 ms), the state as it was is pushed.
 // Script typing has the editor's own undo; script changes made by code (gizmo write-back, an accepted proposal) undo here.
-type UndoKey = 'colors' | 'snapshots' | 'groups' | 'labels' | 'removed' | 'script' | 'views';
-const UNDO_KEYS: UndoKey[] = ['colors', 'snapshots', 'groups', 'labels', 'removed', 'script', 'views'];
+type UndoKey = 'colors' | 'snapshots' | 'groups' | 'labels' | 'removed' | 'script' | 'views' | 'keyframe';
+const UNDO_KEYS: UndoKey[] = ['colors', 'snapshots', 'groups', 'labels', 'removed', 'script', 'views', 'keyframe'];
 type DocState = Partial<Record<UndoKey, any>>;
 const clone = <T,>(x: T): T => (x === undefined ? x : JSON.parse(JSON.stringify(x)));
 const docNow: DocState = {
   colors: model.colors ?? {}, snapshots: model.snapshots ?? { active: 'default', items: {} }, groups: model.groups ?? {},
-  labels: model.labels ?? {}, removed: model.removed ?? [], views: model.views ?? {}, script: model.script ? { language: 'anim', text: joinLines(model.script.text) } : undefined,
+  labels: model.labels ?? {}, removed: model.removed ?? [], views: model.views ?? {}, keyframe: model.keyframe, script: model.script ? { language: 'anim', text: joinLines(model.script.text) } : undefined,
 };
 const undoStack: DocState[] = [], redoStack: DocState[] = [];
 let undoing = false, typing = false, burst = false, burstTimer: number | undefined;
@@ -1028,7 +1039,7 @@ const undoToast = document.createElement('div');
 undoToast.style.cssText = 'position:absolute;left:50%;bottom:16px;transform:translateX(-50%);z-index:8;background:rgba(14,17,21,.95);color:#d7dde4;border:1px solid #2b3540;border-radius:6px;padding:5px 12px;font:12px system-ui;display:none;pointer-events:none';
 host().appendChild(undoToast);
 let toastTimer: number | undefined;
-const WHAT: Record<UndoKey, string> = { colors: 'colour', snapshots: 'move / lock / hide', groups: 'groups', labels: 'rename', removed: 'remove / restore', script: 'script edit', views: 'views' };
+const WHAT: Record<UndoKey, string> = { colors: 'colour', snapshots: 'move / lock / hide', groups: 'groups', labels: 'rename', removed: 'remove / restore', script: 'script edit', views: 'views', keyframe: 'thumbnail' };
 async function restoreDoc(d: DocState, verb: string) {
   const what = UNDO_KEYS.filter((k) => d[k] !== undefined && JSON.stringify(d[k]) !== JSON.stringify(docNow[k])).map((k) => WHAT[k]);
   undoing = true;
@@ -1051,6 +1062,7 @@ async function restoreDoc(d: DocState, verb: string) {
     }
     if (d.colors) { colors = clone(d.colors); applyColors(); }
     if (d.views) { views = clone(d.views); renderViews(); }
+    if ('keyframe' in d) keyframe = clone(d.keyframe);
     for (const o of built.root.children) await reconcile(o);
     if (d.script && scriptPanel && d.script.text !== scriptPanel.text) {
       docNow.script = clone(d.script);
@@ -1096,6 +1108,7 @@ toolbar.innerHTML = `<button data-t="blank" title="Blank / unblank the selected 
   <div class="fpop" hidden><input placeholder="Part of a name, e.g. V-005202-001" spellcheck="false"><div class="hint"></div><button data-f="go">Select</button></div>
   <button data-t="showall" title="Show all: unblank every part (removed parts stay removed)"><span class="i">●</span><span class="l">Show all</span></button>
   <button data-t="origin" title="Set the model origin: click a cylindrical face (its axis), then a flat face (its height); the model moves so that point is (0,0,0)"><span class="i">⊕</span><span class="l">Set origin</span></button>
+  <button data-t="thumb" title="Thumbnail: this moment (time, camera, view style) becomes the card image on Home. A thumbnail step in the script takes priority."><span class="i">📌</span><span class="l">Thumbnail</span></button>
   <button data-t="views" title="Camera views: save the current view (position and target), go to one, or put it in the script (camera <name> 2s)"><span class="i">📷</span><span class="l">Views</span></button>
   <div class="vpop" hidden></div>
   <button data-t="group" title="Create a group from the selected parts, or add them to one (G)"><span class="i">⊞</span><span class="l">Group</span></button>`;
@@ -1217,6 +1230,62 @@ function setOrigin(o: THREE.Vector3) {
   for (const sn of Object.values(items) as any[]) if (sn.camera) sn.camera = { pos: shift(sn.camera.pos), look: shift(sn.camera.look) };
   edit({ scene, views: clone(views), snapshots: { active: store.active, items }, view: { ...(model.view ?? {}), camera: { pos: shift(camView().pos), look: shift(camView().look) } } });
 }
+// ---- thumbnail: a keyframe of the animation is the card image on Home ----
+let keyframe = model.keyframe;
+type Mode = 'shaded' | 'outline' | 'hidden';
+const viewMode = (): Mode => (drawing.enabled ? (drawing.overlay ? 'outline' : 'hidden') : 'shaded');
+/** The frame to show: a script `thumbnail` step wins, then the saved keyframe, then the opening frame. */
+function thumbFrame(): { t: number; camera?: { pos: number[]; look: number[] }; mode: Mode; from: 'script' | 'keyframe' | 'default' } {
+  const st = player.tl.steps.find((x) => x.kind === 'thumbnail');
+  if (st) return { t: st.t, mode: st.value as Mode, from: 'script' };
+  if (keyframe) return { t: keyframe.t, camera: keyframe.camera, mode: keyframe.mode ?? 'shaded', from: 'keyframe' };
+  return { t: 0, mode: 'shaded', from: 'default' };
+}
+const THUMB_W = 480, THUMB_H = 300;
+/** Render the thumbnail frame off-screen (the view on screen is put back as it was) and send it as the card. */
+async function renderThumb(): Promise<string | undefined> {
+  if (!io.putThumb || disposed) return;
+  const f = thumbFrame();
+  const save = { t: player.time, playing: player.playing, pos: camera.position.clone(), look: controls.target.clone(), aspect: camera.aspect,
+    enabled: drawing.enabled, overlay: drawing.overlay, pr: renderer.getPixelRatio(), size: renderer.getSize(new THREE.Vector2()) };
+  let url: string;
+  try {
+    player.playing = false;
+    player.seek(Math.min(f.t, player.duration));
+    applyCutaway(built, (player.current('cutaway')?.value ?? 'none') as Cut | CutMode);
+    const cut = player.current('cutaway')?.value;
+    capUniforms.capOn.value = ui.caps && !(typeof cut === 'object' && cut?.nocap) ? 1 : 0;
+    const cam = f.camera ?? { pos: player.tl.camera.pos.toArray(), look: player.tl.camera.look.toArray() };
+    camera.position.fromArray(cam.pos); camera.lookAt(new THREE.Vector3(...cam.look));
+    camera.aspect = THUMB_W / THUMB_H; camera.updateProjectionMatrix();
+    drawing.enabled = f.mode !== 'shaded'; drawing.overlay = f.mode === 'outline';
+    if (drawing.enabled) drawing.collectDecor(scene3, [gizmo.getHelper()]);
+    renderer.setPixelRatio(1); renderer.setSize(THUMB_W, THUMB_H, false);
+    gizmo.getHelper().visible = false;
+    drawFrame();
+    url = renderer.domElement.toDataURL('image/jpeg', 0.85);
+  } finally {
+    gizmo.getHelper().visible = true;
+    renderer.setPixelRatio(save.pr); renderer.setSize(save.size.x, save.size.y, false);
+    drawing.enabled = save.enabled; drawing.overlay = save.overlay;
+    camera.aspect = save.aspect; camera.updateProjectionMatrix();
+    camera.position.copy(save.pos); controls.target.copy(save.look); controls.update();
+    player.seek(save.t); player.playing = save.playing;
+  }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${THUMB_W} ${THUMB_H}" width="${THUMB_W}" height="${THUMB_H}"><image href="${url}" width="${THUMB_W}" height="${THUMB_H}"/></svg>`;
+  await io.putThumb(svg);
+  return svg;
+}
+/** The Thumbnail button: this moment (time, camera, view style) is the card image. */
+function setKeyframe() {
+  keyframe = { t: +player.time.toFixed(3), camera: camView(), mode: viewMode() };
+  edit({ keyframe: clone(keyframe) });
+  const script = player.tl.steps.some((x) => x.kind === 'thumbnail');
+  undoToast.textContent = script ? '📌 Saved – but the script\'s thumbnail step is used while it\'s there' : `📌 Thumbnail: ${keyframe.t.toFixed(1)} s, ${keyframe.mode}`;
+  undoToast.style.display = '';
+  clearTimeout(toastTimer); toastTimer = window.setTimeout(() => (undoToast.style.display = 'none'), 2200);
+  clearTimeout(thumbTimer); void renderThumb();
+}
 /** Show all: clear every hide flag. */
 async function showAll() {
   if (!Object.values(state.hidden).some(Boolean)) return;
@@ -1234,6 +1303,8 @@ function updateTools() {
 toolbar.querySelector<HTMLElement>('[data-t=blank]')!.onclick = () => { tree.toggleHiddenSelected(); updateTools(); };
 toolbar.querySelector<HTMLElement>('[data-t=others]')!.onclick = () => void blankOthers();
 toolbar.querySelector<HTMLElement>('[data-t=showall]')!.onclick = () => void showAll();
+toolbar.querySelector<HTMLElement>('[data-t=thumb]')!.onclick = setKeyframe;
+scheduleThumb(4000);   // the card for this animation as it opens (CAD loaded)
 toolbar.querySelector<HTMLElement>('[data-t=origin]')!.onclick = () => (originPick ? endOrigin() : startOrigin());
 // select by name
 const fpop = toolbar.querySelector<HTMLElement>('.fpop')!, finput = fpop.querySelector('input')!, fhint = fpop.querySelector<HTMLElement>('.hint')!;
@@ -1399,7 +1470,7 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 }
 
 // read-only handle for tests and debugging
-(window as any).__studio = { built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
+(window as any).__studio = { built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
   /** tests: a block with many small parts buried behind the cut plane (x < 0), like dowels without holes */
   addTestBuried: (count = 60) => {
     const mk = (col: number) => withCaps(new THREE.MeshToonMaterial({ color: col, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));
@@ -1433,7 +1504,7 @@ return {
   dispose() {
     disposed = true;
     scriptPanel?.destroy();
-    clearTimeout(chatTimer);
+    clearTimeout(chatTimer); clearTimeout(thumbTimer);
     assist?.dispose();
     renderer.setAnimationLoop(null);
     ac.abort(); ro.disconnect();

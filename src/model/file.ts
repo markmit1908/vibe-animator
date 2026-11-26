@@ -51,6 +51,8 @@ export interface AnimModel {
   labels?: Record<string, string>;
   /** Named camera views (script: `camera <name> 2s`). */
   views?: Record<string, { pos: number[]; look: number[] }>;
+  /** The moment shown as the card image on Home (a script `thumbnail` step wins). */
+  keyframe?: { t: number; camera?: { pos: number[]; look: number[] }; mode?: 'shaded' | 'outline' | 'hidden' };
   view?: { camera?: { pos: number[]; look: number[] }; time?: number; mode?: 'shaded' | 'hidden' | 'outline'; paletteKey?: string };
   chat?: unknown[];
   /** Unknown keys are preserved on save (SolverKit rule). */
@@ -62,7 +64,7 @@ export const joinLines = (l: Lines | undefined) => (Array.isArray(l) ? l.join('\
 export const splitLines = (s: string): string[] => s.replace(/\n$/, '').split('\n');
 
 /** Key order for writing (stable diffs); unknown keys follow in their own order. */
-const ORDER = ['name', 'uuid', 'solver', 'format', 'description', 'scene', 'script', 'snapshots', 'groups', 'colors', 'removed', 'labels', 'views', 'view', 'chat'];
+const ORDER = ['name', 'uuid', 'solver', 'format', 'description', 'scene', 'script', 'snapshots', 'groups', 'colors', 'removed', 'labels', 'views', 'keyframe', 'view', 'chat'];
 
 export function canonical(m: AnimModel): string {
   const out: Record<string, unknown> = {};

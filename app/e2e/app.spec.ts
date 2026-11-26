@@ -879,3 +879,29 @@ test("section caps: no ghost lines in the cap from many parts buried behind the 
   });
   expect(dark).toBe(0);
 });
+
+test("thumbnail: the button saves a keyframe and sends the card; a script thumbnail step wins; the view is put back", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Thumb", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "T"\nwait 2s\ncutaway half\nwait 2s' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Thumb");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  await page.evaluate(() => { const s = (window as any).__studio; s.player.playing = false; s.player.seek(3); s.ui.followCamera = false; s.camera.position.set(9, 6, 9); s.controls.target.set(0, 3, 0); s.controls.update(); });
+  await page.locator("#viewbar button", { hasText: "Hidden line" }).click();
+  await page.locator("#toolsbar [data-t=thumb]").click();
+  await expect.poll(async () => (await model(page, a.id)).keyframe?.mode).toBe("hidden");
+  const kf = (await model(page, a.id)).keyframe;
+  expect(kf.t).toBeCloseTo(3, 1);
+  expect(kf.camera.pos.map((v: number) => Math.round(v))).toEqual([9, 6, 9]);
+  // the card on the store is the rendered frame
+  await expect.poll(async () => (await (await api(page).get(`/api/projects/${a.id}/thumb`)).text()).includes("data:image/jpeg")).toBe(true);
+  // the view on screen is unchanged
+  const after = await page.evaluate(() => { const s = (window as any).__studio; return { t: s.player.time, pos: s.camera.position.toArray().map(Math.round) }; });
+  expect(after).toEqual({ t: 3, pos: [9, 6, 9] });
+  // a script thumbnail step takes priority
+  await page.locator("#script .cm-content").click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Meta+ArrowDown");
+  await page.keyboard.type("\nthumbnail outline");
+  await expect(page.locator("#script .status")).toHaveText("✓");
+  await expect.poll(() => page.evaluate(() => (window as any).__studio.thumbFrame())).toMatchObject({ from: "script", mode: "outline", t: 4 });
+});

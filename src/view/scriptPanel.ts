@@ -254,6 +254,7 @@ export class ScriptPanel {
           ...ids.map((id) => ({ label: id, type: id.startsWith('@') ? 'class' : 'variable' })),
         ] };
       }
+      if (/^\s*thumbnail\s+\w*$/.test(before)) return kw(from, ['shaded', 'outline', 'hidden'], 'view style');
       const cut = before.match(/^\s*cutaway\s+(\w*)$/);
       if (cut) return kw(from, ['none', 'half', 'quarter']);
       const cut2 = before.match(/^\s*cutaway\s+(half|quarter)\b(.*?)(\w*)$/);

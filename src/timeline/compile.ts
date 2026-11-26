@@ -9,7 +9,7 @@ import type { BuiltScene } from '../scene/build';
  */
 
 export interface Tween { start: number; dur: number; apply: (p: number) => void }
-export interface StepEvent { t: number; kind: 'label' | 'cutaway'; value: any; sub?: string }
+export interface StepEvent { t: number; kind: 'label' | 'cutaway' | 'thumbnail'; value: any; sub?: string }
 /** Script line -> when that step runs (for the editor's step gutter / run-to). */
 export interface LineTiming { start: number; end: number }
 export interface Timeline { tweens: Tween[]; steps: StepEvent[]; duration: number; camera: CameraRig; touched: string[]; lines: Map<number, LineTiming> }
@@ -47,7 +47,7 @@ function substitute(node: any, vars: Record<string, any>): any {
   return node;
 }
 
-const KINDS = ['list', 'each', 'pick', 'place', 'move', 'rotate', 'pivot', 'highlight', 'fade', 'label', 'cutaway', 'camera', 'wait', 'parallel', 'repeat', 'call'];
+const KINDS = ['list', 'each', 'pick', 'place', 'move', 'rotate', 'pivot', 'highlight', 'fade', 'label', 'cutaway', 'thumbnail', 'camera', 'wait', 'parallel', 'repeat', 'call'];
 
 export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]; look: number[] },
   isLocked: (o: THREE.Object3D) => boolean = () => false,
@@ -287,6 +287,10 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
 
     switch (kind) {
       case 'wait': return t + (typeof val === 'number' ? val : dur(1));
+
+      case 'thumbnail':
+        steps.push({ t, kind: 'thumbnail', value: val });
+        return t;
 
       case 'label':
         steps.push({ t, kind: 'label', value: val, sub: a.sub });
