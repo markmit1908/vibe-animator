@@ -1,5 +1,6 @@
 import { host } from './host';
 import * as THREE from 'three';
+import { withCaps } from './caps';
 import { palette } from './palette';
 import type { BuiltScene } from '../scene/build';
 import { state, store, markDirty, isLocked, isHidden, isCad } from '../scene/state';
@@ -403,8 +404,8 @@ export class TreePanel {
       const clip = orig.clippingPlanes?.length ? 'clip' : 'noclip';
       let h = this.hiliteMats.get(clip);
       if (!h) {
-        h = new THREE.MeshToonMaterial({ color: TreePanel.HILITE, side: THREE.DoubleSide,
-          clippingPlanes: orig.clippingPlanes ?? undefined, clipIntersection: orig.clipIntersection });
+        h = withCaps(new THREE.MeshToonMaterial({ color: TreePanel.HILITE, side: THREE.DoubleSide,
+          clippingPlanes: orig.clippingPlanes ?? undefined, clipIntersection: orig.clipIntersection }));
         this.hiliteMats.set(clip, h);
       }
       m.userData.origMat = orig;

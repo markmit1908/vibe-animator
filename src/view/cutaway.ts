@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import type { BuiltScene } from '../scene/build';
+import { capUniforms } from './caps';
 
 export type CutMode = 'none' | 'half' | 'quarter';
 /** A side removed: an axis and its sign ("x" removes x > centre, "-z" removes z < centre). */
 export type CutSide = 'x' | '-x' | 'y' | '-y' | 'z' | '-z';
 /** A section: what's removed (half: one side; quarter: two sides together) about a centre point. */
-export interface Cut { mode: CutMode; sides?: CutSide[]; at?: number[] }
+export interface Cut { mode: CutMode; sides?: CutSide[]; at?: number[]; /** leave this cut open (no section caps) */ nocap?: boolean }
 
 export const DEFAULT_SIDES: Record<CutMode, CutSide[]> = { none: [], half: ['x'], quarter: ['x', 'z'] };
 const AX = { x: new THREE.Vector3(1, 0, 0), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1) };
@@ -15,7 +16,7 @@ export function toCut(v: unknown): Cut {
   if (!v) return { mode: 'none' };
   if (typeof v === 'string') return { mode: v as CutMode, sides: DEFAULT_SIDES[v as CutMode] ?? [], at: [0, 0, 0] };
   const c = v as Cut;
-  return { mode: c.mode, sides: c.sides?.length ? c.sides : DEFAULT_SIDES[c.mode] ?? [], at: c.at ?? [0, 0, 0] };
+  return { mode: c.mode, sides: c.sides?.length ? c.sides : DEFAULT_SIDES[c.mode] ?? [], at: c.at ?? [0, 0, 0], nocap: c.nocap };
 }
 
 /**
@@ -26,6 +27,7 @@ export function applyCutaway(scene: BuiltScene, cutIn: Cut | CutMode) {
   const cut = toCut(cutIn);
   const sides = cut.mode === 'none' ? [] : (cut.sides ?? []).slice(0, cut.mode === 'half' ? 1 : 2);
   const c = new THREE.Vector3(...(cut.at ?? [0, 0, 0]));
+  capUniforms.cutActive.value = sides.length ? 1 : 0;
   scene.clipPlanes.forEach((pl, i) => {
     const sd = sides[i];
     if (!sd) {
@@ -57,5 +59,5 @@ export function cutLine(cut: Cut) {
   if (c.mode === 'none') return 'cutaway none';
   const sides = c.sides!.join(' ') === DEFAULT_SIDES[c.mode].join(' ') ? '' : ` ${c.sides!.join(' ')}`;
   const at = c.at && c.at.some((v) => Math.abs(v) > 1e-6) ? ` at [${c.at.map((v) => +v.toFixed(3)).join(',')}]` : '';
-  return `cutaway ${c.mode}${sides}${at}`;
+  return `cutaway ${c.mode}${sides}${at}${c.nocap ? ' nocap' : ''}`;
 }

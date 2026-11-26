@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { withCapNormal } from './caps';
 
 /**
  * "Hidden line" drawing mode: black visible edges on white, hidden edges removed.
@@ -34,6 +35,7 @@ export class DrawingMode {
     this.rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
     this.rt.depthTexture = new THREE.DepthTexture(1, 1);
     this.normalMat.clippingPlanes = clipPlanes;
+    withCapNormal(this.normalMat);   // section caps: an outline where each cap meets the walls
     this.normalMat.clipIntersection = true;
     this.mat = new THREE.ShaderMaterial({
       uniforms: {

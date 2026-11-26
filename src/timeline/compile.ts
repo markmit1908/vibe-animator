@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { withCaps } from '../view/caps';
 import type { BuiltScene } from '../scene/build';
 
 /**
@@ -244,6 +245,7 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
       const src = (mesh.userData.origMat ?? mesh.material) as THREE.Material;
       const own = src.clone();
       own.clippingPlanes = src.clippingPlanes;   // clone() copies the planes; keep the live cutaway ones
+      withCaps(own);
       if (mesh.userData.origMat) mesh.userData.origMat = own; else mesh.material = own;
       mesh.userData.ownMat = true;
     });
@@ -303,7 +305,7 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
           }
           if (!box.isEmpty()) at = box.getCenter(new THREE.Vector3()).toArray();
         }
-        steps.push({ t, kind: 'cutaway', value: typeof val === 'string' ? val : { mode: val.mode, sides: val.sides, at } });
+        steps.push({ t, kind: 'cutaway', value: typeof val === 'string' ? val : { mode: val.mode, sides: val.sides, at, nocap: val.nocap } });
         return t;
       }
 

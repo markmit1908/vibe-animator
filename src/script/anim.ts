@@ -52,6 +52,7 @@ export interface AnimStep {
   children?: AnimStep[];    // parallel / each block
   stagger?: Arg<number>;    // each: start of item i+1 after item i's start
   items?: Arg<string>;      // list: the items text
+  flag?: Arg<string>;       // cutaway: nocap
   endLine?: number;         // closing brace line of a block
 }
 
@@ -214,6 +215,7 @@ export function parseAnim(text: string): AnimDoc {
           else if (peek()?.t === 'word') target();
           else err(step.from, step.to, 'Expected a point [x, y, z] or a target after "at"');
         }
+        if (peek()?.t === 'word' && peek()!.v === 'nocap') step.flag = arg(toks[k++]);   // leave the cut open
         tail(); break;
       }
       case 'wait': tail(); if (!step.dur) err(step.from, step.to, 'Expected a duration, e.g. wait 2s'); break;
@@ -282,7 +284,7 @@ export function toActions(steps: AnimStep[]): { camera?: any; timeline: any[] } 
       case 'color': return { ...base, highlight: tgt, color: s.word?.value ?? 'reset', dur: s.dur?.value ?? 0 };
       case 'label': return { ...base, label: s.text![0]?.value, sub: s.text![1]?.value };
       case 'camera': return { ...base, camera: s.word ? { view: s.word.value } : { pos: s.vec!.value, look: s.look?.value }, dur: s.dur?.value ?? 0 };
-      case 'cutaway': return { ...base, cutaway: { mode: s.word!.value, sides: s.items?.value ? s.items.value.split(',') : undefined, at: s.vec?.value, of: tgt } };
+      case 'cutaway': return { ...base, cutaway: { mode: s.word!.value, sides: s.items?.value ? s.items.value.split(',') : undefined, at: s.vec?.value, of: tgt, nocap: !!s.flag } };
       case 'wait': return { ...base, wait: s.dur!.value };
       case 'parallel': return { ...base, parallel: s.children!.map((c) => [conv(c)]) };
       case 'list': return { ...base, list: tgt, items: (s.items?.value ?? '').split(',').map((x) => x.trim()).filter(Boolean) };

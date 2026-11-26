@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { withCaps } from '../view/caps';
 
 /** Everything the timeline and view need to know about the built scene. */
 export interface BuiltScene {
@@ -32,7 +33,7 @@ const ramp = (() => {
   t.needsUpdate = true;
   return t;
 })();
-const toon = (p: THREE.MeshToonMaterialParameters) => new THREE.MeshToonMaterial({ gradientMap: ramp, ...p });
+const toon = (p: THREE.MeshToonMaterialParameters) => withCaps(new THREE.MeshToonMaterial({ gradientMap: ramp, ...p }));
 // Inverted-hull outline material (thick black silhouette).
 const hullMat = new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.BackSide });
 // axial hex directions

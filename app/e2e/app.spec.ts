@@ -692,3 +692,31 @@ test("the cutaway also cuts parts with a base colour or a script fade/colour (sh
   });
   expect(live).toEqual({ vessel: true, head: true, barrel: true });
 });
+
+test("section caps: a cut solid shows a darker cap face (off with nocap / the Caps switch)", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await page.goto("/");
+  const m = { name: "CapBox", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] },
+    script: { language: "anim", text: 'camera [8,1,0.5] look [0,1,0]\nlabel "B"\ncutaway half' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "CapBox");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  // a closed solid box (2 m) at the origin, cut by "half" (x > 0 removed): looking from +x we see its cap
+  const centre = async () => {
+    await page.waitForTimeout(300);
+    const shot = await page.locator("#app canvas").screenshot();
+    return page.evaluate(async (b64) => {
+      const img = new Image(); img.src = "data:image/png;base64," + b64; await img.decode();
+      const c = document.createElement("canvas"); c.width = img.width; c.height = img.height; const g = c.getContext("2d")!; g.drawImage(img, 0, 0);
+      const d = g.getImageData(img.width >> 1, img.height >> 1, 1, 1).data; return d[0] + d[1] + d[2];
+    }, shot.toString("base64"));
+  };
+  await page.evaluate(() => (window as any).__studio.addTestBox());
+  const lit = await centre();
+  await page.evaluate(() => { (window as any).__studio.capUniforms.capShade.value = 0.2; });
+  const dark = await centre();
+  expect(dark).toBeLessThan(lit - 60);                       // the cap is drawn, in the part colour × shade
+  await page.evaluate(() => { (window as any).__studio.ui.caps = false; });
+  const noCap = await centre();
+  expect(noCap).not.toBe(dark);                               // no cap: we see into the box (its far inside wall)
+});

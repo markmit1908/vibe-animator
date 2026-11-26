@@ -2,7 +2,7 @@
 
 ## Model and scene
 - [ ] Real dimensions for the placeholder reactor (all dimensions are placeholders)
-- [ ] Section caps on clipped shells (cutaway)
+- [ ] Section caps: optional hatching; exact cap planes (stencil) if needed
 - [ ] 3D callout labels
 - [ ] Outlines for imported CAD (inverted hulls are only on the generated model)
 - [ ] Batch locked repeated parts into InstancedMesh at runtime (fewer draw calls on the plant model)

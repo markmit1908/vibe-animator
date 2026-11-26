@@ -256,6 +256,13 @@ export class ScriptPanel {
       }
       const cut = before.match(/^\s*cutaway\s+(\w*)$/);
       if (cut) return kw(from, ['none', 'half', 'quarter']);
+      const cut2 = before.match(/^\s*cutaway\s+(half|quarter)\b(.*?)(\w*)$/);
+      if (cut2) {
+        if (/\bat\s*$/.test(cut2[2])) return null;      // a point or target follows
+        if (/\bnocap\b/.test(cut2[2])) return null;
+        const sides = /\bat\b/.test(cut2[2]) ? [] : ['x', '-x', 'y', '-y', 'z', '-z'];
+        return kw(from, [...sides, ...(/\bat\b/.test(cut2[2]) ? [] : ['at']), 'nocap']);
+      }
       // after the target(s): the step's keywords
       const am = before.match(/^\s*(\w+)\s+(?:others\s+)?[^\s,]+(?:\s*,\s*[^\s,]+)*\s+(.*)$/);
       if (!am) return null;

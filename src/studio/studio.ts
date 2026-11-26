@@ -7,6 +7,7 @@ import { buildScene } from '../scene/build';
 import { compile } from '../timeline/compile';
 import { Player } from '../timeline/player';
 import { fitVerticalCylinder, planeHeight } from '../scene/origin';
+import { capUniforms, withCaps } from '../view/caps';
 import { applyCutaway, cutLine, DEFAULT_SIDES, type Cut, type CutMode, type CutSide } from '../view/cutaway';
 import { CadManager } from '../scene/cad';
 import { setStore, setStoreWriter, store, useSnapshot, captureSnapshot, writeStore, markDirty, isDirty, onDirtyChange,
@@ -201,6 +202,7 @@ function applyColors() {
       if (!m.userData.baseMat0) { m.userData.baseMat0 = cur; coloured.push(m); }
       const c = (m.userData.baseMat0 as THREE.Material).clone() as THREE.MeshToonMaterial;
       c.clippingPlanes = (m.userData.baseMat0 as THREE.Material).clippingPlanes; // clone() copies the planes; keep the live cutaway ones
+      withCaps(c);
       c.color?.set(hex);
       setMat(m, c);
       m.userData.ownMat = true; // the compiler's highlight/fade may change it without cloning again
@@ -330,6 +332,8 @@ const ui = {
   quarterSides: 'x z',
   cutAt: [0, 0, 0] as number[],
   cutCentre: 'origin',
+  caps: true,
+  capShade: 0.55,
   xray: false,
   followCamera: true,
 };
@@ -342,6 +346,8 @@ pb.add(ui, 'speed', 0.25, 8, 0.25).onChange((v: number) => (player.speed = v));
 const timeCtl = pb.add(ui, 'time', 0, player.duration, 0.01).name('Time (s)').onChange((v: number) => { player.playing = false; player.seek(v); });
 const view = gui.addFolder('View');
 view.add(ui, 'cutaway', ['script', 'none', 'half', 'quarter']).name('Cutaway');
+view.add(ui, 'caps').name('Caps (section faces)');
+view.add(ui, 'capShade', 0.25, 0.95, 0.05).name('Cap shade').onChange((v: number) => (capUniforms.capShade.value = v));
 view.add(ui, 'halfSide', { '+x side': 'x', '−x side': '-x', '+z side': 'z', '−z side': '-z', 'top (+y)': 'y', 'bottom (−y)': '-y' }).name('Half removes');
 view.add(ui, 'quarterSides', { '+x +z': 'x z', '+x −z': 'x -z', '−x +z': '-x z', '−x −z': '-x -z' }).name('Quarter removes');
 const centreCtl = view.add(ui, 'cutCentre').name('Cut centre').disable();
@@ -368,7 +374,7 @@ view.add(cutActions, 'insert').name('⤓ Insert this cut into the script');
 /** The cut the Controls choose. */
 function uiCut(): Cut {
   const mode = (ui.cutaway === 'script' ? 'half' : ui.cutaway) as CutMode;
-  return { mode, sides: mode === 'half' ? [ui.halfSide] : mode === 'quarter' ? ui.quarterSides.split(' ') as CutSide[] : DEFAULT_SIDES[mode], at: ui.cutAt };
+  return { mode, sides: mode === 'half' ? [ui.halfSide] : mode === 'quarter' ? ui.quarterSides.split(' ') as CutSide[] : DEFAULT_SIDES[mode], at: ui.cutAt, nocap: !ui.caps };
 }
 view.add(ui, 'xray').name('X-ray shells').onChange((on: boolean) => built.shellMaterials.forEach((m) => {
   m.userData.orig ??= m.userData.baseOpacity ?? m.opacity;
@@ -1298,7 +1304,9 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1);
   if (player.playing) player.tick(dt); else player.seek(player.time);
 
-  applyCutaway(built, ui.cutaway === 'script' ? (player.current('cutaway')?.value ?? 'none') as Cut | CutMode : uiCut());
+  const cutNow = ui.cutaway === 'script' ? (player.current('cutaway')?.value ?? 'none') as Cut | CutMode : uiCut();
+  applyCutaway(built, cutNow);
+  capUniforms.capOn.value = ui.caps && !(typeof cutNow === 'object' && cutNow.nocap) ? 1 : 0;
 
   if (ui.followCamera) { camera.position.copy(player.tl.camera.pos); controls.target.copy(player.tl.camera.look); }
   controls.update();
@@ -1386,7 +1394,12 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 }
 
 // read-only handle for tests and debugging
-(window as any).__studio = { built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, assist: { host: assistHost, mount: assist }, get player() { return player; } };
+(window as any).__studio = { built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, capUniforms, withCaps,
+  /** tests: a closed 2 m box at the origin with a capped, clipped part material */
+  addTestBox: () => {
+    const m = withCaps(new THREE.MeshToonMaterial({ color: 0xd0d0d0, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));
+    const b = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), m); b.position.y = 1; built.root.add(b);
+  }, assist: { host: assistHost, mount: assist }, get player() { return player; } };
 
 return {
   dispose() {

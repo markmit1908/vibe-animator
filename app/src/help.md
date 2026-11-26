@@ -63,6 +63,7 @@ camera overview 2s                    # a view saved with the Views tool
 label "Remove lid" "subtitle"
 cutaway quarter
 cutaway half -z at @reactor          # side removed (x -x y -y z -z), centred on a point or target
+cutaway half nocap                    # cut faces are capped (darker part colour); nocap leaves them open
 wait 2s
 parallel {
   move @lid by [4,0,0] 5s

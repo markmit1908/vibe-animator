@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { withCaps } from '../view/caps';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { BuiltScene } from './build';
 
@@ -106,10 +107,10 @@ export class CadManager {
       const src = mesh.material as THREE.MeshStandardMaterial;
       let mat = this.matCache.get(src);
       if (!mat) {
-        mat = new THREE.MeshToonMaterial({
+        mat = withCaps(new THREE.MeshToonMaterial({
           color: src.color ?? new THREE.Color(0xdddddd), gradientMap: ramp, side: THREE.DoubleSide,
           clippingPlanes: this.scene.clipPlanes, clipIntersection: true, // the cutaway cuts CAD too
-        });
+        }));
         this.matCache.set(src, mat);
       }
       mesh.material = mat;
