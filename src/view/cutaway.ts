@@ -27,7 +27,7 @@ export function applyCutaway(scene: BuiltScene, cutIn: Cut | CutMode) {
   const cut = toCut(cutIn);
   const sides = cut.mode === 'none' ? [] : (cut.sides ?? []).slice(0, cut.mode === 'half' ? 1 : 2);
   const c = new THREE.Vector3(...(cut.at ?? [0, 0, 0]));
-  capUniforms.cutActive.value = sides.length ? 1 : 0;
+  capUniforms.cutActive.value = sides.length;
   scene.clipPlanes.forEach((pl, i) => {
     const sd = sides[i];
     if (!sd) {

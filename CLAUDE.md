@@ -46,6 +46,8 @@ used to illustrate the concept. Delivered live in a browser.
 
 - Lists/loops: `list @x = …` (compile.ts `lists`, checked against tree groups) and `each T [stagger d] [order o] { … }`: compiled per item with `$` swapped for the id and `$i` as an expression var (vector components may be `{… $i …}`); only the first item records `Timeline.lines` (`recordLines`). Globs without `/` also match short names, natural-sorted.
 
+- Section caps (`src/view/caps.ts`, stencil): per cut plane, the parts (materials with `userData.capped`, set by `withCaps`) are drawn into the stencil with Invert (no colour, no depth test, clipped by that plane only) – odd = inside a solid – then a quad on the plane is drawn where the bit is set. Cap colour: a pass drawing only back faces (part colour × shade, alpha = hashed mesh id) into a texture the quad samples; in the line views' normal pass the quad draws the id as a direction so each part's section is outlined. The renderer and the hidden-line RT need a stencil buffer. Call `withCaps` on every new/cloned part material.
+
 - Undo/redo (studio.ts): every change goes through `edit()`, which records the prior `docNow` (colors, snapshots, groups, labels, removed, script) once per 400 ms burst; `restoreDoc` reapplies a state in place. Script typing (`change(text, typed=true)`) is the editor's own undo and strips `script` from older entries. New persistent state must be added to `UNDO_KEYS` and `restoreDoc`.
 
 - Docs to keep in step with features: `README.md` (user guide + script reference), `app/src/help.md` (in-app Help, one topic per heading), `src/assist/system.ts` (the assistant's language reference – stable text, it's prompt-cached), the header of `src/script/anim.ts`.

@@ -7,7 +7,7 @@ import { buildScene } from '../scene/build';
 import { compile } from '../timeline/compile';
 import { Player } from '../timeline/player';
 import { fitVerticalCylinder, planeHeight } from '../scene/origin';
-import { capUniforms, withCaps } from '../view/caps';
+import { capUniforms, SectionCaps, withCaps } from '../view/caps';
 import { applyCutaway, cutLine, DEFAULT_SIDES, type Cut, type CutMode, type CutSide } from '../view/cutaway';
 import { CadManager } from '../scene/cad';
 import { setStore, setStoreWriter, store, useSnapshot, captureSnapshot, writeStore, markDirty, isDirty, onDirtyChange,
@@ -105,7 +105,7 @@ let scriptErrors: ParseError[] = parseAnim(animText).errors;
 // ---------- renderer / scene ----------
 // alpha: PNG export with a transparent background; logarithmic depth: precision across the whole plant (less z-fighting
 // where parts touch). The hidden-line pass decodes it (drawing.ts lin()).
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, logarithmicDepthBuffer: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, logarithmicDepthBuffer: true, stencil: true }); // stencil: section caps
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(W(), H());
 renderer.localClippingEnabled = true;
@@ -898,6 +898,8 @@ const triad = new Triad();
 
 // ---------- view toolbar (floating, top right of the viewport): style, standard views, PNG export ----------
 const drawing = new DrawingMode(renderer, built.clipPlanes);
+const caps = new SectionCaps(built.clipPlanes);
+drawing.caps = caps;
 const viewDirs: Record<string, [number, number, number]> = { iso: [1, 0.8, 1.1], front: [0, 0, 1], top: [0, 1, 0.0001], side: [1, 0, 0] };
 function viewFrom(dir: [number, number, number]) {
   const b = new THREE.Box3();
@@ -1013,8 +1015,8 @@ function exportPng() {
 
 /** One frame of the main view in the current style (+ gizmo on top in drawing mode). */
 function drawFrame() {
-  if (!drawing.enabled) { renderer.render(scene3, camera); return; }
-  if (drawing.overlay) renderer.render(scene3, camera);   // shaded + outline: the cel-shaded frame, lines on top
+  if (!drawing.enabled) { renderer.render(scene3, camera); caps.render(renderer, scene3, camera, null); return; }
+  if (drawing.overlay) { renderer.render(scene3, camera); caps.render(renderer, scene3, camera, null); }   // shaded + outline: the cel-shaded frame, lines on top
   drawing.render(scene3, camera);
   const h = gizmo.getHelper();
   if (gizmo.object) { renderer.autoClear = false; renderer.clearDepth(); renderer.render(h, camera); renderer.autoClear = true; }
@@ -1396,7 +1398,15 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 }
 
 // read-only handle for tests and debugging
-(window as any).__studio = { built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, capUniforms, withCaps, renderer, scene3, drawFrame, THREE,
+(window as any).__studio = { built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, capUniforms, withCaps, caps, renderer, scene3, drawFrame, THREE,
+  /** tests: three touching boxes stacked (the joints are where back-face caps failed), each with a hole */
+  addTestStack: () => {
+    const cols = [0x6fa86f, 0x6f8fd0, 0xd08f6f];
+    cols.forEach((col, i) => {
+      const m = withCaps(new THREE.MeshToonMaterial({ color: col, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));
+      const b = new THREE.Mesh(new THREE.BoxGeometry(2, 1, 2), m); b.position.y = 0.5 + i; built.root.add(b);
+    });
+  },
   /** tests: a closed 2 m box at the origin with a capped, clipped part material */
   addTestBox: () => {
     const m = withCaps(new THREE.MeshToonMaterial({ color: 0xd0d0d0, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));

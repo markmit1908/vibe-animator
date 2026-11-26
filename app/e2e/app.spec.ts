@@ -724,3 +724,37 @@ test("section caps: a cut solid shows a darker cap face (off with nocap / the Ca
   const noCap = await centre();
   expect(noCap).not.toBe(dark);                               // no cap: we see into the box (its far inside wall)
 });
+
+test("stencil section caps: touching parts get flat caps in their own colour (no streaks at the joints)", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await page.goto("/");
+  const m = { name: "Stack", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] },
+    script: { language: "anim", text: 'camera [6,4,3] look [0,1.5,0]\nlabel "S"\ncutaway half' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Stack");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const samples = await page.evaluate(async () => {
+    const s = (window as any).__studio; s.addTestStack();
+    await new Promise((r) => setTimeout(r, 300));
+    s.drawFrame();
+    const cv = s.renderer.domElement as HTMLCanvasElement;
+    const c2 = document.createElement("canvas"); c2.width = cv.width; c2.height = cv.height; const g = c2.getContext("2d")!; g.drawImage(cv, 0, 0);
+    // points on the cut plane x = 0 inside each block (block i spans y i..i+1), incl. close to the joints
+    const out: Record<number, number[][]> = { 0: [], 1: [], 2: [] };
+    for (let i = 0; i < 3; i++) for (const y of [0.08, 0.5, 0.92]) for (const z of [-0.7, 0, 0.7]) {
+      const v = new s.THREE.Vector3(0, i + y, z).project(s.camera);
+      const px = Math.round((v.x + 1) / 2 * cv.width), py = Math.round((1 - v.y) / 2 * cv.height);
+      out[i].push([...g.getImageData(px, py, 1, 1).data.slice(0, 3)]);
+    }
+    return out;
+  });
+  const expected = [[0x6f, 0xa8, 0x6f], [0x6f, 0x8f, 0xd0], [0xd0, 0x8f, 0x6f]];
+  for (let i = 0; i < 3; i++) {
+    // flat: every sample of a block's cap is the same colour, the block's colour × the cap shade (sRGB-ish: darker, same hue)
+    const first = samples[i][0];
+    for (const px of samples[i]) for (let k = 0; k < 3; k++) expect(Math.abs(px[k] - first[k])).toBeLessThan(6);
+    const dominant = expected[i].indexOf(Math.max(...expected[i]));
+    expect(first.indexOf(Math.max(...first))).toBe(dominant);
+    expect(Math.max(...first)).toBeLessThan(Math.max(...expected[i]));
+  }
+});

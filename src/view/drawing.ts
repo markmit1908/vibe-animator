@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { withCapNormal } from './caps';
+import type { SectionCaps } from './caps';
 
 /**
  * "Hidden line" drawing mode: black visible edges on white, hidden edges removed.
@@ -30,12 +30,13 @@ export class DrawingMode {
   private mat: THREE.ShaderMaterial;
   /** objects hidden during the normal pass (edge lines, outline hulls, helpers) */
   private decor: THREE.Object3D[] = [];
+  /** section caps, drawn into the normal pass (so the cut is outlined) */
+  caps?: SectionCaps;
 
   constructor(private renderer: THREE.WebGLRenderer, clipPlanes: THREE.Plane[]) {
-    this.rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
-    this.rt.depthTexture = new THREE.DepthTexture(1, 1);
+    this.rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, stencilBuffer: true });   // stencil: section caps
+    this.rt.depthTexture = new THREE.DepthTexture(1, 1, THREE.UnsignedInt248Type, undefined, undefined, undefined, undefined, undefined, undefined, THREE.DepthStencilFormat);
     this.normalMat.clippingPlanes = clipPlanes;
-    withCapNormal(this.normalMat);   // section caps: an outline where each cap meets the walls
     this.normalMat.clipIntersection = true;
     this.mat = new THREE.ShaderMaterial({
       uniforms: {
@@ -104,6 +105,8 @@ export class DrawingMode {
     r.render(scene, camera);
     r.setRenderTarget(null);
     scene.background = bg; scene.overrideMaterial = ov;
+    this.caps?.render(r, scene, camera, this.rt);
+    r.setRenderTarget(null);
     this.decor.forEach((o, i) => (o.visible = vis[i]));
     // 2) edges
     const u = this.mat.uniforms;
