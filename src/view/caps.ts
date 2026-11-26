@@ -100,8 +100,10 @@ export function partHook(m: THREE.Mesh) { if (m.onBeforeRender !== onPartRender)
 
 export class SectionCaps {
   /** per plane: Σ±colour / count (rgb, a), and Σ±id / count (r, a) */
-  private colourRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
-  private idRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
+  // 32-bit floats: the sums add and cancel every part along the ray; half floats leave rounding residue that shows as
+  // ghost outlines of parts behind the cut (an id change to the edge pass)
+  private colourRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.FloatType });
+  private idRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.FloatType });
   private sumMat: THREE.ShaderMaterial;
   private capMat: THREE.MeshBasicMaterial;
   private quad: THREE.Mesh;
@@ -111,6 +113,7 @@ export class SectionCaps {
   private idsMode = { value: 0 };
   private box?: THREE.Box3;
   private boxAge = 0;
+  private floatChecked = false;
 
   constructor(private planes: THREE.Plane[]) {
     this.sumMat = partPassMaterial('capSum', []);
@@ -122,11 +125,28 @@ export class SectionCaps {
       // neighbouring parts' sections are outlined), and the id in alpha as in the normal pass
       sh.fragmentShader = 'uniform sampler2D capTex; uniform sampler2D idTex; uniform vec2 capRes; uniform float capIds;\n' +
         sh.fragmentShader.replace('#include <map_fragment>',
-          `vec2 suv = gl_FragCoord.xy / capRes;
+          `// a pixel exactly on a buried part's silhouette can count the part's near face but not its far one (GPU tie-
+           // breaking on shared edges), leaving a stray ±1 / id: take the most common count in the 3×3 neighbourhood
+           // and that neighbour's sums, so isolated pixels and 1-px lines are out-voted
+           float cnts[9]; vec2 offs[9];
+           for (int k = 0; k < 9; k++) {
+             vec2 o = vec2(float(k - (k / 3) * 3 - 1), float(k / 3 - 1));
+             offs[k] = o;
+             cnts[k] = floor(texture2D(capTex, (gl_FragCoord.xy + o) / capRes).a + 0.5);
+           }
+           int best = 4; int bestN = 0;
+           for (int k = 0; k < 9; k++) {
+             int nk = 0;
+             for (int j = 0; j < 9; j++) if (cnts[j] == cnts[k]) nk++;
+             if (nk > bestN || (nk == bestN && k == 4)) { bestN = nk; best = k; }
+           }
+           float cnt = 0.0; vec2 bo = vec2(0.0);
+           for (int k = 0; k < 9; k++) if (k == best) { cnt = cnts[k]; bo = offs[k]; }
+           if (abs(cnt) < 0.5) discard;
+           vec2 suv = (gl_FragCoord.xy + bo) / capRes;
            vec4 cs = texture2D(capTex, suv);
-           if (abs(cs.a) < 0.5) discard;
-           float id = capIds > 0.5 ? texture2D(idTex, suv).r / cs.a : 0.0;
-           diffuseColor.rgb = capIds > 0.5 ? vec3(0.5 + 0.5 * cos(id * 6.2832), 0.5 + 0.5 * sin(id * 6.2832), 0.95) : clamp(cs.rgb / cs.a, 0.0, 1.0);`)
+           float id = capIds > 0.5 ? texture2D(idTex, suv).r / cnt : 0.0;
+           diffuseColor.rgb = capIds > 0.5 ? vec3(0.5 + 0.5 * cos(id * 6.2832), 0.5 + 0.5 * sin(id * 6.2832), 0.95) : clamp(cs.rgb / cnt, 0.0, 1.0);`)
           .replace(/\}\s*$/, '  if (capIds > 0.5) gl_FragColor.a = id;\n}');
     };
     this.capMat.toneMapped = false;
@@ -154,6 +174,11 @@ export class SectionCaps {
   /** Draw the caps into `target` (null = the screen, or the line views' normal pass), after the scene is drawn there. */
   render(r: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, target: THREE.WebGLRenderTarget | null) {
     if (!this.active) return;
+    if (this.floatChecked !== true) {
+      // additive blending into float targets needs EXT_float_blend (desktop GPUs have it); else half floats
+      this.floatChecked = true;
+      if (!r.extensions.get('EXT_float_blend')) for (const rt of [this.colourRT, this.idRT]) { rt.texture.type = THREE.HalfFloatType; rt.dispose(); }
+    }
     const n = Math.min(capUniforms.cutActive.value, this.planes.length);
     const restore = this.partsOnly(scene);
     const bg = scene.background, ov = scene.overrideMaterial, ac = r.autoClear;

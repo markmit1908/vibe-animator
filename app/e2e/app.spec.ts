@@ -854,3 +854,28 @@ test("section caps: a part buried behind the cut (dowel without a hole) doesn't 
   // the cap in front of the buried dowel is the block's cap colour, same as beside it
   expect(px.infront.every((v: number, k: number) => Math.abs(v - px.beside[k]) < 8)).toBe(true);
 });
+
+test("section caps: no ghost lines in the cap from many parts buried behind the cut (hidden line)", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await page.goto("/");
+  const m = { name: "Ghosts", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] },
+    script: { language: "anim", text: 'camera [7,1,0.01] look [0,1,0]\nlabel "G"\ncutaway half' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Ghosts");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  await page.locator("#viewbar button", { hasText: "Hidden line" }).click();
+  const dark = await page.evaluate(async () => {
+    const s = (window as any).__studio; s.addTestBuried(60);
+    await new Promise((r) => setTimeout(r, 300));
+    s.drawFrame();
+    const cv = s.renderer.domElement as HTMLCanvasElement;
+    const c2 = document.createElement("canvas"); c2.width = cv.width; c2.height = cv.height; const g = c2.getContext("2d")!; g.drawImage(cv, 0, 0);
+    // the cap's inner area: the cut face of the big block (x = 0, y 0.3..1.7, z −1.2..1.2)
+    const P = (y: number, z: number) => { const v = new s.THREE.Vector3(0, y, z).project(s.camera); return [Math.round((v.x + 1) / 2 * cv.width), Math.round((1 - v.y) / 2 * cv.height)]; };
+    const [x0, y0] = P(1.7, -1.2), [x1, y1] = P(0.3, 1.2);
+    const d = g.getImageData(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0)).data;
+    let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] < 200) n++;
+    return n;
+  });
+  expect(dark).toBe(0);
+});

@@ -1400,6 +1400,15 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 
 // read-only handle for tests and debugging
 (window as any).__studio = { built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
+  /** tests: a block with many small parts buried behind the cut plane (x < 0), like dowels without holes */
+  addTestBuried: (count = 60) => {
+    const mk = (col: number) => withCaps(new THREE.MeshToonMaterial({ color: col, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));
+    const b = new THREE.Mesh(new THREE.BoxGeometry(3, 2, 3), mk(0x8f8fb0)); b.position.y = 1; b.userData.id = 'test-big'; built.root.add(b);
+    for (let i = 0; i < count; i++) {
+      const c = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.4, 16), mk(0xb0b0b0));
+      c.position.set(-0.15 - (i % 6) * 0.22, 0.4 + Math.floor(i / 6) % 5 * 0.3, -1.2 + (i * 0.37) % 2.4); c.userData.id = `test-pin-${i}`; built.root.add(c);
+    }
+  },
   /** tests: a block with a dowel overlapping it (no modelled hole – common in CAD assemblies) */
   addTestDowel: () => {
     const mk = (col: number) => withCaps(new THREE.MeshToonMaterial({ color: col, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));
