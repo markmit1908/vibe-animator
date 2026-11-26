@@ -241,7 +241,9 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
     scene.registry.get(id)!.traverse((m) => {
       const mesh = m as THREE.Mesh;
       if (!mesh.isMesh || mesh.userData.ownMat) return;
-      const own = ((mesh.userData.origMat ?? mesh.material) as THREE.Material).clone();
+      const src = (mesh.userData.origMat ?? mesh.material) as THREE.Material;
+      const own = src.clone();
+      own.clippingPlanes = src.clippingPlanes;   // clone() copies the planes; keep the live cutaway ones
       if (mesh.userData.origMat) mesh.userData.origMat = own; else mesh.material = own;
       mesh.userData.ownMat = true;
     });

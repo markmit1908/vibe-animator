@@ -200,6 +200,7 @@ function applyColors() {
       if (!m.isMesh || !cur || cur.side === THREE.BackSide) return; // outline hulls stay black
       if (!m.userData.baseMat0) { m.userData.baseMat0 = cur; coloured.push(m); }
       const c = (m.userData.baseMat0 as THREE.Material).clone() as THREE.MeshToonMaterial;
+      c.clippingPlanes = (m.userData.baseMat0 as THREE.Material).clippingPlanes; // clone() copies the planes; keep the live cutaway ones
       c.color?.set(hex);
       setMat(m, c);
       m.userData.ownMat = true; // the compiler's highlight/fade may change it without cloning again

@@ -670,3 +670,25 @@ test("set origin moves the CAD and the saved cameras so the point is (0,0,0)", a
   expect(saved.views.side).toEqual({ pos: [9, 0, -3], look: [0, 0, 0] });
   expect(saved.snapshots.items.default.camera).toEqual({ pos: [4, 3, 2], look: [0, 0, 0] });
 });
+
+test("the cutaway also cuts parts with a base colour or a script fade/colour (shaded view)", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "CutCol", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "C"\nfade head to 0.5 1s\ncolor barrel #ff0000\ncutaway half' },
+    snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {}, colors: { vessel: "#2e86de" } };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "CutCol");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const live = await page.evaluate(() => {
+    const s = (window as any).__studio; s.player.playing = false; s.player.seek(2);
+    const out: Record<string, boolean> = {};
+    for (const id of ["vessel", "head", "barrel"]) {
+      let ok = true;
+      s.built.registry.get(id).traverse((x: any) => { const mt = x.userData?.origMat ?? x.material;
+        if (x.isMesh && mt.side !== 1 && mt.clippingPlanes?.length && mt.clippingPlanes !== s.built.clipPlanes) ok = false; });
+      out[id] = ok;
+    }
+    return out;
+  });
+  expect(live).toEqual({ vessel: true, head: true, barrel: true });
+});
