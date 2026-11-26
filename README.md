@@ -107,6 +107,7 @@ save into the active snapshot automatically. **Save** also records the camera; *
 | **Show all** | Unblanks every part |
 | **Select by name** (**F**) | Selects every part whose name contains the text you type (or matches a `*` glob) – then blank, group or colour them |
 | **Set origin** (⊕) | Click a cylindrical face (its vertical axis, fitted from the mesh), then a flat face (its height); after you confirm, the CAD moves so that point is (0, 0, 0). Saved views and snapshot cameras move with it; absolute numbers in the script don't |
+| **Shape** (◇) | Basic modelling: add a box, cylinder, tube, sphere, cone, plane or hex prism – sizes, position, rotation, colour, and a linear or circular array (e.g. a bolt circle). Select a shape to edit it (changes apply as you type); Duplicate, Delete. Shapes are listed under **Shapes** in the tree, start unlocked, and cut, cap and outline like CAD |
 | **Thumbnail** (📌) | This moment (time, camera, view style) becomes the card image on Home, re-rendered as the animation changes. A `thumbnail` script step wins; without either, the card is the opening frame |
 | **Views** (📷) | Saves the camera (position and target) under a name, goes back to it, or inserts `camera <name> 2s` into the script |
 | **Group** (**G**) | Makes a group (`@name`) from the selection |
@@ -144,6 +145,7 @@ One step per line; steps run in sequence. `#` starts a comment. Durations: `2s`,
 **Targets** (`TARGET` above):
 - a part's **id** (tree → Copy id)
 - its **short name**, the last segment of the id (e.g. `F1-14-3`), or its **display name**, when only one part has it
+- a **shape** by its name (`pipe`); an array's copies are `bolt-0`, `bolt-1`… (`bolt-*` for all of them)
 - a group or list **`@name`**
 - **`~text`**: every part whose name contains *text* (case-insensitive), e.g. `blank ~V-005202-001 1s`
 - a **glob** with `*`: over short names (`F1-*-3`) or full ids (`R1-1/L*`)
@@ -226,7 +228,7 @@ Every node appears in the tree with an id `plant/<child>/…`; duplicate sibling
 | `app/` | The SolverKit app: `src/main.tsx` (manifest, Home), `src/module.tsx` (modules, Studio view), `src/studio.tsx` (mounts the studio; card images), `src/assist.tsx` (SolverKit's AssistPanel + our proposal cards), `src/importOld.ts`, `src/help.md`, `server/` (vault store, files, assist key proxy), `e2e/` (Playwright suite) |
 | `src/model/file.ts` | The animation file format (SolverKit envelope, `solver: refuel-anim`, format 1) and its JSON schema |
 | `src/studio/studio.ts` | The Studio: 3D view, tree, script, assist, tools bar, undo, thumbnails – for one animation |
-| `src/scene/` | Scene build (incl. the generated placeholder reactor), CAD loading/suppression, part state, origin fitting |
+| `src/scene/` | Scene build (incl. the generated placeholder reactor), CAD loading/suppression, part state, origin fitting, shapes (`shapes.ts`) |
 | `src/script/`, `src/timeline/` | `.anim` parser, compiler, player, gizmo write-back |
 | `src/view/` | Tree, script panel, hidden-line drawing (`drawing.ts`), section caps (`caps.ts`), cutaway, palette, triad |
 | `src/assist/` | Assist loop (Anthropic SDK over the key proxy), tools, system prompt, the host interface for the panel |
@@ -239,8 +241,9 @@ Every node appears in the tree with an id `plant/<child>/…`; duplicate sibling
 - [x] `.anim` scripts: live editing, context-sensitive completion, gizmo write-back, picking, lists and staggered loops
 - [x] Assembly: lock/hide/suppress, groups, colours and palette, rename, remove/restore, snapshots, undo/redo
 - [x] Tools bar: blank / blank others / show all, select by name, set origin, camera views, thumbnail
+- [x] Basic modelling: box, cylinder, tube, sphere, cone, plane, hex prism; linear / circular arrays
 - [x] Cutaways with sections (side, centre) and section caps; hidden-line and shaded + outline views; PNG export
 - [x] AI assist (SolverKit's panel) with proposals
 - [x] STEP → glTF with multi-body splitting and re-instancing
 - [ ] Real dimensions for the placeholder reactor
-- [ ] Basic geometry modelling, video export, 3D callout labels – see `TODO.md`
+- [ ] Extrude / boolean modelling, video export, 3D callout labels – see `TODO.md`

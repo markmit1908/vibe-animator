@@ -34,6 +34,8 @@ const ramp = (() => {
   return t;
 })();
 const toon = (p: THREE.MeshToonMaterialParameters) => withCaps(new THREE.MeshToonMaterial({ gradientMap: ramp, ...p }));
+/** The cel-shaded part material (shared ramp, section caps), for parts made elsewhere (shapes). */
+export const toonMaterial = toon;
 // Inverted-hull outline material (thick black silhouette).
 const hullMat = new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.BackSide });
 // axial hex directions

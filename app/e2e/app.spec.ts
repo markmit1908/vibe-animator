@@ -905,3 +905,57 @@ test("thumbnail: the button saves a keyframe and sends the card; a script thumbn
   await expect(page.locator("#script .status")).toHaveText("✓");
   await expect.poll(() => page.evaluate(() => (window as any).__studio.thumbFrame())).toMatchObject({ from: "script", mode: "outline", t: 4 });
 });
+
+test("basic modelling: add a shape, edit it, a circular array scriptable by name, rename follows the script, undo, delete", async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.goto("/");
+  const m = { name: "Shapes", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] },
+    script: { language: "anim", text: 'label "S"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Shapes");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const pop = page.locator("#toolsbar .shpop");
+  await page.locator("#toolsbar [data-t=shape]").click();
+  await pop.locator('[data-f="kind"]').selectOption("cylinder");
+  await pop.locator('[data-f="size0"]').fill("0.25");
+  await pop.locator('[data-f="size1"]').fill("2");
+  for (const [i, v] of ["1.5", "1", "0"].entries()) await pop.locator(`[data-f="pos${i}"]`).fill(v);
+  await pop.getByRole("button", { name: "Add shape" }).click();
+  await expect.poll(async () => (await model(page, a.id)).shapes?.[0]).toMatchObject({ id: "cylinder-1", kind: "cylinder", size: [0.25, 2], position: [1.5, 1, 0] });
+  await expect(page.locator("#tree .row", { hasText: "cylinder-1" }).first()).toBeVisible();
+  const bbox = (id: string) => page.evaluate((id) => { const s = (window as any).__studio; const b = new s.THREE.Box3().setFromObject(s.built.registry.get(id));
+    return [b.min.toArray(), b.max.toArray()].map((v: number[]) => v.map((x) => +x.toFixed(2))); }, id);
+  expect(await bbox("shapes/cylinder-1")).toEqual([[1.25, 0, -0.25], [1.75, 2, 0.25]]);
+  // the panel now edits the selected shape: height 3 (applies as you type)
+  await expect(pop).toContainText("Shape cylinder-1");
+  await pop.locator('[data-f="size1"]').fill("3");
+  await expect.poll(() => bbox("shapes/cylinder-1")).toEqual([[1.25, -0.5, -0.25], [1.75, 2.5, 0.25]]);
+  // a circular array of 6 about the origin
+  await pop.locator('[data-f="atype"]').selectOption("circular");
+  await pop.locator('[data-f="count"]').fill("6");
+  await expect.poll(async () => (await model(page, a.id)).shapes?.[0].array).toMatchObject({ type: "circular", count: 6, centre: [0, 0], angle: 360 });
+  const copy3 = await page.evaluate(() => (window as any).__studio.built.registry.get("shapes/cylinder-1/cylinder-1-3")?.position.toArray().map((v: number) => +v.toFixed(2) + 0));
+  expect(copy3).toEqual([-1.5, 1, 0]);   // half way round
+  // scripts reach a copy by its short name
+  await page.locator("#script .cm-content").click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Meta+ArrowDown");
+  await page.keyboard.type("\nmove cylinder-1-3 by [0,1,0] 1s");
+  await expect(page.locator("#script .status")).toHaveText("✓");
+  // rename: the script follows
+  await page.locator("#tree .row", { has: page.locator(".lbl", { hasText: /^cylinder-1$/ }) }).first().click();
+  await page.evaluate(() => { (window as any).__mark = (window as any).__studio; });
+  await pop.locator('[data-f="id"]').fill("pins");
+  await expect(page.locator("#script .cm-content")).toContainText("move pins-3 by [0,1,0] 1s");
+  await expect(page.locator("#script .status")).toHaveText("✓");
+  // a cut through the shapes is capped like any part
+  const capped = await page.evaluate(() => { let n = 0; (window as any).__studio.built.registry.get("shapes/pins").traverse((x: any) => { if (x.isMesh && x.material.userData.capped) n++; }); return n; });
+  expect(capped).toBe(6);
+  // undo the rename, then delete
+  expect(await page.evaluate(() => (window as any).__mark === (window as any).__studio)).toBe(true);   // no remount from a burst of edits
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.waitForTimeout(500);
+  await pop.getByRole("button", { name: "Delete" }).click();
+  await expect.poll(async () => (await model(page, a.id)).shapes).toEqual([]);
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect.poll(async () => (await model(page, a.id)).shapes?.[0]?.id).toBe("pins");
+  await expect.poll(() => page.evaluate(() => !!(window as any).__studio.built.registry.get("shapes/pins/pins-5"))).toBe(true);
+});

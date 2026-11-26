@@ -33,11 +33,14 @@ export function StudioView({ c }: { c: Context }) {
   const ctx = useRef(c);
   ctx.current = c;
   const mine = useRef(content(c.model));   // the content as the studio last saw or wrote it
+  // the model as the studio has written it so far: each patch accumulates here – the frame applies edits
+  // asynchronously, so its model can lag behind a burst of edits (which then looked like an outside change)
+  const written = useRef<Partial<Model>>(c.model);
   const [generation, setGeneration] = useState(0);
 
   // an outside change: remount with the new model
   useEffect(() => {
-    if (content(c.model) !== mine.current) { mine.current = content(c.model); setGeneration((g) => g + 1); }
+    if (content(c.model) !== mine.current) { mine.current = content(c.model); written.current = c.model; setGeneration((g) => g + 1); }
   }, [c.model]);
 
   // mounts run one after another: a studio still loading when its effect is cleaned up (React StrictMode mounts
@@ -49,9 +52,11 @@ export function StudioView({ c }: { c: Context }) {
       if (gone) return;
       const model = ctx.current.current();
       mine.current = content(model);
+      written.current = model;
       const s = await mountStudio(host.current!, model, {
         edit: (patch) => {
-          mine.current = content({ ...ctx.current.current(), ...(patch as Partial<Model>) });
+          written.current = { ...written.current, ...(patch as Partial<Model>) };
+          mine.current = content(written.current);
           ctx.current.edit(patch as Partial<Model>);
         },
         fileUrl,

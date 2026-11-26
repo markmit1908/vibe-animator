@@ -22,6 +22,7 @@ One step per line; steps run in sequence. \`parallel { … }\` runs the steps in
 TARGET is one of:
 - a part id from the assembly tree (e.g. plant/model/root/V-010001-511_A/…)
 - a part's short name – the last segment of its id (e.g. F1-14-3) – or its display name, when only one part has it
+- a shape the user made (Shapes in the tree): its name, e.g. \`pipe\`; an array's copies are \`bolt-0\`, \`bolt-1\`… (glob \`bolt-*\`)
 - a user group or script list \`@name\`
 - ~text: every part whose name contains text (case-insensitive), e.g. blank ~V-005202-001 1s
 - a glob with *: over short names (F1-*-3) or full ids

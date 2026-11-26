@@ -7,6 +7,7 @@ import { buildScene } from '../scene/build';
 import { compile } from '../timeline/compile';
 import { Player } from '../timeline/player';
 import { fitVerticalCylinder, planeHeight } from '../scene/origin';
+import { buildShape, freeName, KINDS, SHAPES_ROOT, shapePartId, SIZES, validName, type ShapeDef, type ShapeKind } from '../scene/shapes';
 import { capUniforms, SectionCaps, withCaps } from '../view/caps';
 import { applyCutaway, cutLine, DEFAULT_SIDES, type Cut, type CutMode, type CutSide } from '../view/cutaway';
 import { CadManager } from '../scene/cad';
@@ -58,7 +59,7 @@ const edit = (patch: Partial<AnimModel>) => {
   if (THUMB_KEYS.some((k) => k in patch)) scheduleThumb();
 };
 /** Edits that change what the card image shows. */
-const THUMB_KEYS = ['script', 'colors', 'snapshots', 'groups', 'labels', 'removed', 'views', 'scene', 'keyframe'];
+const THUMB_KEYS = ['script', 'colors', 'snapshots', 'groups', 'labels', 'removed', 'views', 'scene', 'keyframe', 'shapes'];
 let thumbTimer: number | undefined;
 /** Re-render the card image once things have been quiet for a moment. */
 function scheduleThumb(delay = 2000) {
@@ -69,13 +70,13 @@ function scheduleThumb(delay = 2000) {
 // ---------- undo / redo (⌘/Ctrl+Z, ⇧⌘Z / Ctrl+Y) of the animation's state ----------
 // Every change goes through edit(): before the first change of a burst (400 ms), the state as it was is pushed.
 // Script typing has the editor's own undo; script changes made by code (gizmo write-back, an accepted proposal) undo here.
-type UndoKey = 'colors' | 'snapshots' | 'groups' | 'labels' | 'removed' | 'script' | 'views' | 'keyframe';
-const UNDO_KEYS: UndoKey[] = ['colors', 'snapshots', 'groups', 'labels', 'removed', 'script', 'views', 'keyframe'];
+type UndoKey = 'colors' | 'snapshots' | 'groups' | 'labels' | 'removed' | 'script' | 'views' | 'keyframe' | 'shapes';
+const UNDO_KEYS: UndoKey[] = ['colors', 'snapshots', 'groups', 'labels', 'removed', 'script', 'views', 'keyframe', 'shapes'];
 type DocState = Partial<Record<UndoKey, any>>;
 const clone = <T,>(x: T): T => (x === undefined ? x : JSON.parse(JSON.stringify(x)));
 const docNow: DocState = {
   colors: model.colors ?? {}, snapshots: model.snapshots ?? { active: 'default', items: {} }, groups: model.groups ?? {},
-  labels: model.labels ?? {}, removed: model.removed ?? [], views: model.views ?? {}, keyframe: model.keyframe, script: model.script ? { language: 'anim', text: joinLines(model.script.text) } : undefined,
+  labels: model.labels ?? {}, removed: model.removed ?? [], views: model.views ?? {}, keyframe: model.keyframe, shapes: model.shapes ?? [], script: model.script ? { language: 'anim', text: joinLines(model.script.text) } : undefined,
 };
 const undoStack: DocState[] = [], redoStack: DocState[] = [];
 let undoing = false, typing = false, burst = false, burstTimer: number | undefined;
@@ -185,6 +186,25 @@ let views: Record<string, { pos: number[]; look: number[] }> = clone(model.views
 const isRemoved = (o: THREE.Object3D): boolean => { for (let p: THREE.Object3D | null = o; p; p = p.parent) if (p.userData.removed) return true; return false; };
 for (const id of removed) { const o = built.registry.get(id); if (o) o.userData.removed = true; }
 for (const [id, l] of Object.entries(labels)) { const o = built.registry.get(id); if (o) o.userData.label = l; }
+
+// ---------- shapes (basic modelling): parts made in the studio, saved in the model ----------
+let shapes: ShapeDef[] = clone(model.shapes ?? []);
+const shapesRoot = new THREE.Group();
+shapesRoot.name = 'shapes'; shapesRoot.userData.shapesRoot = true; shapesRoot.userData.id = SHAPES_ROOT;
+built.root.add(shapesRoot); built.registry.set(SHAPES_ROOT, shapesRoot);
+/** (Re)build every shape's parts from `shapes`; their home pose is the shape's own. */
+function buildShapes() {
+  for (const id of [...built.registry.keys()]) if (id.startsWith(SHAPES_ROOT + '/')) built.registry.delete(id);
+  for (const c of [...shapesRoot.children]) {
+    shapesRoot.remove(c);
+    c.traverse((x) => { const m = x as THREE.Mesh; if (m.isMesh) { m.geometry.dispose(); (m.material as THREE.Material).dispose(); } });
+  }
+  for (const d of shapes) shapesRoot.add(buildShape(d, built.clipPlanes, (o, id) => { o.userData.id = id; built.registry.set(id, o); }));
+  shapesRoot.traverse((o) => { o.userData.homeP = o.position.toArray(); o.userData.homeQ = o.quaternion.toArray(); });
+  for (const id of removed) { const o = built.registry.get(id); if (o) o.userData.removed = true; }
+  for (const [id, l] of Object.entries(labels)) { const o = built.registry.get(id); if (o) o.userData.label = l; }
+}
+buildShapes();
 
 // ---------- placements (parts moved with the gizmo; saved in snapshots) ----------
 for (const o of built.registry.values()) { o.userData.homeP = o.position.toArray(); o.userData.homeQ = o.quaternion.toArray(); }
@@ -679,6 +699,7 @@ const tree = new TreePanel(built, scene3, {
   onSelect: (o, spec, objs, clicked) => {
     gizmoFor(o, spec, objs);
     updateTools();
+    refreshShapePanel();
     if (clicked && scriptPanel?.picking) scriptPanel.insertTarget(shortSpec(clicked.spec), clicked.add); // pick mode: into the script
   },
   colorOf: (spec) => colors[spec],
@@ -874,8 +895,18 @@ gizmo.addEventListener('dragging-changed', (e: any) => {
     gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs);
     return;
   }
-  // start pose: record placements for every member
-  for (const m of d.members) state.placements[idOfObj(m.o)] = { p: m.o.position.toArray(), q: m.o.quaternion.toArray() };
+  // start pose: a shape's own numbers (position, rotation); other parts record placements
+  let shapeMoved = false;
+  for (const m of d.members) {
+    const def = m.o.userData.shape !== undefined && !m.o.userData.array ? shapes.find((x) => x.id === m.o.userData.shape) : undefined;
+    if (def && m.o.parent === shapesRoot) {
+      def.position = m.o.position.toArray().map((v) => +v.toFixed(4));
+      def.rotation = new THREE.Euler().setFromQuaternion(m.o.quaternion, 'XYZ').toArray().slice(0, 3).map((a) => +THREE.MathUtils.radToDeg(a as number).toFixed(3));
+      delete state.placements[idOfObj(m.o)];
+      shapeMoved = true;
+    } else state.placements[idOfObj(m.o)] = { p: m.o.position.toArray(), q: m.o.quaternion.toArray() };
+  }
+  if (shapeMoved) { void syncShapes(); refreshShapePanel(); }
   persistWorking();
   buildTimeline();
 });
@@ -1039,7 +1070,7 @@ const undoToast = document.createElement('div');
 undoToast.style.cssText = 'position:absolute;left:50%;bottom:16px;transform:translateX(-50%);z-index:8;background:rgba(14,17,21,.95);color:#d7dde4;border:1px solid #2b3540;border-radius:6px;padding:5px 12px;font:12px system-ui;display:none;pointer-events:none';
 host().appendChild(undoToast);
 let toastTimer: number | undefined;
-const WHAT: Record<UndoKey, string> = { colors: 'colour', snapshots: 'move / lock / hide', groups: 'groups', labels: 'rename', removed: 'remove / restore', script: 'script edit', views: 'views', keyframe: 'thumbnail' };
+const WHAT: Record<UndoKey, string> = { colors: 'colour', snapshots: 'move / lock / hide', groups: 'groups', labels: 'rename', removed: 'remove / restore', script: 'script edit', views: 'views', keyframe: 'thumbnail', shapes: 'shapes' };
 async function restoreDoc(d: DocState, verb: string) {
   const what = UNDO_KEYS.filter((k) => d[k] !== undefined && JSON.stringify(d[k]) !== JSON.stringify(docNow[k])).map((k) => WHAT[k]);
   undoing = true;
@@ -1063,6 +1094,7 @@ async function restoreDoc(d: DocState, verb: string) {
     if (d.colors) { colors = clone(d.colors); applyColors(); }
     if (d.views) { views = clone(d.views); renderViews(); }
     if ('keyframe' in d) keyframe = clone(d.keyframe);
+    if (d.shapes) { shapes = clone(d.shapes); buildShapes(); applyPlacements(); applyColors(); tree.rebuild(); }
     for (const o of built.root.children) await reconcile(o);
     if (d.script && scriptPanel && d.script.text !== scriptPanel.text) {
       docNow.script = clone(d.script);
@@ -1070,7 +1102,7 @@ async function restoreDoc(d: DocState, verb: string) {
     }
     buildTimeline({ atStart: true });
     player.seek(Math.min(t, player.duration));
-    edit({ colors: { ...colors }, snapshots: { active: store.active, items: clone(store.snapshots) }, groups: clone(store.groups), labels: { ...labels }, removed: [...removed], views: clone(views) });
+    edit({ colors: { ...colors }, snapshots: { active: store.active, items: clone(store.snapshots) }, groups: clone(store.groups), labels: { ...labels }, removed: [...removed], views: clone(views), shapes: clone(shapes) });
     tree.rebuild();
     gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs);
     updateTools(); renderSnapBar(); markDirty(false);
@@ -1108,6 +1140,8 @@ toolbar.innerHTML = `<button data-t="blank" title="Blank / unblank the selected 
   <div class="fpop" hidden><input placeholder="Part of a name, e.g. V-005202-001" spellcheck="false"><div class="hint"></div><button data-f="go">Select</button></div>
   <button data-t="showall" title="Show all: unblank every part (removed parts stay removed)"><span class="i">●</span><span class="l">Show all</span></button>
   <button data-t="origin" title="Set the model origin: click a cylindrical face (its axis), then a flat face (its height); the model moves so that point is (0,0,0)"><span class="i">⊕</span><span class="l">Set origin</span></button>
+  <button data-t="shape" title="Shapes: add a box, cylinder, tube, sphere, cone, plane or hex prism – sizes, position, colour, linear / circular arrays. Select a shape to edit it."><span class="i">◇</span><span class="l">Shape</span></button>
+  <div class="shpop" hidden></div>
   <button data-t="thumb" title="Thumbnail: this moment (time, camera, view style) becomes the card image on Home. A thumbnail step in the script takes priority."><span class="i">📌</span><span class="l">Thumbnail</span></button>
   <button data-t="views" title="Camera views: save the current view (position and target), go to one, or put it in the script (camera <name> 2s)"><span class="i">📷</span><span class="l">Views</span></button>
   <div class="vpop" hidden></div>
@@ -1123,7 +1157,17 @@ host().appendChild(toolbar);
     #toolsbar button:hover:not(:disabled) { background: #26303a; } #toolsbar button:disabled { opacity: .4; cursor: default; }
     #toolsbar button.on { border-color: #f2b705; color: #f2b705; }
     #toolsbar .vpop { position: absolute; left: calc(100% + 6px); top: 0; width: 250px; background: rgba(14,17,21,.97); border: 1px solid #2b3540; border-radius: 6px; padding: 8px; color: #d7dde4; display: flex; flex-direction: column; gap: 4px; }
-    #toolsbar .vpop[hidden], #toolsbar .fpop[hidden] { display: none; }
+    #toolsbar .vpop[hidden], #toolsbar .fpop[hidden], #toolsbar .shpop[hidden] { display: none; }
+    #toolsbar .shpop { position: absolute; left: calc(100% + 6px); top: 0; width: 290px; max-height: 80vh; overflow: auto; background: rgba(14,17,21,.97); border: 1px solid #2b3540; border-radius: 6px; padding: 8px 10px; color: #d7dde4; display: flex; flex-direction: column; gap: 5px; font: 12px system-ui; }
+    #toolsbar .shpop b { font-size: 12px; }
+    #toolsbar .shpop .r { display: grid; grid-template-columns: 82px 1fr; align-items: center; gap: 6px; }
+    #toolsbar .shpop .v3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+    #toolsbar .shpop input, #toolsbar .shpop select { width: 100%; box-sizing: border-box; background: #0a0c0f; color: inherit; border: 1px solid #2b3540; border-radius: 4px; padding: 2px 4px; font: 11.5px ui-monospace, monospace; }
+    #toolsbar .shpop input[type=color] { height: 20px; padding: 0; }
+    #toolsbar .shpop .acts { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+    #toolsbar .shpop button { width: auto; flex-direction: row; padding: 3px 8px; }
+    #toolsbar .shpop .hint { color: #7b8794; font-size: 10.5px; }
+    #toolsbar .shpop .err { color: #e5484d; font-size: 11px; }
     #toolsbar .fpop { position: absolute; left: calc(100% + 6px); top: 0; width: 260px; background: rgba(14,17,21,.97); border: 1px solid #2b3540; border-radius: 6px; padding: 8px; color: #d7dde4; display: flex; flex-direction: column; gap: 6px; }
     #toolsbar .fpop input { background: #0a0c0f; color: inherit; border: 1px solid #2b3540; border-radius: 4px; padding: 4px 6px; font: 12px ui-monospace, monospace; }
     #toolsbar .fpop button { width: auto; flex-direction: row; justify-content: center; padding: 4px; }
@@ -1286,6 +1330,175 @@ function setKeyframe() {
   clearTimeout(toastTimer); toastTimer = window.setTimeout(() => (undoToast.style.display = 'none'), 2200);
   clearTimeout(thumbTimer); void renderThumb();
 }
+/** Put a tools-bar popover beside its button, inside the view (clear of the view toolbar at the top). */
+function placePop(pop: HTMLElement, btn: string) {
+  if (pop.hidden) return;
+  const b = toolbar.querySelector<HTMLElement>(`[data-t=${btn}]`)!;
+  pop.style.top = `${b.offsetTop}px`;
+  const r = pop.getBoundingClientRect(), h = host().getBoundingClientRect();
+  let dy = 0;
+  if (r.bottom > h.bottom - 8) dy -= r.bottom - (h.bottom - 8);
+  if (r.top + dy < h.top + 64) dy += h.top + 64 - (r.top + dy);
+  pop.style.top = `${b.offsetTop + dy}px`;
+}
+
+// ---- shapes: rebuild after a change; the Shape panel ----
+/** Rebuild the shapes in place (placements, colours, state, tree, timeline) and save them. */
+async function syncShapes(save = true, rename?: [string, string]) {
+  const t = player.time, playing = player.playing;
+  player.playing = false;
+  player.seek(0);
+  const from = rename && shapePartId(rename[0]), to = rename && shapePartId(rename[1]);
+  const keep = gSel.objs.map(idOfObj).map((id) => (from && to && (id === from || id.startsWith(from + '/')) ? to + id.slice(from.length).replace(`/${rename![0]}-`, `/${rename![1]}-`) : id));
+  buildShapes();
+  applyPlacements();
+  applyColors();
+  await reconcile(shapesRoot);
+  tree.rebuild();
+  buildTimeline({ atStart: true });
+  player.seek(Math.min(t, player.duration)); player.playing = playing;
+  if (keep.some((id) => id.startsWith(SHAPES_ROOT + '/'))) {
+    const still = keep.map((id) => built.registry.get(id)).filter(Boolean) as THREE.Object3D[];
+    if (still.length) tree.selectObjects(still); else tree.select(undefined, false);
+  }
+  if (save) edit({ shapes: clone(shapes) });
+}
+const shpop = toolbar.querySelector<HTMLElement>('.shpop')!;
+/** The shape the selection belongs to (a shape, or a copy in its array). */
+function selectedShape(): ShapeDef | undefined {
+  if (gSel.objs.length !== 1) return;
+  for (let p: THREE.Object3D | null = gSel.objs[0]; p && p !== shapesRoot; p = p.parent)
+    if (p.userData.shape !== undefined && p.parent === shapesRoot) return shapes.find((s) => s.id === p!.userData.shape);
+}
+let newKind: ShapeKind = 'box';
+const num = (v: number) => String(+(+v).toFixed(4));
+let shownShape: string | undefined;
+function refreshShapePanel(force = false) {
+  if (shpop.hidden) return;
+  const def = selectedShape();
+  // typing in the panel re-selects the shape after each change: don't re-render under the cursor
+  if (!force && def && def.id === shownShape && shpop.contains(document.activeElement)) return;
+  shownShape = def?.id;
+  const d: ShapeDef = def ?? { id: freeName(newKind, shapes.map((s) => s.id)), kind: newKind, size: SIZES[newKind].map((f) => f.def),
+    position: controls.target.toArray().map((v) => +v.toFixed(2)), rotation: [0, 0, 0], color: '#c8d0d9' };
+  const a = d.array;
+  const v3 = (k: string, v: number[]) => `<div class="v3">${[0, 1, 2].map((i) => `<input type="number" step="0.05" data-f="${k}${i}" value="${num(v[i] ?? 0)}">`).join('')}</div>`;
+  shpop.innerHTML = `<b>${def ? `Shape <code>${d.id}</code>` : 'New shape'}</b>
+    <div class="r">Kind <select data-f="kind">${KINDS.map((k) => `<option ${k === d.kind ? 'selected' : ''}>${k}</option>`).join('')}</select></div>
+    <div class="r">Name <input data-f="id" value="${d.id}" spellcheck="false"></div>
+    ${SIZES[d.kind].map((f, i) => `<div class="r">${f.label} <input type="number" step="0.05" min="0" data-f="size${i}" value="${num(d.size[i] ?? f.def)}"></div>`).join('')}
+    <div class="r">Position ${v3('pos', d.position)}</div>
+    <div class="r">Rotation° ${v3('rot', d.rotation)}</div>
+    <div class="r">Colour <input type="color" data-f="color" value="${d.color}"></div>
+    <div class="r">Array <select data-f="atype"><option value="">none</option><option value="linear" ${a?.type === 'linear' ? 'selected' : ''}>linear</option><option value="circular" ${a?.type === 'circular' ? 'selected' : ''}>circular</option></select></div>
+    ${a ? `<div class="r">Count <input type="number" min="1" max="500" step="1" data-f="count" value="${a.count}"></div>` : ''}
+    ${a?.type === 'linear' ? `<div class="r">Step ${v3('step', a.step)}</div>` : ''}
+    ${a?.type === 'circular' ? `<div class="r">Centre x, z <div class="v3"><input type="number" step="0.05" data-f="cx" value="${num(a.centre[0])}"><input type="number" step="0.05" data-f="cz" value="${num(a.centre[1])}"></div></div>
+      <div class="r">Angle° <input type="number" step="15" data-f="angle" value="${num(a.angle)}"></div>` : ''}
+    <div class="err"></div>
+    <div class="acts">${def ? '<button data-s="dup">Duplicate</button><button data-s="del">Delete</button><button data-s="new">New…</button>' : '<button data-s="add">Add shape</button>'}</div>
+    <div class="hint">${def ? 'Changes apply as you type. In scripts: ' + `<code>${d.id}</code>` + (a ? `, copies <code>${d.id}-0</code>… (<code>${d.id}-*</code>)` : '') : 'Placed at the view centre. Select a shape to edit it.'}</div>`;
+  const q = <T extends HTMLElement>(f: string) => shpop.querySelector<T>(`[data-f="${f}"]`);
+  const errEl = shpop.querySelector<HTMLElement>('.err')!;
+  /** The form as a shape (undefined + a message when it isn't valid). */
+  const read = (): ShapeDef | undefined => {
+    const n = (f: string, dflt = 0) => { const x = parseFloat(q<HTMLInputElement>(f)?.value ?? ''); return Number.isFinite(x) ? x : dflt; };
+    const kind = q<HTMLSelectElement>('kind')!.value as ShapeKind;
+    const id = q<HTMLInputElement>('id')!.value.trim();
+    if (!validName(id)) { errEl.textContent = 'Name: letters, digits, - and _, not starting with a digit'; return; }
+    if (id !== (def?.id ?? '') && shapes.some((s) => s.id === id)) { errEl.textContent = `There's already a shape called ${id}`; return; }
+    errEl.textContent = '';
+    const at = q<HTMLSelectElement>('atype')!.value;
+    const count = Math.max(1, Math.min(500, Math.round(n('count', 4))));
+    const array = at === 'linear' ? { type: 'linear' as const, count, step: [0, 1, 2].map((i) => n(`step${i}`, i === 0 ? 1 : 0)) }
+      : at === 'circular' ? { type: 'circular' as const, count, centre: [n('cx'), n('cz')], angle: n('angle', 360) } : undefined;
+    return { id, kind, size: SIZES[kind].map((f, i) => Math.max(0.001, n(`size${i}`, f.def))), position: [0, 1, 2].map((i) => n(`pos${i}`)),
+      rotation: [0, 1, 2].map((i) => n(`rot${i}`)), color: q<HTMLInputElement>('color')!.value, ...(array ? { array } : {}) };
+  };
+  // kind / array type change the fields: re-render
+  q<HTMLSelectElement>('kind')!.onchange = () => {
+    const k = q<HTMLSelectElement>('kind')!.value as ShapeKind;
+    if (!def) { newKind = k; refreshShapePanel(); return; }
+    def.kind = k; def.size = SIZES[k].map((f) => f.def);
+    void syncShapes().then(() => refreshShapePanel(true));
+  };
+  q<HTMLSelectElement>('atype')!.onchange = () => {
+    const t = q<HTMLSelectElement>('atype')!.value;
+    const arr = t === 'linear' ? { type: 'linear' as const, count: 4, step: [1, 0, 0] } : t === 'circular' ? { type: 'circular' as const, count: 6, centre: [0, 0], angle: 360 } : undefined;
+    if (!def) { const r = read(); if (r) { pendingNew = { ...r, ...(arr ? { array: arr } : { array: undefined }) }; renderPending(); } return; }
+    if (arr) def.array = arr; else delete def.array;
+    void syncShapes().then(() => refreshShapePanel(true));
+  };
+  // editing: apply as you type
+  let timer: number | undefined;
+  if (def) shpop.querySelectorAll<HTMLInputElement>('input').forEach((i) => (i.oninput = () => {
+    clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      const r = read(); if (!r) return;
+      const old = def.id;
+      Object.assign(def, r); if (!r.array) delete def.array;
+      if (r.id !== old) { renameShapeRefs(old, r.id); shownShape = r.id; }
+      void syncShapes(true, r.id !== old ? [old, r.id] : undefined);
+    }, 250);
+  }));
+  const act = (k: string, f: () => void) => shpop.querySelector<HTMLElement>(`[data-s="${k}"]`)?.addEventListener('click', f);
+  act('add', () => {
+    const r = read(); if (!r) return;
+    shapes.push(r);
+    void syncShapes().then(() => { tree.selectId(shapePartId(r.id)); refreshShapePanel(); });
+  });
+  act('dup', () => {
+    if (!def) return;
+    const c: ShapeDef = { ...clone(def), id: freeName(def.id.replace(/-\d+$/, ''), shapes.map((s) => s.id)), position: [def.position[0] + 1, def.position[1], def.position[2]] };
+    shapes.push(c);
+    void syncShapes().then(() => { tree.selectId(shapePartId(c.id)); refreshShapePanel(); });
+  });
+  act('del', () => {
+    if (!def) return;
+    shapes = shapes.filter((s) => s !== def);
+    tree.select(undefined, false);
+    void syncShapes().then(() => refreshShapePanel(true));
+  });
+  act('new', () => { tree.select(undefined, false); refreshShapePanel(); });
+  shpop.onkeydown = (e) => e.stopPropagation();   // keep viewer shortcuts out of the fields
+  placePop(shpop, 'shape');
+}
+let pendingNew: ShapeDef | undefined;
+/** A new shape's form after its array type changed (keeps what was typed). */
+function renderPending() {
+  const p = pendingNew; pendingNew = undefined;
+  if (!p) return;
+  // render the "new shape" form with these values: add it as a temporary edit target, then re-read on Add
+  newKind = p.kind;
+  refreshShapePanel();
+  const set = (f: string, v: string) => { const el = shpop.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-f="${f}"]`); if (el) el.value = v; };
+  set('id', p.id); p.size.forEach((v, i) => set(`size${i}`, num(v))); p.position.forEach((v, i) => set(`pos${i}`, num(v)));
+  p.rotation.forEach((v, i) => set(`rot${i}`, num(v))); set('color', p.color);
+  if (p.array) {
+    // the array fields only exist once the form knows the type: insert them
+    const t = shpop.querySelector<HTMLSelectElement>('[data-f="atype"]')!; t.value = p.array.type;
+    const row = t.closest('.r')!;
+    const extra = p.array.type === 'linear'
+      ? `<div class="r">Count <input type="number" min="1" max="500" step="1" data-f="count" value="${p.array.count}"></div><div class="r">Step <div class="v3">${p.array.step.map((v, i) => `<input type="number" step="0.05" data-f="step${i}" value="${num(v)}">`).join('')}</div></div>`
+      : `<div class="r">Count <input type="number" min="1" max="500" step="1" data-f="count" value="${p.array.count}"></div><div class="r">Centre x, z <div class="v3"><input type="number" step="0.05" data-f="cx" value="${num(p.array.centre[0])}"><input type="number" step="0.05" data-f="cz" value="${num(p.array.centre[1])}"></div></div><div class="r">Angle° <input type="number" step="15" data-f="angle" value="${num(p.array.angle)}"></div>`;
+    row.insertAdjacentHTML('afterend', extra);
+  }
+}
+/** A shape renamed: its part ids change – follow in the script, colours and labels. */
+function renameShapeRefs(oldId: string, newId: string) {
+  const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (scriptPanel) {
+    const re = new RegExp(`(^|[\\s,/=])${esc(oldId)}(?=(-\\d+|-\\*)?(?![\\w-]))`, 'gm');
+    const next = scriptPanel.text.replace(re, `$1${newId}`);
+    if (next !== scriptPanel.text) scriptPanel.setText(next);
+  }
+  const from = shapePartId(oldId), to = shapePartId(newId);
+  const mv = (k: string) => (k === from || k.startsWith(from + '/') ? to + k.slice(from.length).replace(`/${oldId}-`, `/${newId}-`) : k);
+  colors = Object.fromEntries(Object.entries(colors).map(([k, v]) => [mv(k), v]));
+  labels = Object.fromEntries(Object.entries(labels).map(([k, v]) => [mv(k), v]));
+  edit({ colors: { ...colors }, labels: { ...labels } });
+}
+
 /** Show all: clear every hide flag. */
 async function showAll() {
   if (!Object.values(state.hidden).some(Boolean)) return;
@@ -1304,6 +1517,11 @@ toolbar.querySelector<HTMLElement>('[data-t=blank]')!.onclick = () => { tree.tog
 toolbar.querySelector<HTMLElement>('[data-t=others]')!.onclick = () => void blankOthers();
 toolbar.querySelector<HTMLElement>('[data-t=showall]')!.onclick = () => void showAll();
 toolbar.querySelector<HTMLElement>('[data-t=thumb]')!.onclick = setKeyframe;
+toolbar.querySelector<HTMLElement>('[data-t=shape]')!.onclick = () => {
+  shpop.hidden = !shpop.hidden;
+  toolbar.querySelector('[data-t=shape]')!.classList.toggle('on', !shpop.hidden);
+  refreshShapePanel();
+};
 scheduleThumb(4000);   // the card for this animation as it opens (CAD loaded)
 toolbar.querySelector<HTMLElement>('[data-t=origin]')!.onclick = () => (originPick ? endOrigin() : startOrigin());
 // select by name
@@ -1320,6 +1538,7 @@ const findGo = () => {
 };
 const toggleFind = (open = fpop.hidden) => {
   fpop.hidden = !open; toolbar.querySelector('[data-t=find]')!.classList.toggle('on', open);
+  placePop(fpop, 'find');
   if (open) { findCount(); finput.focus(); finput.select(); }
 };
 toolbar.querySelector<HTMLElement>('[data-t=find]')!.onclick = () => toggleFind();
@@ -1363,10 +1582,12 @@ function renderViews() {
     row.querySelector<HTMLElement>('[data-v=upd]')!.onclick = () => { views[n] = camView(); saveViews(); };
     row.querySelector<HTMLElement>('[data-v=del]')!.onclick = () => { delete views[n]; saveViews(); };
   });
+  placePop(vpop, 'views');
 }
 renderViews();
 toolbar.querySelector<HTMLElement>('[data-t=views]')!.onclick = () => {
   vpop.hidden = !vpop.hidden;
+  placePop(vpop, 'views');
   toolbar.querySelector('[data-t=views]')!.classList.toggle('on', !vpop.hidden);
 };
 toolbar.querySelector<HTMLElement>('[data-t=group]')!.onclick = () => { tree.groupSelected(); updateTools(); };

@@ -189,6 +189,18 @@ export class TreePanel {
       this.roots.push(cad);
       this.open.add(cad);
     }
+    // shapes made in the studio (an array's copies under it)
+    const shapesRoot = this.scene.root.children.find((o) => o.userData.shapesRoot);
+    if (shapesRoot?.children.length) {
+      const sn = mk('Shapes', 0, { badge: String(shapesRoot.children.length) });
+      sn.virtualKids = shapesRoot.children.filter((o) => !o.userData.removed).map((o) => {
+        const n = this.objNode(o, 1, sn);
+        if (o.userData.array) n.virtualKids = o.children.filter((c) => !c.userData.removed).map((c) => this.objNode(c, 2, n));
+        return n;
+      });
+      this.roots.push(sn);
+      this.open.add(sn);
+    }
     // parts removed from this animation's assembly: listed here, with Restore
     const removed = (this.hooks.removedIds?.() ?? []).filter((id) => reg.has(id));
     if (removed.length) {

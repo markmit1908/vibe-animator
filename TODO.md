@@ -8,11 +8,9 @@
 - [ ] Batch locked repeated parts into InstancedMesh at runtime (fewer draw calls on the plant model)
 
 ## Basic geometry modelling
-- [ ] Add simple primitives in the studio (box, cylinder, sphere, cone, plane, hex prism), sized and placed by
-      numbers or the gizmo; saved in the animation (`scene.shapes`), shown in the tree, scriptable by id like CAD parts
-- [ ] Edit a shape's dimensions, colour and name after creating it; duplicate and delete it
-- [ ] Simple combinations: group shapes into an assembly, and linear / circular arrays (e.g. bolt circles)
-- [ ] Optional later: extrude a 2D sketch, boolean cut (for markers, tools and stand-ins for missing CAD)
+- [x] Primitives (box, cylinder, tube, sphere, cone, plane, hex prism), edit, duplicate, delete, linear / circular arrays
+- [ ] Extrude a 2D sketch, boolean cut (for markers, tools and stand-ins for missing CAD)
+- [ ] Shapes: array along a path; snapping to CAD faces
 
 ## Origin
 - [ ] Set origin: cylinders with a non-vertical axis; also shift absolute script coordinates (offer to)
