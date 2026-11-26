@@ -98,7 +98,19 @@ Right-click a row for its menu. Select a row and press **F2** to rename or **Del
 **Snapshots** (bar at the top) are named start states: lock/hide flags, part placements and a camera view. Changes
 save into the active snapshot automatically. **Save** also records the camera; **Save as…** makes a new snapshot.
 
-**Tools** (floating bar, left of the 3D view): **Blank / Unblank** (**H**) hides the selected parts or shows them again; **Blank others** (**⇧H**) hides everything that isn't selected; **Show all** unblanks every part; **Select by name** (**F**) selects every part whose name contains the text you type (or matches a `*` glob), ready to blank, group or colour; **Set origin** (⊕) picks a new model origin: click a cylindrical face (its vertical axis, fitted from the mesh), then a flat face (its height); after you confirm, the CAD moves so that point is (0, 0, 0), and saved views and snapshot cameras move with it (absolute numbers in the script don't); **Thumbnail** (📌) makes this moment (time, camera, view style) the animation's card image on Home – re-rendered as the animation changes; without one the card is the opening frame; **Views** saves the camera (position and target) under a name, goes back to it, or inserts `camera <name> 2s` into the script; **Group** (**G**) makes a group from the selection.
+**Tools** (floating bar, left of the 3D view):
+
+| Tool | What it does |
+|---|---|
+| **Blank / Unblank** (**H**) | Hides the selected parts, or shows them again |
+| **Blank others** (**⇧H**) | Hides everything that isn't selected (reverse blank) |
+| **Show all** | Unblanks every part |
+| **Select by name** (**F**) | Selects every part whose name contains the text you type (or matches a `*` glob) – then blank, group or colour them |
+| **Set origin** (⊕) | Click a cylindrical face (its vertical axis, fitted from the mesh), then a flat face (its height); after you confirm, the CAD moves so that point is (0, 0, 0). Saved views and snapshot cameras move with it; absolute numbers in the script don't |
+| **Thumbnail** (📌) | This moment (time, camera, view style) becomes the card image on Home, re-rendered as the animation changes. A `thumbnail` script step wins; without either, the card is the opening frame |
+| **Views** (📷) | Saves the camera (position and target) under a name, goes back to it, or inserts `camera <name> 2s` into the script |
+| **Group** (**G**) | Makes a group (`@name`) from the selection |
+
 
 **Undo / redo:** **⌘/Ctrl+Z** and **⇧⌘Z** (or Ctrl+Y) undo colours, moves (gizmo), lock/hide, groups, renames, remove/restore and script changes made by the gizmo or an accepted AI proposal. While you're typing in the script, ⌘Z is the editor's own undo.
 
@@ -211,24 +223,24 @@ Every node appears in the tree with an id `plant/<child>/…`; duplicate sibling
 
 | Path | What it is |
 |---|---|
-| `app/` | The SolverKit app: `src/main.tsx` (manifest, Home), `src/module.tsx` (modules, Studio view), `src/studio.tsx`, `src/importOld.ts`, `src/help.md`, `server/` (vault store, files, assist key proxy), `e2e/` |
+| `app/` | The SolverKit app: `src/main.tsx` (manifest, Home), `src/module.tsx` (modules, Studio view), `src/studio.tsx` (mounts the studio; card images), `src/assist.tsx` (SolverKit's AssistPanel + our proposal cards), `src/importOld.ts`, `src/help.md`, `server/` (vault store, files, assist key proxy), `e2e/` (Playwright suite) |
 | `src/model/file.ts` | The animation file format (SolverKit envelope, `solver: refuel-anim`, format 1) and its JSON schema |
-| `src/studio/studio.ts` | The Studio: mounts the 3D view, tree, script and assist for one animation |
-| `src/scene/` | Scene build (incl. the generated placeholder reactor), CAD loading/suppression, part state |
+| `src/studio/studio.ts` | The Studio: 3D view, tree, script, assist, tools bar, undo, thumbnails – for one animation |
+| `src/scene/` | Scene build (incl. the generated placeholder reactor), CAD loading/suppression, part state, origin fitting |
 | `src/script/`, `src/timeline/` | `.anim` parser, compiler, player, gizmo write-back |
-| `src/view/` | Tree, script panel, assist panel, hidden-line mode, triad, cutaway |
-| `src/assist/` | Assist loop (Anthropic SDK over the key proxy), tools, system prompt |
+| `src/view/` | Tree, script panel, hidden-line drawing (`drawing.ts`), section caps (`caps.ts`), cutaway, palette, triad |
+| `src/assist/` | Assist loop (Anthropic SDK over the key proxy), tools, system prompt, the host interface for the panel |
 | `tools/step2gltf.py` | STEP → glTF converter |
+| `TODO.md` | Open work |
 
 ## Status / roadmap
 
-- [x] SolverKit app: Home, vault, versions, autosave
-- [x] `.anim` scripts: live editing, gizmo write-back, picking, lists and staggered loops
-- [x] Assembly: lock/hide/suppress, groups, colours, rename, remove/restore, snapshots
-- [x] AI assist with proposals; hidden-line drawing; PNG export
+- [x] SolverKit app: Home, vault, versions, autosave, card thumbnails from a keyframe
+- [x] `.anim` scripts: live editing, context-sensitive completion, gizmo write-back, picking, lists and staggered loops
+- [x] Assembly: lock/hide/suppress, groups, colours and palette, rename, remove/restore, snapshots, undo/redo
+- [x] Tools bar: blank / blank others / show all, select by name, set origin, camera views, thumbnail
+- [x] Cutaways with sections (side, centre) and section caps; hidden-line and shaded + outline views; PNG export
+- [x] AI assist (SolverKit's panel) with proposals
 - [x] STEP → glTF with multi-body splitting and re-instancing
 - [ ] Real dimensions for the placeholder reactor
-- [x] Section caps on cut parts
-- [ ] 3D callout labels, outlines for imported CAD
-- [ ] Video export
-- [ ] Batch locked repeated parts into InstancedMesh at runtime (fewer draw calls)
+- [ ] Basic geometry modelling, video export, 3D callout labels – see `TODO.md`

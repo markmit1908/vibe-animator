@@ -36,3 +36,10 @@ generated stub leaves to do; `grep -rn "TODO(" .` finds them in the code.
 3. **create-solver template:** with modules that exclude `runs`, the generated `src/module.tsx` still calls
    `runsModule(...)` without importing it.
 4. **Views without runs:** works (`ModelEditor` `run` optional); nothing to change, noted for apps without an engine.
+5. **AssistPanel: no styles for reply Markdown.** `.assist-reply` has no list/code styles of its own; ours are in
+   `src/index.css` (`// solverkit-candidate`). Proposal: ship them with the panel.
+6. **AssistPanel: no header or code-block action slots.** We wrap it for the effort selector and status line, and post-process
+   `replyHtml` for "Insert into script". Proposal: `header` and `codeActions` props.
+7. **Card thumbnails from a non-React view.** The Studio renders its own card image and calls `store.putThumb` directly
+   (`src/studio.tsx`), outside the frame's ThumbnailApi. Proposal: expose the ThumbnailApi's `capture` to views via the
+   module context.

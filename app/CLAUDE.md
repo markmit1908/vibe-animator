@@ -32,6 +32,8 @@ Add or remove one with `/solverkit-modules`; the app's side of each is in `docs/
 - `src/model.schema.json`: the model schema, annotated (SolverKit `specs/schema-annotations.md`)
 - `src/main.tsx`: manifest and boot; `src/run.ts`: model type, store and engine adapter; `src/module.tsx`: the modules
 - `server/`: the Python server (`create_app(PlatformApp(…, files=True))`), vault-backed `ModelStore`
+- `src/assist.tsx`: SolverKit's AssistPanel and our proposal kinds; `src/studio.tsx`: mounts the studio, sends card images (`store.putThumb`)
+- Setup: SolverKit is a sibling checkout (`../../vibe-solverkit`); `solverkit.dev.json` installs its Python package by relative path
 
 ## Commands
 - `npm run dev`: server and frontend (`solverkit.dev.json`)

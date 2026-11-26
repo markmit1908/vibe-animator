@@ -6,7 +6,8 @@ used to illustrate the concept. Delivered live in a browser.
 ## Layout (after the SolverKit migration)
 - `app/` is the app (SolverKit: Home, vault, editor frame; see `app/CLAUDE.md`). The shared core is in `src/` and
   imported by the app; `src/studio/studio.ts` mounts it into the Studio view for one model (`StudioIO`: `edit`
-  → ctx.edit autosave, `fileUrl` → `/api/files/<vault path>`, `assist` → SolverKit's key proxy).
+  → ctx.edit autosave, `fileUrl` → `/api/files/<vault path>`, `assist` → SolverKit's key proxy, `mountAssist` → SolverKit's
+  AssistPanel, `putThumb` → the Home card image).
 - Animations are model files in the vault (`src/model/file.ts`); there is no `scenes/` or `scripts/` any more.
 
 ## Commands
@@ -16,17 +17,17 @@ used to illustrate the concept. Delivered live in a browser.
 
 ## Architecture
 - the model's `scene` → `src/scene/build.ts` → `BuiltScene` (registry of animatable objects by id, slots, columns, locations, clip planes)
-- the model's `.anim` script → `src/script/anim.ts` → `src/timeline/compile.ts` → a flat list of `Tween`s and `StepEvent`s (label, cutaway)
+- the model's `.anim` script → `src/script/anim.ts` → `src/timeline/compile.ts` → a flat list of `Tween`s and `StepEvent`s (label, cutaway, thumbnail)
 - `src/timeline/player.ts`: `seek(t)` resets every registered object to its initial state and re-applies every tween up to t. It runs **every frame**, so playback is stateless and scrubbable. Never mutate animated state outside tweens.
 - The compiler simulates a "virtual state" so each tween knows its from-value. `pick`/`place` expand into machine moves; the machine carries whatever it `held`s.
-- Cutaway: shells are clipped with the shared `clipPlanes` (each material needs `clippingPlanes` and `clipIntersection: true`). Core blocks inside the cut region are hidden whole. This is reapplied after `seek` each frame.
+- Cutaway (`src/view/cutaway.ts`): a `Cut` = mode (none/half/quarter), sides removed (`x`, `-z`…) and a centre (`at`); shells and CAD are clipped with the shared `clipPlanes` (each part material needs `clippingPlanes` and `clipIntersection: true`; material clones must keep the live planes – `clone()` copies them). Core blocks inside the cut region are hidden whole. Reapplied each frame (script cut or the Controls' cut).
 
 - CAD (`scene.cad_models`, vault paths) is loaded **before** compiling (top-level await), so scripts can target CAD node ids (`<model>/<child>/…`).
-- Player resets only `tl.touched` ids each frame. Visibility = not faded (script) AND not cut (cutaway) AND not `userData.userHidden` (tree toggle). Keep all three when touching `.visible`.
+- Player resets only `tl.touched` ids each frame. Visibility = not faded (script) AND not cut (cutaway) AND not `userData.userHidden` (tree toggle) AND not `userData.removed`. Keep all four when touching `.visible`. `setOpacity` marks a material transparent only while it's see-through.
 
 - Part state (`src/scene/state.ts`): working `state` = explicit `locked`/`hidden` flags by id (inherited by descendants) + `placements` (gizmo moves, local p/q). Named snapshots (flags + camera + placements) and groups live in the model file (`snapshots`, `groups`); `setStore` loads them, Save writes through `setStoreWriter` → `io.edit`. Lock/hide/placement changes autosave into the active snapshot (`persistWorking()` in studio.ts), as do group changes; the snapshot bar's Save also records the camera. `applyPlacements()` resets every registry object to `userData.homeP/homeQ`, then applies placements; Player captures script start positions after that. `reconcile()` in studio.ts applies them. Locked → `matrixAutoUpdate=false` (and `matrixWorldAutoUpdate=false` for fully locked subtrees). Locked + hidden CAD → `CadManager.suppress` frees geometry; `restore` reloads it from the .glb by id.
-- User groups: `store.groups` (name → member ids, ancestor-covered members dropped), saved in snapshots.yaml, shared by all snapshots. Scripts expand `@name` in `resolveTargets`. Compiler virtual state is WORLD space (`getWorldPosition`); tweens convert to parent-local, assuming parents of moving parts are static.
-- Changing locks recompiles the script. Scripts may not target locked objects.
+- User groups: `store.groups` (name → member ids, ancestor-covered members dropped), saved in the model's `groups`, shared by all snapshots. Scripts expand `@name` in `resolveTargets`. Compiler virtual state is WORLD space (`getWorldPosition`); tweens convert to parent-local, assuming parents of moving parts are static.
+- Changing locks recompiles the script. Scripts may not move/rotate/colour locked objects (`state(id, motion)`); blank/fade/hide may. `lockedIn()` in studio.ts records every locked part a script animates (Unlock fix, assist proposals).
 
 - `scene.generated: false` in the model builds the parametric reactor and then drops it (lights and grid stay). The registry then holds CAD only. With no leading `camera` step the view frames everything loaded.
 
@@ -46,11 +47,16 @@ used to illustrate the concept. Delivered live in a browser.
 
 - Lists/loops: `list @x = …` (compile.ts `lists`, checked against tree groups) and `each T [stagger d] [order o] { … }`: compiled per item with `$` swapped for the id and `$i` as an expression var (vector components may be `{… $i …}`); only the first item records `Timeline.lines` (`recordLines`). Globs without `/` also match short names, natural-sorted.
 
-- Section caps (`src/view/caps.ts`): per cut plane, the parts (materials with `userData.capped`, set by `withCaps`) are drawn additively into half-float targets with `partPassMaterial('capSum')` (clipped by that plane only, no depth test): back faces add the part's colour/id and 1, front faces subtract them – what remains is the part(s) containing the point on the plane (parts wholly behind cancel, overlaps average). A quad on the plane draws sum/count where count ≠ 0 (real depth). Per-mesh values come from `onPartRender` (ShaderMaterial overrides). Needs outward winding. Call `withCaps` on every new/cloned part material.
+- Section caps (`src/view/caps.ts`): per cut plane, the parts (materials with `userData.capped`, set by `withCaps`) are drawn additively into 32-bit float targets with `partPassMaterial('capSum')` (clipped by that plane only, no depth test): back faces add the part's colour/id and 1, front faces subtract them – what remains is the part(s) containing the point on the plane (parts wholly behind cancel, overlaps average). A quad on the plane draws sum/count where count ≠ 0 (real depth), taking the most common count in a 3×3 neighbourhood (a buried part's silhouette pixel can count one side only – GPU edge tie-breaking). Per-mesh values come from `onPartRender` (ShaderMaterial overrides). Needs outward winding. Call `withCaps` on every new/cloned part material.
 
-- Undo/redo (studio.ts): every change goes through `edit()`, which records the prior `docNow` (colors, snapshots, groups, labels, removed, script) once per 400 ms burst; `restoreDoc` reapplies a state in place. Script typing (`change(text, typed=true)`) is the editor's own undo and strips `script` from older entries. New persistent state must be added to `UNDO_KEYS` and `restoreDoc`.
+- Undo/redo (studio.ts): every change goes through `edit()`, which records the prior `docNow` (colors, snapshots, groups, labels, removed, script, views, keyframe) once per 400 ms burst; `restoreDoc` reapplies a state in place. Script typing (`change(text, typed=true)`) is the editor's own undo and strips `script` from older entries. New persistent state must be added to `UNDO_KEYS` and `restoreDoc`.
 
-- Docs to keep in step with features: `README.md` (user guide + script reference), `app/src/help.md` (in-app Help, one topic per heading), `src/assist/system.ts` (the assistant's language reference – stable text, it's prompt-cached), the header of `src/script/anim.ts`.
+- Tools bar (studio.ts, `#toolsbar`): blank / blank others / show all, select by name (`partsNamed`, same match as script `~text`), set origin (`src/scene/origin.ts`: vertical cylinder fit from vertex normals + a flat face's height → `setOrigin` shifts `scene.cad_models` positions, views and snapshot cameras; the studio remounts), thumbnail, views (`model.views`; script `camera <name>`), group.
+- Thumbnails: `thumbFrame()` = a script `thumbnail` step, else `model.keyframe` (t, camera, mode), else t = 0; `renderThumb()` renders it off-screen at 480×300 (restoring the view) and sends an <svg> wrapping the JPEG through `io.putThumb`; re-rendered 2 s after edits in `THUMB_KEYS`.
+- Depth: the renderer uses a logarithmic depth buffer (less z-fighting across the plant) and a stencil buffer; the hidden-line pass decodes log depth (`lin()` in drawing.ts).
+- AI assist proposals: `propose_script_patch` (find/replace edits – the fast path) and `propose_script_edit` (whole script) share `propose()` in tools.ts; both compile, list locked parts to unlock, and emit the same `script edit` card. Effort defaults to low (app/src/assist.tsx).
+
+- Docs to keep in step with features: `README.md` (user guide + script reference), `app/src/help.md` (in-app Help, one topic per heading), `src/assist/system.ts` (the assistant's language reference – stable text, it's prompt-cached), the header of `src/script/anim.ts`, this file, and `TODO.md`.
 
 ## Conventions
 - Y is up, units are metres, and the core base is at y = 0. The operating floor sits at the vessel flange (`floorY`), and locations are relative to it.
@@ -66,4 +72,10 @@ used to illustrate the concept. Delivered live in a browser.
 - OCCT's glTF writer does not share meshes between instances, so `convert` re-instances baked copies (principal axes + vertex check), merges faces (one primitive per part), then runs `gltf-transform dedup`. Never use gltf-transform `instance`: it flattens the hierarchy and drops names.
 
 ## Testing
-No test suite yet. A quick headless check is to bundle or run (e.g. with `tsx`) a script that builds the scene, compiles the timeline, and seeks a `Player` to several times, then prints object positions.
+- `cd app && npx playwright test`: the end-to-end suite (`app/e2e/app.spec.ts`, ~35 tests, ~3.5 min) on a fresh temporary
+  vault and server (port 6173); `e2e/fixtures/small.glb` is a small CAD model. Run it before committing feature work.
+- `npm run test:server`: the server's pytest. `npm run typecheck` after every TS change.
+- In the page, `window.__studio` is a debug handle (built scene, player, store, tools, renderer, caps, drawing…) with
+  test helpers: `addTestBox`, `addTestStack`, `addTestDowel`, `addTestBuried`, `setOrigin`, `renderThumb`, `thumbFrame`.
+- Rendering checks: draw a frame (`__studio.drawFrame()`), copy the canvas to a 2D canvas and read pixels; project
+  world points with `__studio.camera`. Screenshots of the canvas go to the scratchpad, not the repo.

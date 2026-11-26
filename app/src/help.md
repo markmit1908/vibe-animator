@@ -22,6 +22,14 @@ New, Duplicate, Rename, Delete (to the trash), folders and versions for your ani
 - **Iso / Front / Top / Side / Fit**
 - **⤓ PNG:** 2× resolution, transparent background
 
+# Cutaway
+
+**Controls → View → Cutaway**: `script` follows the script's `cutaway` steps; or pick half / quarter to look at a cut now.
+- **Half removes / Quarter removes**: which side(s) are cut away.
+- **Centre cut on selection** (or on the origin): where the cut is.
+- **Caps**: cut faces are filled in each part's colour, darker (**Cap shade**). Off, or `nocap` in the script, shows the hollow insides.
+- **⤓ Insert this cut into the script** writes it as a `cutaway` line.
+
 # Assembly tree
 
 Right-click a row for its menu; **F2** renames, **Delete** removes, ⌘/Ctrl-click selects several.
@@ -34,7 +42,13 @@ Right-click a row for its menu; **F2** renames, **Delete** removes, ⌘/Ctrl-cli
 - **Colour** (info box): base colour of the selection. The swatches are colours already in the model (yours first, then the CAD colours); the picker gives any colour. A second row is a **palette** from a key colour (pick it with **Palette**): complementary, split complementary, triadic and analogous. In the script, `color TARGET ` offers the same colours; click the chip by a `#hex` to change it. **Reset** goes back to the CAD colour.
 - **Snapshots** (top bar): named start states (locks, hides, placements, camera). Save also records the camera.
 
-**Tools** (floating bar on the left of the 3D view): **Blank/Unblank** (H) the selection, **Blank others** (⇧H), **Show all**, **Select by name** (F: every part whose name contains the text), **Set origin** (click a cylindrical face for the axis, then a flat face for the height; the model moves so that point is 0,0,0), **Thumbnail** (this moment becomes the card image on Home; a `thumbnail` script step wins), **Views** (save the camera as a named view; use it with `camera <name> 2s`), **Group** (G) it.
+**Tools** (floating bar on the left of the 3D view):
+- **Blank / Unblank** (H) the selection; **Blank others** (⇧H); **Show all**.
+- **Select by name** (F): every part whose name contains the text.
+- **Set origin**: click a cylindrical face (the axis), then a flat face (the height); the model moves so that point is 0,0,0.
+- **Thumbnail**: this moment becomes the card image on Home (a `thumbnail` script step wins).
+- **Views**: save the camera as a named view; use it with `camera <name> 2s`.
+- **Group** (G): a group (`@name`) from the selection.
 
 **Undo:** ⌘/Ctrl+Z, redo ⇧⌘Z – colours, moves, lock/hide, groups, renames, removals. In the script editor, ⌘Z undoes typing.
 
