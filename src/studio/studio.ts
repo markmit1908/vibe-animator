@@ -1400,6 +1400,12 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 
 // read-only handle for tests and debugging
 (window as any).__studio = { built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
+  /** tests: a block with a dowel overlapping it (no modelled hole – common in CAD assemblies) */
+  addTestDowel: () => {
+    const mk = (col: number) => withCaps(new THREE.MeshToonMaterial({ color: col, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));
+    const b = new THREE.Mesh(new THREE.BoxGeometry(2, 1, 2), mk(0x6f8fd0)); b.position.y = 0.5; b.userData.id = 'test-block'; built.root.add(b);
+    const d = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 1.6, 32), mk(0xd0d06f)); d.position.y = 0.8; d.userData.id = 'test-dowel'; built.root.add(d);
+  },
   /** tests: three touching boxes stacked (the joints are where back-face caps failed), each with a hole */
   addTestStack: () => {
     const cols = [0x6fa86f, 0x6f8fd0, 0xd08f6f];

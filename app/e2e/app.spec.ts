@@ -808,3 +808,25 @@ test("hidden line: a line where two parts touch flush (part ids), smooth lines, 
   expect(column.mid).toBeGreaterThan(220);     // paper inside the faces
   expect(column.mid2).toBeGreaterThan(220);
 });
+
+test("section caps: overlapping solids (a dowel in a block without a hole) are capped, not holed", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await page.goto("/");
+  const m = { name: "Dowel", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] },
+    script: { language: "anim", text: 'camera [6,1,0.01] look [0,0.6,0]\nlabel "D"\ncutaway half' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Dowel");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const px = await page.evaluate(async () => {
+    const s = (window as any).__studio; s.addTestDowel();
+    await new Promise((r) => setTimeout(r, 300));
+    s.drawFrame();
+    const cv = s.renderer.domElement as HTMLCanvasElement;
+    const c2 = document.createElement("canvas"); c2.width = cv.width; c2.height = cv.height; const g = c2.getContext("2d")!; g.drawImage(cv, 0, 0);
+    const at = (y: number, z: number) => { const v = new s.THREE.Vector3(0, y, z).project(s.camera); return [...g.getImageData(Math.round((v.x + 1) / 2 * cv.width), Math.round((1 - v.y) / 2 * cv.height), 1, 1).data.slice(0, 3)]; };
+    return { overlap: at(0.5, 0), block: at(0.5, 0.7), dowelAbove: at(1.3, 0) };
+  });
+  // inside the overlap the cap is a cap colour (the block's or the dowel's, darkened) – flat, like the block's cap beside it
+  const near = (a: number[], b: number[]) => a.every((v, k) => Math.abs(v - b[k]) < 8);
+  expect(near(px.overlap, px.block) || near(px.overlap, px.dowelAbove)).toBe(true);
+});

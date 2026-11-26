@@ -1,8 +1,9 @@
 /**
  * Section caps (stencil). For each cut plane:
- *  1. stencil pass – the cut parts are drawn (no colour, no depth test) clipped by that plane only; every surface a
- *     pixel's ray crosses flips its stencil bit. Odd = the plane lies inside a solid there (holes/cavities add pairs).
- *  2. cap – a quad on the plane is drawn where the bit is set, with real depth (it covers the interior; anything really
+ *  1. stencil passes – the cut parts are drawn (no colour, no depth test) clipped by that plane only; back faces add 1,
+ *     front faces subtract 1: the count is how many solids contain the point (holes/cavities cancel out; overlapping
+ *     solids, e.g. a dowel in a block, still count). Needs outward-facing winding.
+ *  2. cap – a quad on the plane is drawn where the count isn't 0, with real depth (it covers the interior; anything really
  *     in front still hides it). A quarter cut's cap is trimmed to the other plane's removed side.
  * Cap colour: one "cap colour" pass draws only back faces (part colour × shade, unlit) into a texture; the nearest
  * back face behind a cut point belongs to the part containing it (a touching neighbour's coincident face points the
@@ -92,11 +93,17 @@ export function partHook(m: THREE.Mesh) { if (m.onBeforeRender !== onPartRender)
 
 export class SectionCaps {
   private colourRT = new THREE.WebGLRenderTarget(1, 1);
-  private stencilMat = new THREE.MeshBasicMaterial({
-    colorWrite: false, depthWrite: false, depthTest: false, side: THREE.DoubleSide,
-    stencilWrite: true, stencilFunc: THREE.AlwaysStencilFunc, stencilRef: 1, stencilFuncMask: 1, stencilWriteMask: 1,
-    stencilFail: THREE.InvertStencilOp, stencilZFail: THREE.InvertStencilOp, stencilZPass: THREE.InvertStencilOp,
-  });
+  // winding count, not parity: back faces (leaving a solid) +1, front faces (entering) −1, so the count is the number
+  // of solids containing the point – overlapping solids (a dowel in a block without a modelled hole) still cap
+  private stencilBack = SectionCaps.counter(THREE.BackSide, THREE.IncrementWrapStencilOp);
+  private stencilFront = SectionCaps.counter(THREE.FrontSide, THREE.DecrementWrapStencilOp);
+  private static counter(side: THREE.Side, op: THREE.StencilOp) {
+    return new THREE.MeshBasicMaterial({
+      colorWrite: false, depthWrite: false, depthTest: false, side,
+      stencilWrite: true, stencilFunc: THREE.AlwaysStencilFunc, stencilRef: 0, stencilFuncMask: 0xff, stencilWriteMask: 0xff,
+      stencilFail: op, stencilZFail: op, stencilZPass: op,
+    });
+  }
   private capMat: THREE.MeshBasicMaterial;
   private quad: THREE.Mesh;
   private quadScene = new THREE.Scene();
@@ -110,7 +117,7 @@ export class SectionCaps {
   constructor(private planes: THREE.Plane[]) {
     this.colourMat = partPassMaterial('capColour', planes);
     const stencilTest: THREE.MeshBasicMaterialParameters = {
-      stencilWrite: true, stencilFunc: THREE.EqualStencilFunc, stencilRef: 1, stencilFuncMask: 1, stencilWriteMask: 0,
+      stencilWrite: true, stencilFunc: THREE.NotEqualStencilFunc, stencilRef: 0, stencilFuncMask: 0xff, stencilWriteMask: 0,
       stencilFail: THREE.KeepStencilOp, stencilZFail: THREE.KeepStencilOp, stencilZPass: THREE.KeepStencilOp,
       side: THREE.DoubleSide, clippingPlanes: [this.trim],
     };
@@ -186,13 +193,15 @@ export class SectionCaps {
       const size = box.isEmpty() ? 100 : box.getSize(new THREE.Vector3()).length() * 2;
       for (let i = 0; i < n; i++) {
         const pl = this.planes[i];
-        // 1) parity of surfaces along each pixel's ray, the parts clipped by this plane only
+        // 1) winding count along each pixel's ray, the parts clipped by this plane only
         r.clearStencil();
-        this.stencilMat.clippingPlanes = [pl];
-        scene.overrideMaterial = this.stencilMat;
-        r.render(scene, camera);
+        for (const sm of [this.stencilBack, this.stencilFront]) {
+          sm.clippingPlanes = [pl];
+          scene.overrideMaterial = sm;
+          r.render(scene, camera);
+        }
         scene.overrideMaterial = ov;
-        // 2) the cap quad on the plane, where the parity is odd; a quarter cut keeps the part on the other plane's
+        // 2) the cap quad on the plane, where the count isn't 0 (inside at least one solid); a quarter cut keeps the part on the other plane's
         //    removed side (trim = that plane flipped)
         if (n > 1) this.trim.copy(this.planes[1 - i]).negate(); else this.trim.set(new THREE.Vector3(0, 1, 0), 1e9);
         this.quad.material = this.capMat;
