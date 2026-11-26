@@ -1,14 +1,13 @@
 /**
- * Section caps (stencil). For each cut plane:
- *  1. stencil passes – the cut parts are drawn (no colour, no depth test) clipped by that plane only; back faces add 1,
- *     front faces subtract 1: the count is how many solids contain the point (holes/cavities cancel out; overlapping
- *     solids, e.g. a dowel in a block, still count). Needs outward-facing winding.
- *  2. cap – a quad on the plane is drawn where the count isn't 0, with real depth (it covers the interior; anything really
+ * Section caps. For each cut plane:
+ *  1. sum passes – the cut parts are drawn additively (no depth test) clipped by that plane only: a back face (leaving a
+ *     part) adds the part's colour (id) and 1, a front face (entering) subtracts them. What's left is the part(s)
+ *     containing the point on the plane: parts wholly behind it, holes and cavities cancel out; overlapping solids average.
+ *     Needs outward-facing winding.
+ *  2. cap – a quad on the plane is drawn where the count isn't 0, in sum / count, with real depth (it covers the interior; anything really
  *     in front still hides it). A quarter cut's cap is trimmed to the other plane's removed side.
- * Cap colour: one "cap colour" pass draws only back faces (part colour × shade, unlit) into a texture; the nearest
- * back face behind a cut point belongs to the part containing it (a touching neighbour's coincident face points the
- * other way, so it isn't drawn). The quad reads that texture – also in the line views' normal pass, where the
- * different part colours give each part's section an outline.
+ * The quad's colour is the containing part's (× cap shade); in the line views' normal pass it draws the part's id as a
+ * direction, so each part's section is outlined.
  */
 import * as THREE from 'three';
 
@@ -43,7 +42,7 @@ void main() {
 const FRAG = (body: string) => `#include <common>
 #include <logdepthbuf_pars_fragment>
 #include <clipping_planes_pars_fragment>
-uniform float partId; uniform vec3 partColor; uniform float capShade;
+uniform float partId; uniform vec3 partColor; uniform float capShade; uniform float sumIds;
 varying vec3 vN;
 void main() {
   #include <clipping_planes_fragment>
@@ -56,15 +55,23 @@ void main() {
  *  - "normals": the line views' normal pass – rgb = view-space normal, alpha = part id
  *  - "capColour": the caps' colour pass – back faces only, rgb = part colour × shade (linear), alpha = part id
  */
-export function partPassMaterial(kind: 'normals' | 'capColour', planes: THREE.Plane[]) {
+export function partPassMaterial(kind: 'normals' | 'capSum', planes: THREE.Plane[]) {
+  const sum = kind === 'capSum';
   const m = new THREE.ShaderMaterial({
-    uniforms: { partId: { value: 0 }, partColor: { value: new THREE.Color() }, capShade: capUniforms.capShade },
+    uniforms: { partId: { value: 0 }, partColor: { value: new THREE.Color() }, capShade: capUniforms.capShade, sumIds: { value: 0 } },
     vertexShader: VERT,
-    fragmentShader: FRAG(kind === 'normals'
+    fragmentShader: FRAG(!sum
       ? 'vec3 n = normalize(vN) * (gl_FrontFacing ? 1.0 : -1.0); gl_FragColor = vec4(n * 0.5 + 0.5, partId);'
-      : 'gl_FragColor = vec4(partColor * capShade, partId);'),
-    side: kind === 'normals' ? THREE.DoubleSide : THREE.BackSide,
-    clipping: true, clippingPlanes: planes, clipIntersection: true,
+      // leaving a part (back face) adds it, entering (front face) subtracts it: what's left is the part(s) containing the
+      // point where the ray starts (on the cut plane); parts wholly behind it cancel out. a = how many.
+      : 'float sg = gl_FrontFacing ? -1.0 : 1.0; gl_FragColor = sumIds > 0.5 ? vec4(partId * sg, 0.0, 0.0, sg) : vec4(partColor * capShade * sg, sg);'),
+    side: THREE.DoubleSide,
+    clipping: true, clippingPlanes: planes, clipIntersection: !sum,
+    ...(sum ? {
+      depthTest: false, depthWrite: false, transparent: true, blending: THREE.CustomBlending,
+      blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
+      blendEquationAlpha: THREE.AddEquation, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneFactor,
+    } : {}),
   });
   m.userData.partPass = true;
   return m;
@@ -92,42 +99,35 @@ function onPartRender(this: THREE.Mesh, _r: THREE.WebGLRenderer, _s: THREE.Scene
 export function partHook(m: THREE.Mesh) { if (m.onBeforeRender !== onPartRender) m.onBeforeRender = onPartRender; }
 
 export class SectionCaps {
-  private colourRT = new THREE.WebGLRenderTarget(1, 1);
-  // winding count, not parity: back faces (leaving a solid) +1, front faces (entering) −1, so the count is the number
-  // of solids containing the point – overlapping solids (a dowel in a block without a modelled hole) still cap
-  private stencilBack = SectionCaps.counter(THREE.BackSide, THREE.IncrementWrapStencilOp);
-  private stencilFront = SectionCaps.counter(THREE.FrontSide, THREE.DecrementWrapStencilOp);
-  private static counter(side: THREE.Side, op: THREE.StencilOp) {
-    return new THREE.MeshBasicMaterial({
-      colorWrite: false, depthWrite: false, depthTest: false, side,
-      stencilWrite: true, stencilFunc: THREE.AlwaysStencilFunc, stencilRef: 0, stencilFuncMask: 0xff, stencilWriteMask: 0xff,
-      stencilFail: op, stencilZFail: op, stencilZPass: op,
-    });
-  }
+  /** per plane: Σ±colour / count (rgb, a), and Σ±id / count (r, a) */
+  private colourRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
+  private idRT = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
+  private sumMat: THREE.ShaderMaterial;
   private capMat: THREE.MeshBasicMaterial;
   private quad: THREE.Mesh;
   private quadScene = new THREE.Scene();
   private trim = new THREE.Plane();
   private res = new THREE.Vector2();
   private idsMode = { value: 0 };
-  private colourMat: THREE.ShaderMaterial;
   private box?: THREE.Box3;
   private boxAge = 0;
 
   constructor(private planes: THREE.Plane[]) {
-    this.colourMat = partPassMaterial('capColour', planes);
-    const stencilTest: THREE.MeshBasicMaterialParameters = {
-      stencilWrite: true, stencilFunc: THREE.NotEqualStencilFunc, stencilRef: 0, stencilFuncMask: 0xff, stencilWriteMask: 0,
-      stencilFail: THREE.KeepStencilOp, stencilZFail: THREE.KeepStencilOp, stencilZPass: THREE.KeepStencilOp,
-      side: THREE.DoubleSide, clippingPlanes: [this.trim],
-    };
-    this.capMat = new THREE.MeshBasicMaterial({ ...stencilTest });
+    this.sumMat = partPassMaterial('capSum', []);
+    this.capMat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, clippingPlanes: [this.trim] });
     this.capMat.onBeforeCompile = (sh) => {
-      sh.uniforms.capTex = { value: this.colourRT.texture }; sh.uniforms.capRes = { value: this.res }; sh.uniforms.capIds = this.idsMode;
-      // shaded: the part's colour; line views: its id as a direction (so neighbouring parts' sections are outlined)
-      sh.fragmentShader = 'uniform sampler2D capTex; uniform vec2 capRes; uniform float capIds;\n' + sh.fragmentShader.replace('#include <map_fragment>',
-        `vec4 cap = texture2D(capTex, gl_FragCoord.xy / capRes);
-         diffuseColor.rgb = capIds > 0.5 ? vec3(0.5 + 0.5 * cos(cap.a * 6.2832), 0.5 + 0.5 * sin(cap.a * 6.2832), 0.95) : cap.rgb;`).replace(/\}\s*$/, '  if (capIds > 0.5) gl_FragColor.a = cap.a;   // the part id, as in the normal pass\n}');
+      sh.uniforms.capTex = { value: this.colourRT.texture }; sh.uniforms.idTex = { value: this.idRT.texture };
+      sh.uniforms.capRes = { value: this.res }; sh.uniforms.capIds = this.idsMode;
+      // no solid here (count 0): no cap. Shaded: the containing part's colour; line views: its id as a direction (so
+      // neighbouring parts' sections are outlined), and the id in alpha as in the normal pass
+      sh.fragmentShader = 'uniform sampler2D capTex; uniform sampler2D idTex; uniform vec2 capRes; uniform float capIds;\n' +
+        sh.fragmentShader.replace('#include <map_fragment>',
+          `vec2 suv = gl_FragCoord.xy / capRes;
+           vec4 cs = texture2D(capTex, suv);
+           if (abs(cs.a) < 0.5) discard;
+           float id = capIds > 0.5 ? texture2D(idTex, suv).r / cs.a : 0.0;
+           diffuseColor.rgb = capIds > 0.5 ? vec3(0.5 + 0.5 * cos(id * 6.2832), 0.5 + 0.5 * sin(id * 6.2832), 0.95) : clamp(cs.rgb / cs.a, 0.0, 1.0);`)
+          .replace(/\}\s*$/, '  if (capIds > 0.5) gl_FragColor.a = id;\n}');
     };
     this.capMat.toneMapped = false;
     this.quad = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.capMat);
@@ -151,35 +151,23 @@ export class SectionCaps {
     return () => hidden.forEach((o) => (o.visible = true));
   }
 
-  /**
-   * Draw the caps into `target` (null = the screen), after the scene has been rendered there (colour/normals + depth;
-   * the target needs a stencil buffer) – the screen, or the line views' normal pass.
-   */
+  /** Draw the caps into `target` (null = the screen, or the line views' normal pass), after the scene is drawn there. */
   render(r: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, target: THREE.WebGLRenderTarget | null) {
     if (!this.active) return;
     const n = Math.min(capUniforms.cutActive.value, this.planes.length);
     const restore = this.partsOnly(scene);
     const bg = scene.background, ov = scene.overrideMaterial, ac = r.autoClear;
     const prevTarget = r.getRenderTarget();
+    const clear = r.getClearColor(new THREE.Color()), clearA = r.getClearAlpha();
     scene.background = null;
     r.getDrawingBufferSize(this.res);
+    const ids = !!target;                    // a render target here = the line views' normal pass
+    this.idsMode.value = ids ? 1 : 0;
     try {
-      // cap colours: nearest back face per pixel, part colour × shade
-      {   // (line views too: different part colours make the parts' section outlines)
-        if (this.colourRT.width !== this.res.x || this.colourRT.height !== this.res.y) this.colourRT.setSize(this.res.x, this.res.y);
-        scene.traverseVisible((o) => { if ((o as THREE.Mesh).isMesh) partHook(o as THREE.Mesh); });
-        r.setRenderTarget(this.colourRT);
-        r.autoClear = true; r.setClearColor(0x000000, 0);
-        scene.overrideMaterial = this.colourMat;
-        r.render(scene, camera);
-        scene.overrideMaterial = ov;
-      }
-      r.setRenderTarget(target);
-      r.autoClear = false;
-      this.idsMode.value = target ? 1 : 0;   // a render target here = the line views' normal pass
-      // box the quad covers: the scene's size (recomputed now and then – it walks every mesh)
+      for (const rt of [this.colourRT, this.idRT]) if (rt.width !== this.res.x || rt.height !== this.res.y) rt.setSize(this.res.x, this.res.y);
+      scene.traverseVisible((o) => { if ((o as THREE.Mesh).isMesh) partHook(o as THREE.Mesh); });
+      // box the quad covers: the visible parts (recomputed now and then – it walks every mesh; lights/helpers can be huge)
       if (!this.box || this.box.isEmpty() || ++this.boxAge > 120) {
-        // the visible parts only (lights and helpers can be huge)
         const b = new THREE.Box3(), mb = new THREE.Box3();
         scene.traverseVisible((o) => {
           const m = o as THREE.Mesh;
@@ -193,29 +181,29 @@ export class SectionCaps {
       const size = box.isEmpty() ? 100 : box.getSize(new THREE.Vector3()).length() * 2;
       for (let i = 0; i < n; i++) {
         const pl = this.planes[i];
-        // 1) winding count along each pixel's ray, the parts clipped by this plane only
-        r.clearStencil();
-        for (const sm of [this.stencilBack, this.stencilFront]) {
-          sm.clippingPlanes = [pl];
-          scene.overrideMaterial = sm;
-          r.render(scene, camera);
-        }
+        // 1) the signed sums along each pixel's ray, the parts clipped by this plane only
+        this.sumMat.clippingPlanes = [pl];
+        scene.overrideMaterial = this.sumMat;
+        r.autoClear = true; r.setClearColor(0x000000, 0);
+        this.sumMat.uniforms.sumIds.value = 0;
+        r.setRenderTarget(this.colourRT); r.render(scene, camera);
+        if (ids) { this.sumMat.uniforms.sumIds.value = 1; r.setRenderTarget(this.idRT); r.render(scene, camera); }
         scene.overrideMaterial = ov;
-        // 2) the cap quad on the plane, where the count isn't 0 (inside at least one solid); a quarter cut keeps the part on the other plane's
-        //    removed side (trim = that plane flipped)
+        // 2) the cap quad on the plane where a part contains the point; a quarter cut keeps the part on the other
+        //    plane's removed side (trim = that plane flipped)
         if (n > 1) this.trim.copy(this.planes[1 - i]).negate(); else this.trim.set(new THREE.Vector3(0, 1, 0), 1e9);
-        this.quad.material = this.capMat;
         const p = pl.coplanarPoint(new THREE.Vector3());
-        // keep the quad near the scene: project the box centre onto the plane
         if (!box.isEmpty()) pl.projectPoint(box.getCenter(new THREE.Vector3()), p);
         this.quad.position.copy(p);
         this.quad.lookAt(p.clone().add(pl.normal));
         this.quad.scale.setScalar(size);
         this.quad.updateMatrixWorld(true);
+        r.setRenderTarget(target); r.autoClear = false;
         r.render(this.quadScene, camera);
       }
     } finally {
       scene.background = bg; scene.overrideMaterial = ov; r.autoClear = ac;
+      r.setClearColor(clear, clearA);
       r.setRenderTarget(prevTarget);
       restore();
     }

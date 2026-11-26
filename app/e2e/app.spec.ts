@@ -826,7 +826,31 @@ test("section caps: overlapping solids (a dowel in a block without a hole) are c
     const at = (y: number, z: number) => { const v = new s.THREE.Vector3(0, y, z).project(s.camera); return [...g.getImageData(Math.round((v.x + 1) / 2 * cv.width), Math.round((1 - v.y) / 2 * cv.height), 1, 1).data.slice(0, 3)]; };
     return { overlap: at(0.5, 0), block: at(0.5, 0.7), dowelAbove: at(1.3, 0) };
   });
-  // inside the overlap the cap is a cap colour (the block's or the dowel's, darkened) – flat, like the block's cap beside it
-  const near = (a: number[], b: number[]) => a.every((v, k) => Math.abs(v - b[k]) < 8);
-  expect(near(px.overlap, px.block) || near(px.overlap, px.dowelAbove)).toBe(true);
+  // inside the overlap the cap is drawn (not a hole): the two parts' cap colours averaged, a flat patch
+  const avg = px.block.map((v: number, k: number) => (v + px.dowelAbove[k]) / 2);
+  expect(px.overlap.every((v: number, k: number) => Math.abs(v - avg[k]) < 20)).toBe(true);
+});
+
+test("section caps: a part buried behind the cut (dowel without a hole) doesn't show through the cap", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await page.goto("/");
+  const m = { name: "Buried", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] },
+    script: { language: "anim", text: 'camera [6,1,0.01] look [0,0.6,0]\nlabel "B"\ncutaway half' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Buried");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const px = await page.evaluate(async () => {
+    const s = (window as any).__studio; s.addTestDowel();
+    // move the dowel wholly behind the cut plane (x < 0), still inside the block
+    s.built.root.children.find((c: any) => c.userData.id === "test-dowel").position.set(-0.6, 0.5, 0);
+    s.built.root.children.find((c: any) => c.userData.id === "test-dowel").scale.set(1, 0.5, 1);
+    await new Promise((r) => setTimeout(r, 300));
+    s.drawFrame();
+    const cv = s.renderer.domElement as HTMLCanvasElement;
+    const c2 = document.createElement("canvas"); c2.width = cv.width; c2.height = cv.height; const g = c2.getContext("2d")!; g.drawImage(cv, 0, 0);
+    const at = (y: number, z: number) => { const v = new s.THREE.Vector3(0, y, z).project(s.camera); return [...g.getImageData(Math.round((v.x + 1) / 2 * cv.width), Math.round((1 - v.y) / 2 * cv.height), 1, 1).data.slice(0, 3)]; };
+    return { infront: at(0.5, 0), beside: at(0.5, 0.7) };
+  });
+  // the cap in front of the buried dowel is the block's cap colour, same as beside it
+  expect(px.infront.every((v: number, k: number) => Math.abs(v - px.beside[k]) < 8)).toBe(true);
 });
