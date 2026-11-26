@@ -4,6 +4,50 @@ Browser-based animations of refuelling a reactor core over CAD models, built on 
 Each animation is a short text script (`.anim`) over an assembly of parts. The script plays, scrubs, and can be edited
 by hand, by direct manipulation, or with an AI assistant.
 
+## Setup (first time)
+
+The app is built on [SolverKit](https://github.com/markmit1908/vibe-solverkit), used from a checkout **next to this
+repo**: `app/package.json` links its packages from `../../vibe-solverkit/packages/*`, and the server installs its Python
+package from `../../vibe-solverkit/python`. You need access to that repository.
+
+**Needs:** Node 20+, Python 3.12 via [uv](https://docs.astral.sh/uv/) (`brew install uv`), git. pnpm runs through `npx`.
+
+```bash
+mkdir -p ~/dev && cd ~/dev                      # any folder – the two repos must be siblings
+git clone https://github.com/markmit1908/vibe-solverkit.git
+git clone https://github.com/markmit1908/vibe-animator.git
+
+# 1. SolverKit: install and build its packages (the app uses their dist/ builds)
+cd vibe-solverkit
+npx -y pnpm@9.15.9 install
+npx -y pnpm@9.15.9 build
+
+# 2. This repo: the shared core's packages (three, CodeMirror, the Anthropic SDK…)
+cd ../vibe-animator
+npm install
+
+# 3. Run it – the first run also creates app/.venv (SolverKit's Python server) and installs the app's packages
+npm run dev                                       # http://127.0.0.1:5174
+```
+
+```
+~/dev/
+├── vibe-solverkit/     SolverKit (packages/*, python/)
+└── vibe-animator/      this repo (src/ = 3D core, app/ = the SolverKit app)
+```
+
+**AI assist (optional):** put your key in this repo's `.env` (git-ignored): `ANTHROPIC_API_KEY=sk-ant-…`. See
+[AI assist](#ai-assist-assist-tab).
+
+**After pulling SolverKit changes:** rebuild it (`cd ../vibe-solverkit && npx -y pnpm@9.15.9 build`), then restart
+`npm run dev`. If its Python package changed, delete `app/.venv` and the next `npm run dev` recreates it.
+
+**End-to-end tests:** once, `cd app && npx playwright install chromium`; then `npx playwright test` (a fresh temporary
+vault; your own animations aren't touched).
+
+**Your animations** live in the vault (`~/Documents/Refuel animations` by default), not in this repo – copy that folder
+(including `CAD/`) to move them to another machine.
+
 ## Quick start
 
 ```bash

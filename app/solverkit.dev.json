@@ -5,7 +5,7 @@
       "cmd": [
         "sh",
         "-c",
-        "uv venv -q -p 3.12 .venv && uv pip install -q -p .venv -e '/Users/markmit/dev/vibe-solverkit/python[api,test]'"
+        "uv venv -q -p 3.12 .venv && uv pip install -q -p .venv -e '../../vibe-solverkit/python[api,test]'"
       ],
       "hint": "creating .venv with SolverKit's Python package"
     },
