@@ -106,7 +106,7 @@ export class TreePanel {
   private open = new Set<Node>();
   private roots: Node[] = [];
   private flat: Node[] = [];
-  /** Selection (⌘/Ctrl/Shift-click adds); the last one is the primary. */
+  /** Selection (⌘/Ctrl-click toggles a row, Shift-click selects a range); the last one is the primary. */
   private sel: Node[] = [];
   private get selected(): Node | undefined { return this.sel[this.sel.length - 1]; }
   private box = new THREE.Box3Helper(new THREE.Box3(), 0xf2b705);
@@ -329,7 +329,8 @@ export class TreePanel {
     caret.onclick = (e) => { e.stopPropagation(); this.toggleOpen(n); };
     eye.onclick = (e) => { e.stopPropagation(); this.setFlag(n, 'hidden', !hidden); };
     lock.onclick = (e) => { e.stopPropagation(); this.setFlag(n, 'locked', !locked); };
-    r.onclick = (e) => this.select(n, false, e.metaKey || e.ctrlKey || e.shiftKey);
+    r.onmousedown = (e) => { if (e.shiftKey) e.preventDefault(); }; // no text selection on shift-click
+    r.onclick = (e) => (e.shiftKey ? this.selectRange(n, e.metaKey || e.ctrlKey) : this.select(n, false, e.metaKey || e.ctrlKey));
     r.oncontextmenu = (e) => {
       e.preventDefault();
       if (!this.sel.includes(n)) this.select(n, false);
@@ -380,6 +381,7 @@ export class TreePanel {
 
   // ---------- selection ----------
   select(n: Node | undefined, reveal: boolean, additive = false) {
+    this.anchor = n;
     if (additive && n) {
       const i = this.sel.findIndex((x) => x === n || (n.id && x.id === n.id));
       if (i >= 0) this.sel.splice(i, 1); else this.sel.push(n);
@@ -399,6 +401,23 @@ export class TreePanel {
       const i = this.flat.findIndex((x) => x === n || (n.id && x.id === n.id));
       if (i >= 0) this.scroll.scrollTop = Math.max(0, i * ROW - this.scroll.clientHeight / 2);
     }
+  }
+
+  /** Row the last plain / ⌘-click landed on: where a Shift-click range starts. */
+  private anchor?: Node;
+  /** Shift-click: every visible row from the anchor to n (⌘/Ctrl+Shift adds the range to the selection). */
+  selectRange(n: Node, add = false) {
+    const same = (a: Node, b: Node) => a === b || (!!a.id && a.id === b.id && !a.group === !b.group);
+    const i = this.anchor ? this.flat.findIndex((x) => same(x, this.anchor!)) : -1, j = this.flat.findIndex((x) => same(x, n));
+    if (i < 0 || j < 0) return this.select(n, false, add);
+    const range = this.flat.slice(Math.min(i, j), Math.max(i, j) + 1)
+      .filter((x) => x.depth > 0 && !x.removedRow === !n.removedRow);            // not the section headings; don't mix Removed rows in
+    const keep = add ? this.sel.filter((x) => !range.some((r) => same(r, x))) : [];
+    this.sel = [...keep, ...range.filter((x) => x !== n), n];                       // the clicked row is the primary
+    this.highlight();
+    this.hooks.onSelect?.(undefined, undefined, this.sel.flatMap((x) => this.objsOf(x)));
+    this.updateInfo();
+    this.refresh();
   }
 
   /** Currently selected real object (single object nodes only). */

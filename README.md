@@ -83,7 +83,7 @@ URL options: `?t=12` (open at 12 s), `?select=<id>`, `?mode=hidden`, `?view=iso`
 
 ### Assembly tree
 
-Right-click a row for its menu. Select a row and press **F2** to rename or **Delete** to remove; ⌘/Ctrl/Shift-click selects several.
+Right-click a row for its menu. Select a row and press **F2** to rename or **Delete** to remove; ⌘/Ctrl-click adds or removes a row; **Shift**-click selects the range from the last row clicked (⌘/Ctrl+Shift adds the range). In the 3D view, ⌘/Ctrl/Shift-click adds a part.
 
 | Action | What happens |
 |---|---|

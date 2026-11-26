@@ -32,7 +32,7 @@ New, Duplicate, Rename, Delete (to the trash), folders and versions for your ani
 
 # Assembly tree
 
-Right-click a row for its menu; **F2** renames, **Delete** removes, ⌘/Ctrl-click selects several.
+Right-click a row for its menu; **F2** renames, **Delete** removes, ⌘/Ctrl-click adds or removes a row, **Shift**-click selects every row from the last one clicked.
 
 - **●** show/hide.
 - **🔒** lock/unlock. Locked parts can't be animated; CAD starts locked.

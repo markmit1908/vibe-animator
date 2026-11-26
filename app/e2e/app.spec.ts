@@ -535,6 +535,25 @@ test("group folders in the tree: create, file by menu and by drag, select and hi
   await expect(status).toHaveText("✓");
 });
 
+test("tree: Shift-click selects a range of rows, ⌘-click toggles one", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Range select", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "R"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Range select");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const row = (t: string) => page.locator("#tree .row", { has: page.locator(".lbl", { hasText: new RegExp(`^${t}$`) }) }).first();
+  const selected = () => page.locator("#tree .row.sel .lbl").allTextContents();
+  await row("vessel").click();
+  await row("barrel").click({ modifiers: ["Shift"] });
+  await expect.poll(selected).toEqual(["vessel", "head", "bolts", "barrel"]);
+  await expect(page.locator("#tree .info")).toContainText("4 items selected");
+  await row("head").click({ modifiers: ["Meta"] });                    // ⌘-click still toggles one row
+  await expect.poll(selected).toEqual(["vessel", "bolts", "barrel"]);
+  await row("machine").click({ modifiers: ["Shift"] });               // range from the last clicked row (head)
+  await expect.poll(selected).toEqual(["head", "bolts", "barrel", "machine"]);
+});
+
 test("undo / redo (⌘Z / ⇧⌘Z): colour, blank and group changes; the script editor keeps its own undo", async ({ page }) => {
   await page.goto("/");
   const m = { name: "Undo", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
