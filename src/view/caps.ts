@@ -26,6 +26,9 @@ export function withCaps<M extends THREE.Material>(mat: M): M {
   if ((mat as any).color === undefined || mat.side === THREE.BackSide) return mat; // outline hulls etc.
   mat.onBeforeCompile = (sh) => capped(sh, 'gl_FragColor = linearToOutputTexel(vec4(diffuseColor.rgb * capShade, diffuseColor.a));');
   mat.customProgramCacheKey = () => 'caps';
+  // one pass even when transparent (fading): three's two-pass back/front rendering flips the winding, so back faces
+  // would read as front facing and get no cap
+  mat.forceSinglePass = true;
   return mat;
 }
 

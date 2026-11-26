@@ -716,6 +716,10 @@ test("section caps: a cut solid shows a darker cap face (off with nocap / the Ca
   await page.evaluate(() => { (window as any).__studio.capUniforms.capShade.value = 0.2; });
   const dark = await centre();
   expect(dark).toBeLessThan(lit - 60);                       // the cap is drawn, in the part colour × shade
+  // a part that is fading (transparent) is still capped
+  await page.evaluate(() => { const s = (window as any).__studio; s.built.root.children.at(-1).material.transparent = true; s.built.root.children.at(-1).material.opacity = 0.99; });
+  const fading = await centre();
+  expect(Math.abs(fading - dark)).toBeLessThan(25);
   await page.evaluate(() => { (window as any).__studio.ui.caps = false; });
   const noCap = await centre();
   expect(noCap).not.toBe(dark);                               // no cap: we see into the box (its far inside wall)

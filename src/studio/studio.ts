@@ -1394,7 +1394,7 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 }
 
 // read-only handle for tests and debugging
-(window as any).__studio = { built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, capUniforms, withCaps,
+(window as any).__studio = { built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, capUniforms, withCaps, renderer, scene3, drawFrame, THREE,
   /** tests: a closed 2 m box at the origin with a capped, clipped part material */
   addTestBox: () => {
     const m = withCaps(new THREE.MeshToonMaterial({ color: 0xd0d0d0, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));

@@ -511,8 +511,10 @@ export function setOpacity(obj: THREE.Object3D, o: number) {
   obj.traverse((c) => {
     const m = (c as THREE.Mesh).material as THREE.Material | undefined;
     if (!m) return;
-    if (m.userData.baseOpacity === undefined) m.userData.baseOpacity = m.opacity;
-    m.transparent = true;
+    if (m.userData.baseOpacity === undefined) { m.userData.baseOpacity = m.opacity; m.userData.baseTransparent = m.transparent; }
     m.opacity = m.userData.baseOpacity * o;
+    // transparent only while see-through: a transparent double-sided material is drawn in two flipped passes, which
+    // breaks the section caps' back-face test (and sorting costs)
+    m.transparent = m.opacity < 0.999 || m.userData.baseTransparent === true;
   });
 }
