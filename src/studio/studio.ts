@@ -24,7 +24,7 @@ import type { AssistHost, AssistMount } from '../assist/host';
 import { assistClient, migrateChat, runAssist, type ChatMessage } from '../assist/loop';
 import type Anthropic from '@anthropic-ai/sdk';
 import { ASSIST_SYSTEM } from '../assist/system';
-import { readTools, proposeTools, modelProposeTools, type ToolDeps, type ShapeChange } from '../assist/tools';
+import { readTools, proposeTools, modelProposeTools, type ToolDeps, type ShapeChange, type PlacementInput, type PlacementPlan } from '../assist/tools';
 import type { Proposal } from '../assist/loop';
 import { parseAnim, toActions, type ParseError } from '../script/anim';
 import { ScriptError } from '../timeline/compile';
@@ -535,19 +535,133 @@ function resolveIds(specs: string[]) {
     if (s0.includes('*')) {
       const re = new RegExp('^' + s0.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');
       let hit = false;
-      for (const id of built.registry.keys()) if (re.test(id)) { ids.add(id); hit = true; }
+      const short = !s0.includes('/');                      // as in scripts: a glob without "/" also matches short names
+      for (const id of built.registry.keys()) if (re.test(id) || (short && re.test(id.slice(id.lastIndexOf('/') + 1)))) { ids.add(id); hit = true; }
       if (!hit) unknown.push(s0);
       continue;
     }
-    if (built.registry.has(s0)) ids.add(s0); else unknown.push(s0);
+    if (built.registry.has(s0)) { ids.add(s0); continue; }
+    // a unique short name (last id segment) or display name, as scripts allow
+    const named = [...built.registry.keys()].filter((id) => id.slice(id.lastIndexOf('/') + 1) === s0 || labels[id] === s0);
+    if (named.length === 1) ids.add(named[0]); else unknown.push(named.length ? `${s0} (ambiguous: ${named.length} parts – use the id)` : s0);
   }
   return { ids: [...ids], unknown };
 }
 const tools = [
   ...readTools(toolDeps),
   ...proposeTools({ checkScript: toolDeps.checkScript, currentScript: () => scriptPanel?.text ?? '' }),
-  ...modelProposeTools({ resolve: resolveIds, groups: () => store.groups, shapes: () => shapes }),
+  ...modelProposeTools({ resolve: resolveIds, groups: () => store.groups, shapes: () => shapes, planPlacement }),
 ];
+
+// ---------- positioning parts (assist): a rigid world transform at the start pose → placements / shape numbers ----------
+/** Targets → registered objects, dropping any covered by another target's ancestor (they move with it). */
+function placeTargets(targets: string[]) {
+  const r = resolveIds(targets);
+  const objs = r.ids.map((x) => built.registry.get(x)).filter(Boolean) as THREE.Object3D[];
+  const covered = (o: THREE.Object3D) => { for (let p = o.parent; p; p = p.parent) if (objs.includes(p)) return true; return false; };
+  return { objs: objs.filter((o) => !covered(o) && o !== built.root && o !== shapesRoot), unknown: r.unknown };
+}
+/** Run f with the scene at the start pose (t = 0), matrices current; the time is put back. */
+function atStart<T>(f: () => T): T {
+  const t = player.time, playing = player.playing;
+  player.playing = false; player.seek(0); built.root.updateMatrixWorld(true);
+  try { return f(); } finally { player.seek(t); player.playing = playing; }
+}
+const AXES: Record<string, number[]> = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
+function planPlacement(c: PlacementInput): PlacementPlan {
+  const problems: string[] = [];
+  const targets = Array.isArray(c.targets) ? c.targets.map(String) : [];
+  const { objs, unknown } = placeTargets(targets);
+  unknown.forEach((u) => problems.push(`unknown target "${u}"`));
+  if (!objs.length && !unknown.length) problems.push(`${targets.join(', ') || 'targets'}: no parts matched`);
+  const ids = objs.map(idOfObj);
+  if (c.reset) return { targets, ids, reset: true, problems };
+  const v3 = (v: unknown, what: string) => {
+    if (v === undefined) return undefined;
+    if (!Array.isArray(v) || v.length !== 3 || v.some((x) => !Number.isFinite(Number(x)))) { problems.push(`${what} must be [x, y, z]`); return undefined; }
+    return new THREE.Vector3(...v.map(Number));
+  };
+  const by = v3(c.move_by, 'move_by'), to = v3(c.move_to, 'move_to');
+  if (by && to) problems.push('give move_by or move_to, not both');
+  if (!by && !to && !c.rotate) problems.push('a change needs move_by, move_to, rotate or reset');
+  if (c.anchor && !['centre', 'bottom', 'top'].includes(c.anchor)) problems.push('anchor is centre, bottom or top');
+  let axis: THREE.Vector3 | undefined;
+  if (c.rotate) {
+    const a = typeof c.rotate.axis === 'string' ? AXES[c.rotate.axis.toLowerCase()] : c.rotate.axis;
+    if (!Array.isArray(a) || a.length !== 3 || !(Number.isFinite(+c.rotate.degrees))) problems.push('rotate needs axis (x, y, z or [x,y,z]) and degrees');
+    else { axis = new THREE.Vector3(...a.map(Number)); if (axis.lengthSq() < 1e-12) { problems.push('rotate axis is zero'); axis = undefined; } else axis.normalize(); }
+  }
+  if (!objs.length || problems.length) return { targets, ids, problems };
+  return atStart(() => {
+    const box = worldBox(objs);
+    const fmt = (b: THREE.Box3) => ({ centre: b.getCenter(new THREE.Vector3()).toArray(), min: b.min.toArray(), max: b.max.toArray() });
+    const before = fmt(box);
+    let D = new THREE.Matrix4();
+    if (axis) {
+      const pivot = v3(c.rotate!.pivot, 'pivot') ?? box.getCenter(new THREE.Vector3());
+      const R = new THREE.Matrix4().makeRotationAxis(axis, THREE.MathUtils.degToRad(+c.rotate!.degrees));
+      D = new THREE.Matrix4().makeTranslation(pivot.x, pivot.y, pivot.z).multiply(R).multiply(new THREE.Matrix4().makeTranslation(-pivot.x, -pivot.y, -pivot.z));
+    }
+    const rotated = box.clone().applyMatrix4(D);       // conservative box after the rotation
+    let move = by ?? new THREE.Vector3();
+    if (to) {
+      const ctr = rotated.getCenter(new THREE.Vector3());
+      const anchor = c.anchor === 'bottom' ? new THREE.Vector3(ctr.x, rotated.min.y, ctr.z) : c.anchor === 'top' ? new THREE.Vector3(ctr.x, rotated.max.y, ctr.z) : ctr;
+      move = to.clone().sub(anchor);
+    }
+    D = new THREE.Matrix4().makeTranslation(move.x, move.y, move.z).multiply(D);
+    // the box after: transform each part's own box (tighter than the rotated union box)
+    const after = new THREE.Box3();
+    for (const o of objs) after.union(new THREE.Box3().setFromObject(o).applyMatrix4(D));
+    const r4 = (v: number[]) => v.map((x) => +x.toFixed(4));
+    return { targets, ids, matrix: D.toArray(), before: { centre: r4(before.centre), min: r4(before.min), max: r4(before.max) },
+      after: (({ centre, min, max }) => ({ centre: r4(centre), min: r4(min), max: r4(max) }))(fmt(after)),
+      move: r4(move.toArray()), rotate: axis ? { axis: r4(axis.toArray()), degrees: +c.rotate!.degrees } : undefined, problems };
+  });
+}
+/** Apply accepted placements: each target's local pose = D × its start world pose (shapes: their own numbers). */
+async function applyPlacementChanges(plans: PlacementPlan[]) {
+  const t = player.time, playing = player.playing;
+  let shapeMoved = false;
+  const moved: THREE.Object3D[] = [];
+  player.playing = false; player.seek(0); built.root.updateMatrixWorld(true);
+  {
+    for (const pl of plans) {
+      const objs = pl.ids.map((x) => built.registry.get(x)).filter(Boolean) as THREE.Object3D[];
+      for (const o of objs) {
+        const def = o.userData.shape !== undefined && !o.userData.array && o.parent === shapesRoot ? shapes.find((x) => x.id === o.userData.shape) : undefined;
+        if (pl.reset) {
+          delete state.placements[idOfObj(o)];
+          o.position.fromArray(o.userData.homeP); o.quaternion.fromArray(o.userData.homeQ);
+        } else {
+          const w = new THREE.Matrix4().fromArray(pl.matrix!).multiply(o.matrixWorld);
+          const local = o.parent ? o.parent.matrixWorld.clone().invert().multiply(w) : w;
+          local.decompose(o.position, o.quaternion, new THREE.Vector3());
+          if (def) {
+            def.position = o.position.toArray().map((v) => +v.toFixed(4));
+            def.rotation = new THREE.Euler().setFromQuaternion(o.quaternion, 'XYZ').toArray().slice(0, 3).map((a) => +THREE.MathUtils.radToDeg(a as number).toFixed(3));
+            delete state.placements[idOfObj(o)];
+            shapeMoved = true;
+          } else state.placements[idOfObj(o)] = { p: o.position.toArray(), q: o.quaternion.toArray() };
+        }
+        // locked parts skip matrix updates: refresh theirs now
+        o.traverse((x) => { x.matrixAutoUpdate = true; x.matrixWorldAutoUpdate = true; });
+        o.updateMatrixWorld(true);
+        moved.push(o);
+      }
+    }
+  }
+  // rebuild from the new start pose (no seek in between: the old player would put animated parts back)
+  if (shapeMoved) { buildShapes(); applyColors(); tree.rebuild(); }
+  applyPlacements();
+  for (const o of shapeMoved ? [...moved, shapesRoot] : moved) await reconcile(o);
+  persistWorking();
+  if (shapeMoved) edit({ shapes: clone(shapes) });
+  buildTimeline({ atStart: true });
+  player.seek(Math.min(t, player.duration)); player.playing = playing;
+  tree.redraw();
+  gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs);
+}
 
 /** Apply accepted shape changes (assist): create / update (incl. rename – the script follows) / delete, then rebuild once. */
 async function applyShapeChanges(changes: ShapeChange[]) {
@@ -653,6 +767,7 @@ const assistHost: AssistHost = {
     if (p.kind === 'groups') { applyGroupChanges(p.changes as any); return; }
     if (p.kind === 'state') { await applyStateChanges(p.changes as any); return; }
     if (p.kind === 'shapes') { await applyShapeChanges(p.changes as ShapeChange[]); return; }
+    if (p.kind === 'placement') { await applyPlacementChanges(p.changes as PlacementPlan[]); return; }
     if (p.kind !== 'script edit' || !scriptPanel) return;
     if (previewing) previewProposal(undefined);
     const unlock = (p.unlock as string[] | undefined) ?? [];
@@ -695,7 +810,7 @@ Selection: ${sel}${selBox && !selBox.isEmpty() ? ` – bbox centre [${selBox.get
 Camera views: ${Object.keys(views).map((v) => `${v} (pos [${views[v].pos.map((x) => x.toFixed(1))}], look [${views[v].look.map((x) => x.toFixed(1))}])`).join(', ') || 'none'}
 Shapes: ${shapes.map((s) => `${s.id} (${s.kind} [${s.size}] at [${s.position}]${s.rotation.some((r) => r) ? ` rot [${s.rotation}]°` : ''}${s.array ? `, ×${s.array.count} ${s.array.type}` : ''})`).join(', ') || 'none'}
 Groups: ${Object.entries(store.groups).map(([g, ids]) => { const f = Object.entries(store.folders).find(([, gs]) => gs.includes(g))?.[0]; return `@${g} (${ids.length} members${f ? `, folder ${f}` : ''})`; }).join(', ') || 'none'}
-Snapshot: ${store.active}. Explicitly hidden: ${hidden.length ? hidden.slice(0, 20).join(', ') + (hidden.length > 20 ? ` … ${hidden.length - 20} more` : '') : 'none'}. Unlocked (animatable) CAD: ${unlocked.length ? unlocked.slice(0, 20).join(', ') + (unlocked.length > 20 ? ' …' : '') : 'none – CAD is locked by default'}.
+Snapshot: ${store.active}. Explicitly hidden: ${hidden.length ? hidden.slice(0, 20).join(', ') + (hidden.length > 20 ? ` … ${hidden.length - 20} more` : '') : 'none'}. Placed away from their CAD position: ${Object.keys(state.placements).slice(0, 20).join(', ') || 'none'}. Unlocked (animatable) CAD: ${unlocked.length ? unlocked.slice(0, 20).join(', ') + (unlocked.length > 20 ? ' …' : '') : 'none – CAD is locked by default'}.
 
 Assembly (top levels; use get_tree / find_parts for more):
 ${tree}

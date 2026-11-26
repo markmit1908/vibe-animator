@@ -189,6 +189,7 @@ groups (and their folders), shapes, lock/hide state and the top of the assembly 
 - **script edits:** a diff with a compile check and **▶ Preview**. Accept also unlocks every locked part the new script animates (listed on the card).
 - **groups:** create, add, remove, delete.
 - **part state:** lock/unlock, hide/show, base colours, remove/restore.
+- **positions:** place parts in the model – their start position for the whole animation, like dragging them with the gizmo at t = 0 (the script is untouched): move by an offset, move to a point (*“stand the machine on the vessel”* puts its bottom-centre on the vessel's top), rotate about an axis, or put parts back where the CAD has them. Works on locked parts; the card shows the box before and after.
 - **shapes:** make, change (including rename, sizes, position, rotation, colour, arrays) or delete studio shapes – e.g. *“a 6 m tube, 300 mm bore, 600 mm OD, standing on the floor”*. The card lists each shape's sizes and position; once accepted the shape is in the tree and can be animated by name (ask for the script steps after).
 
 The panel is SolverKit's Assist panel: Send/Stop (Esc gives the prompt back), Edit in place, Regenerate, Copy, **Clear**, and an **Accept all / Reject all** queue of waiting changes. Every code block in a reply has **Insert into script**; **Effort** sets how hard the model thinks (default *low*, the fastest; use medium/high for harder requests). Script changes are proposed as small edits (only the changed lines are sent), shown as a full diff.

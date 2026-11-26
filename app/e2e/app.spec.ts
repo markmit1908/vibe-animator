@@ -890,6 +890,61 @@ test("assist: propose_shapes makes, changes and deletes shapes through an accept
   await expect.poll(async () => (await model(page, a.id)).shapes).toEqual([]);
 });
 
+test("assist: propose_placement positions parts at the start (stand on, rotate, reset), even locked ones; animation still plays from there", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "AI place", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "P"\nmove machine by [0,1,0] 1s' },
+    snapshots: { active: "default", items: { default: { locked: { vessel: true }, hidden: {} } } }, groups: {},
+    shapes: [{ id: "blk", kind: "box", size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0], color: "#888888" }] };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "AI place");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  await page.locator("#right [data-t=assist]").click();
+  const box = (id: string) => page.evaluate((id) => { const s = (window as any).__studio, b = new s.THREE.Box3().setFromObject(s.built.registry.get(id));
+    return { min: b.min.toArray().map((v: number) => +v.toFixed(3)), max: b.max.toArray().map((v: number) => +v.toFixed(3)) }; }, id);
+  const propose = (changes: any[], summary: string) => page.evaluate(async ({ changes, summary }) => {
+    const s = (window as any).__studio, t = s.tools.find((x: any) => x.name === "propose_placement");
+    let p: any, x: any; const g = t.run({ summary, changes }); for (x = await g.next(); !x.done; x = await g.next()) if (x.value.type === "proposal") { const { type, ...y } = x.value; p = y; }
+    s.assist.host.onChat([...s.assist.host.chat(), { role: "user", content: summary }, { role: "assistant", content: "OK.", proposal: p }]);
+    s.assist.mount.refresh();
+    return { ok: p.check.ok, problems: p.problems, result: x.value.content };
+  }, { changes, summary });
+  const accept = () => page.getByTestId("proposal").last().getByRole("button", { name: "Accept" }).click();
+
+  // bad input is a problem
+  const bad = await propose([{ targets: ["ghost"], move_by: [1, 0, 0] }, { targets: ["machine"] }], "bad");
+  expect(bad.ok).toBe(false);
+  expect(bad.problems.join(" | ")).toMatch(/unknown target "ghost".*needs move_by/);
+
+  // stand the machine on top of the (locked) vessel: bottom-centre to the vessel's top-centre
+  const v = await box("vessel");
+  const top = [(v.min[0] + v.max[0]) / 2, v.max[1], (v.min[2] + v.max[2]) / 2];
+  const r1 = await propose([{ targets: ["machine"], move_to: top, anchor: "bottom" }], "Machine on the vessel");
+  expect(r1.ok).toBe(true);
+  await expect(page.getByTestId("proposal").last()).toContainText("Position parts");
+  await accept();
+  await expect.poll(async () => (await box("machine")).min[1]).toBeCloseTo(v.max[1], 2);
+  await expect.poll(async () => Object.keys((await model(page, a.id)).snapshots.items.default.placements ?? {})).toEqual(["machine"]);
+  // the script still animates it from the new start: at t = 1 it is 1 m higher
+  const y1 = await page.evaluate(() => { const s = (window as any).__studio; s.player.seek(1); const y = new s.THREE.Box3().setFromObject(s.built.registry.get("machine")).min.y; s.player.seek(0); return y; });
+  expect(y1).toBeCloseTo(v.max[1] + 1, 2);
+  // a locked part moves too
+  const v0 = await box("vessel");
+  await propose([{ targets: ["vessel"], move_by: [2, 0, 0] }], "Shift the vessel");
+  await accept();
+  await expect.poll(async () => (await box("vessel")).min[0]).toBeCloseTo(v0.min[0] + 2, 2);
+  // a shape: rotate 90° about z and stand it at the origin – its own numbers change
+  await propose([{ targets: ["blk"], rotate: { axis: "z", degrees: 90 }, move_to: [5, 0, 0], anchor: "bottom" }], "Turn the block");
+  await accept();
+  await expect.poll(async () => (await model(page, a.id)).shapes[0]).toMatchObject({ position: [5, 0.5, 0], rotation: [0, 0, 90] });
+  // reset
+  await propose([{ targets: ["machine", "vessel"], reset: true }], "Put back");
+  await accept();
+  await expect.poll(async () => Object.keys((await model(page, a.id)).snapshots.items.default.placements ?? {})).toEqual([]);
+  expect((await box("vessel")).min[0]).toBeCloseTo(v0.min[0], 3);
+  await expect(page.locator("#script .status")).toHaveText("✓");
+});
+
 test("hidden line: a line where two parts touch flush (part ids), smooth lines, separate silhouette weight", async ({ page }) => {
   await page.setViewportSize({ width: 1200, height: 800 });
   await page.goto("/");

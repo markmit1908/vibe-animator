@@ -1,5 +1,5 @@
 // The Studio's Assist tab: SolverKit's AssistPanel (composer, streaming, Stop/Edit/Regenerate/Copy/Clear, proposal
-// queue) over the studio's assist loop (AssistHost). Our proposal kinds (script edit, groups, part state, shapes) are
+// queue) over the studio's assist loop (AssistHost). Our proposal kinds (script edit, groups, part state, shapes, placement) are
 // registered here as SolverKit proposal kinds. The studio is plain DOM, so this mounts its own React root.
 import { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -9,7 +9,7 @@ import { Button } from "@solverkit/ui";
 import { Pause, Play } from "lucide-react";
 import type { AssistHost, AssistMount, Effort } from "../../src/assist/host";
 import type { ChatMessage, Proposal } from "../../src/assist/loop";
-import { sizeKeys, type ShapeChange } from "../../src/assist/tools";
+import { sizeKeys, type PlacementPlan, type ShapeChange } from "../../src/assist/tools";
 
 interface View { host: AssistHost; script: string; previewing?: string }
 
@@ -96,6 +96,20 @@ function registerKinds() {
         </>;
       })} />
     ),
+  });
+  proposalKinds.register({
+    id: "placement",
+    queueLabel: () => "Position",
+    render: (p: SkProposal, _v: View, onDecide?: (a: boolean) => void) => {
+      const v = (x?: number[]) => (x ? `[${x.map((n) => +n.toFixed(3)).join(", ")}]` : "");
+      return <ChangeCard p={p} title="Position parts" onDecide={onDecide} lines={(p.changes as PlacementPlan[]).map((c) => <>
+        <b>{c.targets.join(", ")}</b> ({plural(c.ids.length)}): {c.reset ? "back to the CAD position" : <>
+          {c.rotate && `rotate ${c.rotate.degrees}° about ${v(c.rotate.axis)}`}{c.rotate && c.move?.some((n) => Math.abs(n) > 1e-9) && ", "}
+          {c.move?.some((n) => Math.abs(n) > 1e-9) && `move ${v(c.move)} m`}
+          <span className="text-muted-foreground">{` – centre ${v(c.before?.centre)} → ${v(c.after?.centre)}, bottom y ${c.after?.min[1].toFixed(3)}, top y ${c.after?.max[1].toFixed(3)}`}</span>
+        </>}
+      </>)} />;
+    },
   });
   proposalKinds.register({
     id: "state",

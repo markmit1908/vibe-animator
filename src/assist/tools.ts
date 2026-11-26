@@ -251,6 +251,29 @@ export interface ModelProposeDeps {
   groups: () => Record<string, string[]>;
   /** The studio's shapes (basic modelling). */
   shapes?: () => ShapeDef[];
+  /** Work out a placement change at the start pose: the rigid world transform for the targets, before/after boxes. */
+  planPlacement?: (c: PlacementInput) => PlacementPlan;
+}
+
+export interface PlacementInput {
+  targets: string[];
+  move_by?: number[];
+  move_to?: number[];
+  anchor?: 'centre' | 'bottom' | 'top';
+  rotate?: { axis: 'x' | 'y' | 'z' | number[]; degrees: number; pivot?: number[] };
+  reset?: boolean;
+}
+export interface PlacementPlan {
+  targets: string[];
+  ids: string[];
+  /** world transform applied to every target (column-major 4×4), or undefined for reset */
+  matrix?: number[];
+  reset?: boolean;
+  before?: { centre: number[]; min: number[]; max: number[] };
+  after?: { centre: number[]; min: number[]; max: number[] };
+  move?: number[];
+  rotate?: { axis: number[]; degrees: number };
+  problems: string[];
 }
 
 /** Size field names per kind for the assistant: "outer radius" → outer_radius, "width (x)" → width. */
@@ -318,6 +341,38 @@ function shapeChanges(input: any[], existing: ShapeDef[]): { changes: ShapeChang
 
 export function modelProposeTools(d: ModelProposeDeps): AssistTool[] {
   return [
+    ...(d.planPlacement ? [{
+      name: 'propose_placement',
+      description: 'Propose positioning parts in the model (their start pose for the whole animation – like dragging them with the gizmo at t = 0; the script is untouched). Each change moves the targets (ids, globs, short names or @groups) together as one rigid set: move_by [dx,dy,dz], or move_to [x,y,z] = where the anchor of their bounding box goes (anchor centre (default), bottom = bottom-centre, top = top-centre; e.g. to stand A on B: move_to B\'s top-centre with anchor bottom). rotate {axis x|y|z or [x,y,z], degrees, pivot (default the box centre)} is applied before the move. reset: true puts the parts back where the CAD has them. Locked parts can be placed (locking only stops animation). Shapes write their own position/rotation. Read positions with get_part first; the card shows the box before and after.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          summary: { type: 'string' },
+          changes: { type: 'array', items: { type: 'object', properties: {
+            targets: { type: 'array', items: { type: 'string' } },
+            move_by: { ...vec3 },
+            move_to: { ...vec3 },
+            anchor: { type: 'string', enum: ['centre', 'bottom', 'top'] },
+            rotate: { type: 'object', properties: { axis: { description: 'x, y, z or a vector [x,y,z]' }, degrees: { type: 'number' }, pivot: { ...vec3 } }, required: ['axis', 'degrees'] },
+            reset: { type: 'boolean' },
+          }, required: ['targets'] } },
+        },
+        required: ['summary', 'changes'],
+      },
+      writing: 'placement',
+      validate: (i: any) => check(i, { summary: 'string' }) ?? (Array.isArray(i.changes) && i.changes.length ? undefined : '"changes" must be a non-empty array'),
+      async *run(i: any) {
+        const changes = (i.changes as PlacementInput[]).map((c) => d.planPlacement!(c));
+        const problems = changes.flatMap((c) => c.problems);
+        const ok = !problems.length;
+        const n = changes.reduce((a, c) => a + c.ids.length, 0);
+        const label = ok ? `✓ ${n} part${n === 1 ? '' : 's'}` : `${problems.length} problem${problems.length > 1 ? 's' : ''}`;
+        yield { type: 'proposal', kind: 'placement', summary: i.summary, check: { ok, label }, changes, problems } as AssistEvent;
+        const f = (v?: number[]) => (v ? `[${v.map((x) => x.toFixed(3)).join(', ')}]` : '');
+        return { content: ok ? `Proposed; waiting for the user.\n${changes.map((c) => `${c.targets.join(', ')}: ${c.reset ? 'reset' : `box centre ${f(c.before?.centre)} → ${f(c.after?.centre)}, min ${f(c.after?.min)}, max ${f(c.after?.max)}`}`).join('\n')}`
+          : `Problems:\n${problems.join('\n')}\nFix them and propose again.` };
+      },
+    } satisfies AssistTool] : []),
     ...(d.shapes ? [{
       name: 'propose_shapes',
       description: `Propose making, changing or deleting shapes – simple solids the user models in the studio (they appear under Shapes in the tree and are parts the script can animate by name; they start unlocked). Kinds and their sizes (metres): ${SIZE_DOC}. Every shape is centred on its position, its axis along Y (upright): a cylinder/tube/cone/hex of height h standing on a surface at height y has position y + h/2; rotate it [90,0,0] to lie along Z or [0,0,90] to lie along X. Rotation is degrees about X, Y, Z. Optional array: linear {count, step [x,y,z]} or circular {count, centre [x,z], angle (360 = evenly round)}; copies are named <name>-0, <name>-1… For update, give only what changes (rename to change the name – the script follows); array null removes it. A shape exists only once the user accepts the card.`,
