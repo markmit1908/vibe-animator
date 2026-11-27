@@ -173,7 +173,7 @@ test("the studio fills the editor area: nothing under the header or status bar",
   const box = async (sel: string) => (await page.locator(sel).first().boundingBox())!;
   const main = await box("main"), host = await box("main > div");
   expect(host).toEqual(main);
-  await page.getByRole("button", { name: "Assist", exact: true }).click();
+  await page.getByRole("button", { name: "AI Assist", exact: true }).click();
   const input = await box("#assist form"), footer = await box("footer");
   expect(input.y + input.height).toBeLessThanOrEqual(footer.y + 0.5);
   await expect(page.getByRole("button", { name: "Send", exact: true })).toBeInViewport();
@@ -1282,4 +1282,28 @@ test("basic modelling: add a shape, edit it, a circular array scriptable by name
   await page.keyboard.press("ControlOrMeta+z");
   await expect.poll(async () => (await model(page, a.id)).shapes?.[0]?.id).toBe("pins");
   await expect.poll(() => page.evaluate(() => !!(window as any).__studio.built.registry.get("shapes/pins/pins-5"))).toBe(true);
+});
+
+test("SVG line drawing: exact hidden lines from the geometry, ISO layers in mm", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Svg", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] },
+    script: { language: "anim", text: 'label "S"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Svg");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const r = await page.evaluate(() => {
+    const s = (window as any).__studio, T = s.THREE;
+    const box = (w: number, z: number, id: string) => { const b = new T.Mesh(new T.BoxGeometry(w, w, w), new T.MeshToonMaterial()); b.position.set(0, 1, z); b.userData.id = id; s.built.root.add(b); };
+    box(2, 0, "front"); box(1, -4, "behind");              // fully hidden behind the front box, seen from +z
+    s.camera.position.set(0, 1, 20); s.camera.lookAt(0, 1, 0); s.camera.updateMatrixWorld();
+    const a = s.vectorDrawing({ hidden: true, paper: "A4" }), b = s.vectorDrawing({ hidden: false, paper: "A4" });
+    return { svg: a.svg, stats: a.stats, plain: b.stats };
+  });
+  expect(r.svg).toContain('width="297mm" height="210mm"');
+  for (const l of ["outline", "crease", "hidden"]) expect(r.svg).toContain(`inkscape:label="${l}"`);
+  expect(r.stats["lines.outline"]).toBe(1);   // the front square, chained into one closed polyline
+  expect(r.stats["lines.hidden"]).toBe(1);    // the box behind: its outline, all hidden
+  expect(r.plain["lines.hidden"]).toBe(0);
+  const outline = r.svg.match(/id="outline"[^>]*><path d="([^"]+)"/)![1];
+  expect(outline.split("L").length).toBe(5);   // 4 corners + closing point: collinear pieces merged
 });

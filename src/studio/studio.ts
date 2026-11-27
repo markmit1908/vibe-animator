@@ -30,6 +30,7 @@ import type { Proposal } from '../assist/loop';
 import { parseAnim, toActions, type ParseError } from '../script/anim';
 import { ScriptError } from '../timeline/compile';
 import { applyEdit, cameraLine, type Edit, type Probe } from '../script/edit';
+import { makeDrawing, type DrawingOptions } from '../drawing';
 
 /** What the studio needs from its host app (SolverKit's editor). */
 export interface StudioIO {
@@ -543,9 +544,9 @@ if (isAnim) {
   scriptPanel.setErrors(scriptErrors);
   buildTimeline(); // again now the panel exists, so compile errors (e.g. locked parts) show in the editor with their fix
 }
-// ---------- [Script | Assist] tabs ----------
+// ---------- [Animation | Illustration | AI Assist] tabs (Animation = the controls + the .anim script) ----------
 const tabs = document.createElement('div'); tabs.className = 'rtabs';
-tabs.innerHTML = `<button data-t="script" class="on">Script</button><button data-t="assist">Assist</button>`;
+tabs.innerHTML = `<button data-t="script" class="on" title="Animation: playback and view controls, and the animation script">Animation</button><button data-t="illustration" title="Illustration: print-quality vector line drawings">Illustration</button><button data-t="assist">AI Assist</button>`;
 const tabCss = document.createElement('style');
 tabCss.textContent = `#right { position: absolute; top: 0; right: 0; bottom: 0; width: 420px; display: flex; flex-direction: column; z-index: 5;
   background: rgba(14,17,21,.95); border-left: 1px solid #222a33; }
@@ -553,10 +554,32 @@ tabCss.textContent = `#right { position: absolute; top: 0; right: 0; bottom: 0; 
 #right .lil-gui.root { width: 100% !important; --width: 100%; max-height: 45vh; overflow: auto; flex: none; }
 #right-toggle { position: absolute; top: 8px; right: 428px; z-index: 6; background:#222a33; color:#d7dde4; border:1px solid #2b3540; border-radius:4px; padding:3px 8px; cursor:pointer; }
 .studio-root.right-collapsed #right-toggle { right: 8px; }
-#right .rtabs { display: flex; border-top: 1px solid #222a33; } #right .rtabs button { flex: 1; background: transparent; color: #7b8794; border: 0; border-bottom: 2px solid transparent; padding: 6px; cursor: pointer; font: 600 12px system-ui; }
-  #right .rtabs button.on { color: #f2b705; border-bottom-color: #f2b705; } #script, #assist { border-top: 0 !important; } #assist { flex: 1; min-height: 0; display: flex; flex-direction: column; }`;
+#right .rtabs { display: flex; border-bottom: 1px solid #222a33; flex: none; } #right .rtabs button { flex: 1; background: transparent; color: #7b8794; border: 0; border-bottom: 2px solid transparent; padding: 6px; cursor: pointer; font: 600 12px system-ui; }
+  #right .rtabs button.on { color: #f2b705; border-bottom-color: #f2b705; } #script, #assist { border-top: 0 !important; } #assist { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#illustration { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#illustration .draw-script { flex: 1; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid #222a33; }
+#illustration .draw-script header { padding: 8px 10px; font: 600 12px system-ui; color: #d7dde4; }
+#illustration .draw-script .placeholder { margin: 0 10px; padding: 12px; border: 1px dashed #2b3540; border-radius: 6px; color: #7b8794; font: 12px/1.5 system-ui; }`;
 document.head.appendChild(tabCss);
-right.insertBefore(tabs, scriptPanel?.el ?? null);
+right.prepend(tabs);
+// ---------- Illustration: drawing controls + (phase 2) the drawing script ----------
+const illEl = document.createElement('div'); illEl.id = 'illustration'; right.appendChild(illEl);
+const sheet = { paper: 'A3', portrait: false, scale: 0, hidden: false, creaseDeg: 30, svg: () => exportSvg(sheetOptions()) };
+const sheetOptions = (): DrawingOptions => ({ paper: sheet.paper as DrawingOptions['paper'], portrait: sheet.portrait, scale: sheet.scale || undefined, hidden: sheet.hidden, creaseDeg: sheet.creaseDeg });
+const illGui = new GUI({ title: 'Controls', container: illEl });
+const sh = illGui.addFolder('Sheet');
+sh.add(sheet, 'paper', ['A0', 'A1', 'A2', 'A3', 'A4']).name('Paper');
+sh.add(sheet, 'portrait').name('Portrait');
+sh.add(sheet, 'scale', { 'Fit to sheet': 0, '1:10': 10, '1:20': 20, '1:25': 25, '1:50': 50, '1:100': 100, '1:200': 200, '1:500': 500 }).name('Scale');
+const ln = illGui.addFolder('Lines');
+ln.add(sheet, 'hidden').name('Hidden lines (dashed)');
+ln.add(sheet, 'creaseDeg', 5, 90, 1).name('Crease angle (°)');
+illGui.add(sheet, 'svg').name('⤓ Export SVG (current view, orthographic)');
+{
+  const ds = document.createElement('div'); ds.className = 'draw-script';
+  ds.innerHTML = `<header>Drawing script</header><div class="placeholder">Sheets – view, pose, cutaway, show/hide, paper and layers – will be set up here and run as a batch. For now, Export SVG draws the current view with the settings above.</div>`;
+  illEl.appendChild(ds);
+}
 // ---------- assist tools (read-only) ----------
 const toolDeps: ToolDeps = {
   registry: built.registry,
@@ -858,9 +881,11 @@ const showTab = (t: string) => {
   tabs.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
   if (scriptPanel) scriptPanel.el.style.display = t === 'script' ? '' : 'none';
   assistEl.style.display = t === 'assist' ? '' : 'none';
+  gui.domElement.style.display = t === 'script' ? '' : 'none';
+  illEl.style.display = t === 'illustration' ? '' : 'none';
 };
 tabs.querySelectorAll('button').forEach((b) => (b.onclick = () => showTab(b.dataset.t!)));
-showTab(new URLSearchParams(location.search).get('tab') ?? (scriptPanel ? 'script' : 'assist'));
+{ const q = new URLSearchParams(location.search).get('tab'); showTab(q === 'animation' ? 'script' : q ?? (scriptPanel ? 'script' : 'assist')); }
 
 async function assistContext() {
   const lines = (scriptPanel?.text ?? '').split('\n');
@@ -1170,6 +1195,19 @@ function viewFrom(dir: [number, number, number]) {
   controls.update();
 }
 let lastView = 'view';
+/** Vector line drawing of the current view (src/drawing). */
+function vectorDrawing(opt: DrawingOptions = {}) {
+  const r = makeDrawing(scene3, camera, { exclude: [gizmo.getHelper()], title: scriptName, ...opt });
+  console.info('drawing', r.stats);
+  return r;
+}
+function exportSvg(opt: DrawingOptions = {}) {
+  const { svg } = vectorDrawing(opt);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+  a.download = `${scriptName.replace(/\.\w+$/, '')}-${lastView}-t${player.time.toFixed(1)}s.svg`;
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
 function exportPng() {
   const pr = renderer.getPixelRatio();
   renderer.setPixelRatio(Math.min(4, pr * 2)); // 2× resolution
@@ -2012,7 +2050,7 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 }
 
 // read-only handle for tests and debugging
-(window as any).__studio = { built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
+(window as any).__studio = { vectorDrawing, exportSvg, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
   /** tests: a block with many small parts buried behind the cut plane (x < 0), like dowels without holes */
   addTestBuried: (count = 60) => {
     const mk = (col: number) => withCaps(new THREE.MeshToonMaterial({ color: col, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));
