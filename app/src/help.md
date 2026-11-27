@@ -14,7 +14,7 @@ New, Duplicate, Rename, Delete (to the trash), folders and versions for your ani
 
 - **Assembly** (left): the part tree.
 - **3D view** (centre): orbit with the mouse, click parts to select them.
-- **Controls** (right): play/pause (**Space**), speed, time, cutaway, chapters.
+- **Controls** (right): play/pause (**Space**), speed, time, cutaway (and **Kept uncut**), chapters.
 - **Script / Assist** (tabs under the controls).
 
 **View toolbar:**
@@ -30,6 +30,14 @@ New, Duplicate, Rename, Delete (to the trash), folders and versions for your ani
 - **Caps**: cut faces are filled in each part's colour, darker (**Cap shade**). Off, or `nocap` in the script, shows the hollow insides.
 - **⤓ Insert this cut into the script** writes it as a `cutaway` line.
 - **Keep uncut** (✂ on the tool bar, **K**; right-click in the tree; or **Kept uncut** here): every cut leaves those parts whole. In the script, `keep` adds parts for one cut: `cutaway half x keep @lid, machine`.
+
+# Outlines
+
+A glow around parts to point them out, from the script:
+- `outline @lid` – cyan, 8 px; `outline @lid #ff3b30 12px 0.5s` – colour (#hex or a name), width, fading in.
+- `outline @lid off 1s` fades it out. Works in `parallel` and `each` (`each @blocks stagger 0.2s { outline $ 0.3s }`).
+- It shows through parts in front; a hidden part also gets a faint tint of the colour, so you can find buried parts.
+- Every view and PNG show it; it follows the cut and blanking. (Not the same as the **Shaded + outline** view, which draws edges.)
 
 # Assembly tree
 
@@ -54,7 +62,7 @@ Right-click a row for its menu; **F2** renames, **Delete** removes, ⌘/Ctrl-cli
 - **Views**: save the camera as a named view; use it with `camera <name> 2s`.
 - **Group** (G): a group (`@name`) from the selection.
 
-**Undo:** ⌘/Ctrl+Z, redo ⇧⌘Z – colours, moves, lock/hide, groups, renames, removals. In the script editor, ⌘Z undoes typing.
+**Undo:** ⌘/Ctrl+Z, redo ⇧⌘Z – colours, moves, lock/hide, groups and folders, keep uncut, shapes, renames, removals. In the script editor, ⌘Z undoes typing.
 
 Select an unlocked part to move it with the gizmo: **W** move, **E** rotate, **R** reset, **Esc** deselect.
 At time 0 this sets the start pose; later, it writes the move into the script.

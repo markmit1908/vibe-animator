@@ -74,7 +74,7 @@ use the **Import old project (.zip)…** link on Home; the model goes into `CAD/
 | **Script / Assist** (right, tabs) | The `.anim` editor, and the AI assistant. |
 
 **View toolbar:**
-- **Shaded / Shaded + outline / Hidden line:** hidden line draws visible edges only, black on white; shaded + outline draws those edges over the cel-shaded view. Lines are anti-aliased: silhouettes/outlines (against the background or a part behind) and edges (creases, and the boundary wherever two parts touch) have their own weights in ⚙, with crease angle, outline sensitivity and colours. ⚙ sets line weight, crease angle, sensitivity and colours.
+- **Shaded / Shaded + outline / Hidden line** (*outline* here means the drawn edges; the script's `outline` step is a glow around chosen parts): hidden line draws visible edges only, black on white; shaded + outline draws those edges over the cel-shaded view. Lines are anti-aliased: silhouettes/outlines (against the background or a part behind) and edges (creases, and the boundary wherever two parts touch) have their own weights in ⚙, with crease angle, outline sensitivity and colours. ⚙ sets line weight, crease angle, sensitivity and colours.
 - **Cutaway** (Controls → View): **Caps** on/off and **Cap shade**; `script` follows the script; or choose half / quarter, which side it removes, and **Centre cut on selection**. **⤓ Insert this cut into the script** writes it as a `cutaway` line.
 - **Keep uncut:** parts the cut leaves whole, saved with the animation and applied to every cut (the Controls' and the script's): ✂ **Keep uncut** on the tool bar (**K**; **Cut again** when the selection is kept), right-click **Keep uncut** in the tree (kept rows show ✂, dimmed when kept through an assembly), or **Controls → View → Kept uncut** (*Keep selection uncut*, *Cut selection again*, *Clear*). Kept parts are drawn whole and solid, aren't capped, and kept core blocks stay visible. A script cut can keep more for that cut only: `cutaway half x keep @lid, machine`.
 - **Iso / Front / Top / Side / Fit:** frame everything visible.
@@ -116,7 +116,7 @@ save into the active snapshot automatically. **Save** also records the camera; *
 | **Group** (**G**) | Makes a group (`@name`) from the selection |
 
 
-**Undo / redo:** **⌘/Ctrl+Z** and **⇧⌘Z** (or Ctrl+Y) undo colours, moves (gizmo), lock/hide, groups, renames, remove/restore and script changes made by the gizmo or an accepted AI proposal. While you're typing in the script, ⌘Z is the editor's own undo.
+**Undo / redo:** **⌘/Ctrl+Z** and **⇧⌘Z** (or Ctrl+Y) undo colours, moves (gizmo), lock/hide, groups and folders, keep uncut, shapes, renames, remove/restore and script changes made by the gizmo or an accepted AI proposal. While you're typing in the script, ⌘Z is the editor's own undo.
 
 **Moving parts:** select an unlocked part, group or several parts to get a gizmo (**W** move, **E** rotate, **R** reset, **Esc** deselect).
 - **At t = 0** it sets the start pose.
@@ -236,8 +236,8 @@ Every node appears in the tree with an id `plant/<child>/…`; duplicate sibling
 | `src/studio/studio.ts` | The Studio: 3D view, tree, script, assist, tools bar, undo, thumbnails – for one animation |
 | `src/scene/` | Scene build (incl. the generated placeholder reactor), CAD loading/suppression, part state, origin fitting, shapes (`shapes.ts`) |
 | `src/script/`, `src/timeline/` | `.anim` parser, compiler, player, gizmo write-back |
-| `src/view/` | Tree, script panel, hidden-line drawing (`drawing.ts`), section caps (`caps.ts`), cutaway, palette, triad |
-| `src/assist/` | Assist loop (Anthropic SDK over the key proxy), tools, system prompt, the host interface for the panel |
+| `src/view/` | Tree (groups, folders), script panel, hidden-line drawing (`drawing.ts`), section caps (`caps.ts`), cutaway and keep-uncut (`cutaway.ts`), outline glows (`glow.ts`), palette, triad |
+| `src/assist/` | Assist loop (Anthropic SDK over the key proxy), read and proposal tools (script, groups, part state, shapes, positions), system prompt, the host interface for the panel |
 | `tools/step2gltf.py` | STEP → glTF converter |
 | `TODO.md` | Open work |
 
