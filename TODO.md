@@ -27,6 +27,10 @@
 - [ ] Video export (frame-by-frame render of the timeline)
 - [ ] PNG export: option for a solid background / chosen size
 
+## Issues to confirm on the plant (big groups)
+- [ ] Duplicating the Cooler groups (~7,800 parts): the new copy wasn't selected, so it couldn't be moved (2026-11-27). Now: duplicate in place + select + gizmo attached directly – check on the plant
+- [ ] Cooler groups Alt-rotated then ⌘-dragged: the copy came out unrotated (2026-11-27). Not reproduced on small models; copies now use fresh transforms and re-locking is batched – check on the plant; suspect nested group members (an assembly and its own parts both selected) turning twice
+
 ## Script and studio
 - [ ] Camera views: also store the field of view and offer an ease per `camera` step
 - [ ] Undo: cover snapshot Save-as / delete and the palette key

@@ -36,10 +36,30 @@ export function memberOffset(a: CopyArray, i: number): THREE.Matrix4 {
   return new THREE.Matrix4().makeTranslation(cx, 0, cz).multiply(new THREE.Matrix4().makeRotationY(THREE.MathUtils.degToRad(per * i))).multiply(new THREE.Matrix4().makeTranslation(-cx, 0, -cz));
 }
 
-/** The source objects' world box (visible geometry). */
+/**
+ * An object's world transform from its position / rotation / scale up the chain – not its stored matrices, which
+ * locked CAD doesn't keep current (matrixAutoUpdate off), e.g. right after a gizmo drag.
+ */
+export function freshWorld(o: THREE.Object3D): THREE.Matrix4 {
+  const m = new THREE.Matrix4().compose(o.position, o.quaternion, o.scale);
+  for (let p = o.parent; p; p = p.parent) m.premultiply(new THREE.Matrix4().compose(p.position, p.quaternion, p.scale));
+  return m;
+}
+/** The source objects' world box (their meshes' boxes, with fresh transforms). */
 export function sourcesBox(objs: THREE.Object3D[]): THREE.Box3 {
-  const b = new THREE.Box3();
-  for (const o of objs) { o.updateMatrixWorld(true); b.expandByObject(o); }
+  const b = new THREE.Box3(), mb = new THREE.Box3();
+  for (const o of objs) {
+    const base = freshWorld(o);
+    const walk = (x: THREE.Object3D, w: THREE.Matrix4) => {
+      const g = (x as THREE.Mesh).geometry;
+      if ((x as THREE.Mesh).isMesh && g?.attributes?.position) {
+        if (!g.boundingBox) g.computeBoundingBox();
+        if (!g.boundingBox!.isEmpty()) b.union(mb.copy(g.boundingBox!).applyMatrix4(w));
+      }
+      for (const c of x.children) walk(c, w.clone().multiply(new THREE.Matrix4().compose(c.position, c.quaternion, c.scale)));
+    };
+    walk(o, base);
+  }
   return b;
 }
 
@@ -76,7 +96,7 @@ export function buildCopy(def: CopyDef, src: CopySource, register: (o: THREE.Obj
       const c = cloneTree(o, name, src.skip, register);
       if (!c) continue;
       // local = (sources' centre)⁻¹ × source world
-      new THREE.Matrix4().multiplyMatrices(toCentre, o.matrixWorld).decompose(c.position, c.quaternion, c.scale);
+      new THREE.Matrix4().multiplyMatrices(toCentre, freshWorld(o)).decompose(c.position, c.quaternion, c.scale);
       into.add(c);
     }
   };

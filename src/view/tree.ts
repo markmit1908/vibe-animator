@@ -101,6 +101,9 @@ export interface TreeHooks {
   onKeep?: (specs: string[], objs: THREE.Object3D[], on: boolean) => void;
   /** Duplicate the selection as a linked copy */
   onDuplicate?: () => void;
+  /** a linked copy (its root): Edit copy… opens its panel */
+  isCopy?: (o?: THREE.Object3D) => boolean;
+  onEditCopy?: (o: THREE.Object3D) => void;
   /** User groups were created/changed (recompile the script). */
   onGroups?: () => void;
 }
@@ -782,6 +785,7 @@ export class TreePanel {
       const all = objs.length > 0 && this.sel.every((s) => s.group ? this.hooks.keptOf?.(undefined, s.group) : s.obj ? this.hooks.keptOf?.(s.obj) : false);
       if (objs.length) items.push([all ? 'Cut again' : 'Keep uncut  K', () => this.hooks.onKeep!(this.selSpecs(), objs, !all)]);
     }
+    if (!many && n.obj && this.hooks.isCopy?.(n.obj)) items.push(['Edit copy…', () => this.hooks.onEditCopy!(n.obj!)]);
     if (!n.removedRow && n.folder === undefined && this.hooks.onDuplicate) items.push(['Duplicate (linked copy)  ⌘D', () => this.hooks.onDuplicate!()]);
     if (!many && n.id) items.push(['Copy id', () => navigator.clipboard?.writeText(n.id!)]);
     const m = document.createElement('div');

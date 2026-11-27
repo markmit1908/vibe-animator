@@ -360,8 +360,10 @@ test("linked copies: duplicate a part (⌘D), place it by numbers or the gizmo, 
   let i = await info();
   expect(i.copies[0]).toMatchObject({ id: "Pin_1-1", of: [pin], rotation: [0, 0, 0] });
   expect(i.geoSame).toBe(true);                                                    // shared geometry
-  expect(i.copy!.c[0]).toBeCloseTo(i.src.c[0] + i.src.w * 1.1, 2);                 // one box width along x
-  expect(i.copy!.c[1]).toBeCloseTo(i.src.c[1], 2);
+  expect(i.copy!.c).toEqual(i.src.c);                                              // in place…
+  expect(await page.evaluate(() => { const s = (window as any).__studio; return [s.tree.selectedSpecs(), s.gizmo.object?.name, s.gizmo.mode]; })).toEqual([["copies/Pin_1-1"], "Pin_1-1", "translate"]);   // …selected, ready to move
+  await expect(page.locator("#toolsbar .cppop")).toBeHidden();
+  await page.evaluate(() => (window as any).__studio.openCopyPanel());
   await expect(page.locator("#toolsbar .cppop")).toBeVisible();
   // the tree lists it; the source's short name still resolves (the copy's parts need full ids)
   await expect(page.locator("#tree .row", { hasText: "Copies" })).toBeVisible();
@@ -370,6 +372,12 @@ test("linked copies: duplicate a part (⌘D), place it by numbers or the gizmo, 
   const pos = page.locator("#toolsbar .cppop [data-f=pos1]");
   await pos.fill("2"); await pos.dispatchEvent("input");
   await expect.poll(async () => (await info()).copy!.c[1]).toBeCloseTo(2, 2);
+  // the panel closes (✕) and stays closed when the copy is selected again
+  await page.locator("#toolsbar .cppop [data-s=close]").click();
+  await expect(page.locator("#toolsbar .cppop")).toBeHidden();
+  await page.evaluate((pin) => (window as any).__studio.tree.selectId(pin), pin);
+  await page.evaluate(() => (window as any).__studio.tree.selectId("copies/Pin_1-1"));
+  await expect(page.locator("#toolsbar .cppop")).toBeHidden();
   // scripts can animate it by name
   await page.evaluate(() => { const p = (window as any).__studio.scriptPanel; p.setText(p.text + "\nmove Pin_1-1 by [0,1,0] 1s"); });
   await expect(page.locator("#script .status")).toHaveText("✓");
@@ -384,6 +392,9 @@ test("linked copies: duplicate a part (⌘D), place it by numbers or the gizmo, 
   await page.evaluate(async (pin) => { const s = (window as any).__studio; s.tree.selectId(pin); s.tree.removeSelected(); }, pin);
   await expect.poll(async () => (await info()).geoSame).toBe(false);
   await page.evaluate(() => (window as any).__studio.tree.selectId("copies/Pin_1-1"));
+  await expect(page.locator("#toolsbar .cppop")).toBeHidden();                     // selecting doesn't open it…
+  await page.locator("#tree .row.sel").first().click({ button: "right" });         // …Edit copy… does
+  await page.locator(".treemenu [role=menuitem]", { hasText: "Edit copy" }).click();
   await expect(page.locator("#toolsbar .cppop .err")).toContainText("removed");
   // undo the removal, then delete the copy from its panel; undo brings it back
   await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
@@ -411,6 +422,8 @@ test("copies: linear and circular arrays (members by name), mirrored copies keep
   await page.evaluate((pin) => (window as any).__studio.tree.selectId(pin), pin);
   await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
   await page.keyboard.press("Meta+d");
+  await expect.poll(() => page.evaluate(() => (window as any).__studio.copies.length)).toBe(1);
+  await page.evaluate(() => (window as any).__studio.openCopyPanel());
   await expect(page.locator("#toolsbar .cppop")).toBeVisible();
   const centre = (id: string) => page.evaluate((id) => { const s = (window as any).__studio, T = s.THREE, o = s.built.registry.get(id); if (!o) return null;
     o.updateWorldMatrix(true, true); return new T.Box3().setFromObject(o).getCenter(new T.Vector3()).toArray().map((v: number) => +v.toFixed(3)); }, id);
@@ -689,6 +702,44 @@ test("gizmo: moves locked CAD and groups at the start, Ctrl-drag drags out a lin
   expect(await page.evaluate(() => { const g = (window as any).__studio.gizmo; return [g.mode, +g.rotationSnap.toFixed(6)]; })).toEqual(["rotate", +(Math.PI / 12).toFixed(6)]);
   await page.keyboard.up("Alt");
   expect(await page.evaluate(() => (window as any).__studio.gizmo.mode)).toBe("translate");
+});
+
+test("copies keep a rotation: groups Alt-rotated then ⌘-dragged, even with stale matrices on locked CAD", async ({ page }) => {
+  await page.goto("/");
+  const { readFileSync } = await import("node:fs");
+  await api(page).put("/api/files/CAD/small.glb?overwrite=true", { data: readFileSync(new URL("./fixtures/small.glb", import.meta.url)) });
+  const m = { name: "Rotated copies", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [{ id: "plant", file: "CAD/small.glb", up: "y", position: [0, 0, 0] }] },
+    script: { language: "anim", text: 'label "R"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await page.goto("/"); await page.getByText("Rotated copies", { exact: true }).first().click();
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const ids = await page.evaluate(() => { const r = [...(window as any).__studio.built.registry.keys()]; return { p1: r.find((id: string) => id.endsWith("/Pin_1")), p2: r.find((id: string) => id.endsWith("/Pin_2")) }; });
+  await page.evaluate((ids) => { const s = (window as any).__studio; s.store.groups.ga = [ids.p1]; s.store.groups.gb = [ids.p2]; s.tree.rebuild(); }, ids);
+  const q = (id: string) => page.evaluate((id) => { const s = (window as any).__studio, T = s.THREE, o = s.built.registry.get(id); o.updateWorldMatrix(true, true);
+    let mesh: any; o.traverse((x: any) => { if (!mesh && x.isMesh) mesh = x; }); const qq = new T.Quaternion(); mesh.matrixWorld.decompose(new T.Vector3(), qq, new T.Vector3()); return qq.toArray().map((v: number) => +v.toFixed(3)); }, id);
+  // select both groups in the tree (⌘-click the second)
+  await page.locator("#tree .row .lbl", { hasText: /^ga$/ }).first().click();
+  await page.locator("#tree .row .lbl", { hasText: /^gb$/ }).first().click({ modifiers: ["Meta"] });
+  expect(await page.evaluate(() => (window as any).__studio.tree.selectedSpecs())).toEqual(["@ga", "@gb"]);
+  const press = (meta: boolean) => page.evaluate((meta) => { const c = (window as any).__studio.renderer.domElement; c.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, metaKey: meta, clientX: 3, clientY: 3, button: 1 })); }, meta);
+  await press(false);
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.keyboard.down("Alt");
+  await page.evaluate(() => { const g = (window as any).__studio.gizmo; g.dispatchEvent({ type: "dragging-changed", value: true }); g.object.rotateY(Math.PI / 2); g.object.updateMatrixWorld(true); g.dispatchEvent({ type: "objectChange" }); g.dispatchEvent({ type: "dragging-changed", value: false }); });
+  await page.keyboard.up("Alt");
+  await page.waitForTimeout(800);
+  const s1 = await q(ids.p1);
+  // as a slow re-lock of thousands of parts can leave them: rotated, but their stored matrices still the old ones
+  await page.evaluate((ids) => { const s = (window as any).__studio, T = s.THREE;
+    for (const id of [ids.p1, ids.p2]) s.built.registry.get(id).traverse((x: any) => { x.matrixAutoUpdate = false; x.matrixWorldAutoUpdate = false; x.matrix.identity(); x.matrixWorld.identity(); }); }, ids);
+  await press(true);
+  await page.evaluate(() => { const g = (window as any).__studio.gizmo; g.dispatchEvent({ type: "dragging-changed", value: true }); g.object.position.x += 3; g.object.updateMatrixWorld(true); g.dispatchEvent({ type: "objectChange" }); g.dispatchEvent({ type: "dragging-changed", value: false }); });
+  await page.waitForTimeout(1500);
+  await expect.poll(() => page.evaluate(() => (window as any).__studio.copies.length)).toBe(1);
+  const c = await page.evaluate(() => (window as any).__studio.copies.at(-1));
+  expect(c.of).toEqual(["@ga", "@gb"]);
+  expect(await q(`copies/${c.id}/${ids.p1}`)).toEqual(s1);                         // the copy keeps the rotation
+  expect(await q(ids.p1)).toEqual(s1);                                             // and the original
 });
 
 test("the tree keeps its open rows, selection and scroll when it rebuilds (making a group)", async ({ page }) => {

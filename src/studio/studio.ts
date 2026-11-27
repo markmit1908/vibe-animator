@@ -9,7 +9,7 @@ import { Player } from '../timeline/player';
 import { fitVerticalCylinder, planeHeight } from '../scene/origin';
 import { poseModel } from '../scene/cad';
 import { slimGlb } from '../scene/slim';
-import { buildCopy, COPIES_ROOT, copyPartId, freeCopyName, sourcesBox, type CopyDef } from '../scene/copies';
+import { buildCopy, freshWorld, COPIES_ROOT, copyPartId, freeCopyName, sourcesBox, type CopyDef } from '../scene/copies';
 import { buildShape, freeName, KINDS, SHAPES_ROOT, shapePartId, SIZES, validName, type ShapeDef, type ShapeKind } from '../scene/shapes';
 import { capUniforms, SectionCaps, withCaps } from '../view/caps';
 import { OutlineGlow } from '../view/glow';
@@ -1077,6 +1077,8 @@ const tree = new TreePanel(built, scene3, {
   keptOf: (o, group) => keptState(o, group),
   onKeep: (specs, objs, on) => setKeep(specs, objs, on),
   onDuplicate: () => void duplicateSelection(),
+  isCopy: (o) => !!o && o.parent === copiesRoot,
+  onEditCopy: (o) => { tree.selectObjects([o]); openCopyPanel(); },
   onGroups: () => { buildTimeline(); edit({ groups: JSON.parse(JSON.stringify(store.groups)), folders: JSON.parse(JSON.stringify(store.folders)) }); }, // groups are part of the animation: saved at once
   stats: () => {
     const c = cad.stats(), r = renderer.info;
@@ -1282,7 +1284,7 @@ gizmo.addEventListener('dragging-changed', (e: any) => {
   if (e.value) {                                     // drag start: remember the pre-drag pose
     scene3.updateMatrixWorld(true);
     drag = {
-      members: gSel.objs.map((o) => ({ o, world: o.matrixWorld.clone(), p: o.position.clone(), q: o.quaternion.clone() })),
+      members: gSel.objs.map((o) => ({ o, world: freshWorld(o), p: o.position.clone(), q: o.quaternion.clone() })),
       pivot: (gizmo.object === proxy ? proxy : gSel.objs[0]).matrixWorld.clone(),
       copy: downMods.copy && player.time <= 1e-4,
     };
@@ -1321,11 +1323,10 @@ gizmo.addEventListener('dragging-changed', (e: any) => {
   // Ctrl/⌘-drag: a linked copy where the parts were dragged to; the originals go back
   if (d.copy) {
     const m0 = d.members[0];
-    m0.o.updateMatrixWorld(true);
-    const D = m0.o.matrixWorld.clone().multiply(m0.world.clone().invert());       // the drag, world
+    const D = freshWorld(m0.o).multiply(m0.world.clone().invert());               // the drag, world
     for (const m of d.members) { m.o.position.copy(m.p); m.o.quaternion.copy(m.q); m.o.updateMatrixWorld(true); }
     void (async () => {
-      for (const m of d.members) if (isLocked(m.o)) await reconcile(m.o);
+      await relock(d.members.map((m) => m.o));
       const specs = tree.selectedSpecs().filter((s) => s !== COPIES_ROOT && s !== SHAPES_ROOT);
       const objs = gSel.objs;
       const c = sourcesBox(objs).getCenter(new THREE.Vector3());
@@ -1369,8 +1370,20 @@ gizmo.addEventListener('dragging-changed', (e: any) => {
   if (copyMoved) { edit({ copies: clone(copies) }); refreshCopyPanel(true); }
   persistWorking();
   buildTimeline();
-  void (async () => { for (const m of d.members) if (isLocked(m.o)) await reconcile(m.o); })();   // lock their matrices again
+  void relock(d.members.map((m) => m.o));   // lock their matrices again
 });
+/** Lock moved locked parts' matrices again: one reconcile per parent (thousands of parts → a few calls). */
+let relocking: Promise<void> = Promise.resolve();
+function relock(objs: THREE.Object3D[]) {
+  const parents = [...new Set(objs.filter((o) => isLocked(o)).map((o) => o.parent ?? o))];
+  relocking = relocking.then(async () => {
+    for (const p of parents) {
+      while (gizmo.dragging) await new Promise((r) => setTimeout(r, 100));   // never under a drag in progress
+      await reconcile(p);
+    }
+  });
+  return relocking;
+}
 renderer.domElement.addEventListener('pointerdown', (e) => (downMods = { copy: e.ctrlKey || e.metaKey }), true);
 // gizmo mode: W move, E rotate (also the tool buttons); hold Alt/Option to rotate in 15° steps
 const toolGizmo = () => {
@@ -1403,6 +1416,7 @@ on('keydown', (e: any) => {
   if (e.key === 'k' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); toggleKeep(); }
   if (e.key === 'e') setGizmoMode('rotate');
   if (e.key === 'Escape' && originPick) { endOrigin(); return; }
+  if (e.key === 'Escape' && !cppop.hidden) { closeCopyPanel(); return; }
   if (e.key === 'Escape') { gizmo.detach(); tree.select(undefined, false); }
   if (e.key === 'r' && gizmo.object && player.time === 0) { // reset selection to its original placement
     for (const o of gSel.objs) { delete state.placements[idOfObj(o)]; o.position.fromArray(o.userData.homeP); o.quaternion.fromArray(o.userData.homeQ); }
@@ -2388,27 +2402,34 @@ function selectedCopy(): CopyDef | undefined {
   const o = gSel.objs[0];
   return o.parent === copiesRoot ? copies.find((c) => c.id === o.userData.copy) : undefined;
 }
-/** Duplicate: the selected copy again (same sources), or the selection as a new copy – one box width along x. */
+/** Duplicate: the selected copy again (same sources), or the selection as a new copy – in place, then selected to move. */
 async function duplicateSelection() {
   if (!gSel.objs.length) return;
   const cur = selectedCopy();
   const taken = copies.map((c) => c.id);
   let def: CopyDef;
   if (cur) {
-    const o = gSel.objs[0], w = sourcesBox([o]).getSize(new THREE.Vector3()).x;
-    def = { ...clone(cur), id: freeCopyName(cur.id.replace(/-\d+$/, ''), taken), position: [cur.position[0] + w * 1.1, cur.position[1], cur.position[2]] };
+    def = { ...clone(cur), id: freeCopyName(cur.id.replace(/-\d+$/, ''), taken) };
   } else {
     const specs = tree.selectedSpecs().filter((s) => s !== COPIES_ROOT && s !== SHAPES_ROOT);
     if (!specs.length) return;
     const b = sourcesBox(gSel.objs);
     if (b.isEmpty()) return;
-    const c = b.getCenter(new THREE.Vector3()), w = b.getSize(new THREE.Vector3()).x;
+    const c = b.getCenter(new THREE.Vector3());
     const base = specs[0].startsWith('@') ? specs[0].slice(1) : (gSel.objs[0].userData.label ?? specs[0].split('/').pop()!);
-    def = { id: freeCopyName(String(base), taken), of: specs, position: [+(c.x + w * 1.1).toFixed(4), +c.y.toFixed(4), +c.z.toFixed(4)], rotation: [0, 0, 0] };
+    def = { id: freeCopyName(String(base), taken), of: specs, position: c.toArray().map((v) => +v.toFixed(4)), rotation: [0, 0, 0] };
   }
   copies.push(def);
-  cppop.hidden = false;
   await syncCopies(true, copyPartId(def.id));
+  // the new copy, selected with the gizmo on it in Move mode (directly too, should the tree not find its row)
+  const o = built.registry.get(copyPartId(def.id));
+  if (o) {
+    if (gSel.objs.length !== 1 || gSel.objs[0] !== o) tree.selectObjects([o]);
+    if (gSel.objs[0] !== o) gizmoFor(o, copyPartId(def.id), [o]);
+    setGizmoMode('translate');
+  }
+  updateTools();
+  toast(`Duplicated as ${def.id} – in place, selected: drag it (right-click → Edit copy… for numbers)`, 3500);
 }
 function renameCopyRefs(oldId: string, newId: string) {
   const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -2428,15 +2449,19 @@ function renameCopyRefs(oldId: string, newId: string) {
 const cppop = toolbar.querySelector<HTMLElement>('.cppop')!;
 let shownCopy: string | undefined;
 /** The Copy panel: shown while a copy is selected – name, sources, position, rotation; Select source, Delete. */
+/** The Copy panel shows only after Duplicate / Edit copy… (until closed), and only while a copy is selected. */
+let copyPanelOn = false;
+function openCopyPanel() { copyPanelOn = true; refreshCopyPanel(true); }
+function closeCopyPanel() { copyPanelOn = false; cppop.hidden = true; shownCopy = undefined; }
 function refreshCopyPanel(force = false) {
   const def = selectedCopy();
-  if (!def) { cppop.hidden = true; shownCopy = undefined; return; }
+  if (!def || !copyPanelOn) { cppop.hidden = true; shownCopy = undefined; return; }
   cppop.hidden = false;
   if (!force && def.id === shownCopy && cppop.contains(document.activeElement)) return;
   shownCopy = def.id;
   const v3 = (k: string, v: number[]) => `<div class="v3">${[0, 1, 2].map((i) => `<input type="number" step="0.05" data-f="${k}${i}" value="${num(v[i] ?? 0)}">`).join('')}</div>`;
   const err = copyErrors.get(def.id), a = def.array;
-  cppop.innerHTML = `<b>Copy <code>${def.id}</code></b>
+  cppop.innerHTML = `<div style="display:flex;align-items:center"><b style="flex:1">Copy <code>${def.id}</code></b><button data-s="close" title="Close (Esc). Reopen: right-click the copy in the tree → Edit copy…" style="padding:0 6px">✕</button></div>
     <div class="r">Name <input data-f="id" value="${def.id}" spellcheck="false"></div>
     <div class="r">Of <input data-f="of" value="${def.of.join(', ')}" spellcheck="false" title="Part ids, @groups – as in scripts"></div>
     <div class="r">Position ${v3('pos', def.position)}</div>
@@ -2503,9 +2528,10 @@ function refreshCopyPanel(force = false) {
   }));
   const act = (k: string, f: () => void) => cppop.querySelector<HTMLElement>(`[data-s="${k}"]`)?.addEventListener('click', f);
   act('dup', () => void duplicateSelection());
+  act('close', closeCopyPanel);
   act('src', () => { const objs = copySources(def).objs; if (objs.length) tree.selectObjects(objs); });
   act('del', () => { copies = copies.filter((c) => c !== def); tree.select(undefined, false); void syncCopies(); });
-  cppop.onkeydown = (e) => e.stopPropagation();
+  cppop.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Escape') closeCopyPanel(); };
   placePop(cppop, 'dup');
 }
 
@@ -2981,7 +3007,7 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 }
 
 // read-only handle for tests and debugging
-(window as any).__studio = { get downMods() { return downMods; }, slimCad, gizmo, boxSelect, get copies() { return copies; }, duplicateSelection, renderSheetPng, svgToPdf, vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
+(window as any).__studio = { openCopyPanel, get downMods() { return downMods; }, slimCad, gizmo, boxSelect, get copies() { return copies; }, duplicateSelection, renderSheetPng, svgToPdf, vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
   /** tests: a block with many small parts buried behind the cut plane (x < 0), like dowels without holes */
   addTestBuried: (count = 60) => {
     const mk = (col: number) => withCaps(new THREE.MeshToonMaterial({ color: col, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));
