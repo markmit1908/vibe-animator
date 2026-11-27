@@ -2,7 +2,7 @@
 import type { MeshSoup } from './collect';
 
 export type EdgeKind = 'silhouette' | 'boundary' | 'crease';
-export interface Edge3 { a: [number, number, number]; b: [number, number, number]; kind: EdgeKind; part: string }
+export interface Edge3 { a: [number, number, number]; b: [number, number, number]; kind: EdgeKind; part: string; /** index of its mesh in the soup list */ mesh: number }
 
 /** Camera for front/back tests: ortho → a fixed view direction; perspective → the eye position. */
 export interface ViewRay { ortho: boolean; dir: [number, number, number]; eye: [number, number, number] }
@@ -22,7 +22,7 @@ function weld(pos: Float32Array, tol: number): Uint32Array {
   return map;
 }
 
-export function featureEdges(m: MeshSoup, view: ViewRay, creaseDeg: number, weldTol: number): Edge3[] {
+export function featureEdges(m: MeshSoup, view: ViewRay, creaseDeg: number, weldTol: number, mesh = 0): Edge3[] {
   const { pos, idx } = m;
   const w = weld(pos, weldTol);
   const T = idx.length / 3;
@@ -70,7 +70,7 @@ export function featureEdges(m: MeshSoup, view: ViewRay, creaseDeg: number, weld
     } else kind = 'crease'; // non-manifold
     if (!kind) continue;
     const p = Math.floor(key / V) * 3, q = (key % V) * 3;
-    out.push({ a: [pos[p], pos[p + 1], pos[p + 2]], b: [pos[q], pos[q + 1], pos[q + 2]], kind, part: m.part });
+    out.push({ a: [pos[p], pos[p + 1], pos[p + 2]], b: [pos[q], pos[q + 1], pos[q + 2]], kind, part: m.part, mesh });
   }
   return out;
 }
