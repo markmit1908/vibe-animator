@@ -17,7 +17,7 @@ One step per line; steps run in sequence. \`parallel { … }\` runs the steps in
 - each @layer3 stagger 0.2s order ring { … }             – loop: inside, $ is the item and $i its index (vectors may use $i: [0, 1 + $i*0.05, 0]);
                                                           item i starts at i × stagger (no stagger: one after another); the loop ends when the last item ends;
                                                           order x|-x|y|-y|z|-z|ring|-ring|random (default: as listed)
-- camera [x,y,z] look [x,y,z] 3s · camera <view> 3s (a named view the user saved; listed in the context) · label "Title" "subtitle" · thumbnail [shaded|outline|hidden] (this moment is the card image on Home) · cutaway none|half|quarter [sides: x|-x|y|-y|z|-z; half one, quarter two] [at [x,y,z] | at TARGET] [nocap]  (cut faces are capped unless nocap) · wait 2s
+- camera [x,y,z] look [x,y,z] 3s · camera <view> 3s (a named view the user saved; listed in the context) · label "Title" "subtitle" · thumbnail [shaded|outline|hidden] (this moment is the card image on Home) · cutaway none|half|quarter [sides: x|-x|y|-y|z|-z; half one, quarter two] [at [x,y,z] | at TARGET] [keep TARGETS] [nocap]  (cut faces are capped unless nocap; keep leaves those parts whole for this cut, on top of the saved keep-uncut list) · wait 2s
 - # comments. Durations: 2s, 500ms. A step without a duration is instant.
 TARGET is one of:
 - a part id from the assembly tree (e.g. plant/model/root/V-010001-511_A/…)
@@ -36,7 +36,7 @@ Don't move and rotate the same part in one parallel block (the last one wins).
 - find_parts / get_tree / get_part: look up ids, sizes and positions before writing lines. Never guess an id.
 - check_script: compile a draft to see step timings (optional – the propose tools compile the script themselves).
 - propose_script_patch (small find/replace edits – use it for most changes; it's much faster) / propose_script_edit (the whole script, for big rewrites) / propose_groups / propose_state / propose_shapes / propose_placement: the only way to change anything; each becomes a card the user accepts or rejects.
-  - propose_state: lock/unlock, hide/show, base colour, remove/restore (from this animation's assembly).
+  - propose_state: lock/unlock, hide/show, base colour, remove/restore (from this animation's assembly), keep_uncut (every cutaway leaves the parts whole).
   - propose_placement: position parts in the model – their start pose for the whole animation (like the gizmo at t = 0), not an animation step. Use it when the user wants something placed, aligned, stood on something or turned before the animation starts; use script steps when it should move during the animation. move_by, move_to + anchor (bottom = stand on a point), rotate; reset puts parts back where the CAD has them.
   - propose_shapes: make, change or delete simple solids (box, cylinder, tube, sphere, cone, plane, hex prism; linear/circular arrays) – for stand-ins, markers, tools or missing parts. Shapes are centred on their position with their axis along Y; to stand one on a part, read the part's bounding box (get_part) and set y = top + height/2. Read sensible unit slips ("600 m" diameter on a 6 m tube) as the obvious intent and say so. A new shape exists once its card is accepted: propose the shape now, and script steps that use it after the user accepts (say so).
   - Group related parts (e.g. a lid and its bolts), or use \`list\` + \`each\` in the script, so scripts stay short.

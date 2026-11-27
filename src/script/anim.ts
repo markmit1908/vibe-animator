@@ -11,6 +11,7 @@
  *   pivot @lid [0,12,0]                            # pivot travels with @lid
  *   hide @shielding 1s     show @shielding     fade @bolts to 0.2 2s
  *   cutaway half -z at @reactor                  # section: side removed (x|-x|y|-y|z|-z), centred on a point or target
+ *   cutaway half x keep @lid, machine            # …leaving these parts whole (plus the animation's saved keep-uncut list)
  *   thumbnail outline                              # this moment is the card image on Home (shaded|outline|hidden)
  *   blank ~V-005202-001 1s                        # ~text: every part whose name contains text
  *   blank @lid 1s · unblank @lid · unblank all · blank others @core 1s   # blank works on locked parts too
@@ -54,6 +55,7 @@ export interface AnimStep {
   stagger?: Arg<number>;    // each: start of item i+1 after item i's start
   items?: Arg<string>;      // list: the items text
   flag?: Arg<string>;       // cutaway: nocap
+  keep?: Arg<string>;       // cutaway: parts left whole ("a, @b")
   endLine?: number;         // closing brace line of a block
 }
 
@@ -210,13 +212,25 @@ export function parseAnim(text: string): AnimDoc {
         if (sides.length) step.items = { value: sides.join(','), from: step.from, to: step.to };
         if (x?.v === 'half' && sides.length > 1) err(x.from, x.to, 'A half cut removes one side, e.g. cutaway half -z');
         if (x?.v === 'quarter' && sides.length && (sides.length !== 2 || sides[0].slice(-1) === sides[1].slice(-1))) err(x.from, x.to, 'A quarter cut removes two sides on different axes, e.g. cutaway quarter x -z');
-        if (peek()?.t === 'word' && peek()!.v === 'at') {
-          k++;
-          if (peek()?.t === 'vec') step.vec = arg(toks[k++]);
-          else if (peek()?.t === 'word') target();
-          else err(step.from, step.to, 'Expected a point [x, y, z] or a target after "at"');
+        // options in any order: at [x,y,z] | at TARGET, keep TARGETS, nocap
+        for (let guard = 0; guard < 3 && peek()?.t === 'word'; guard++) {
+          const w = peek()!.v;
+          if (w === 'at' && !step.vec && !step.target) {
+            k++;
+            if (peek()?.t === 'vec') step.vec = arg(toks[k++]);
+            else if (peek()?.t === 'word' && !['keep', 'nocap'].includes(String(peek()!.v))) target();
+            else err(step.from, step.to, 'Expected a point [x, y, z] or a target after "at"');
+          } else if (w === 'keep' && !step.keep) {
+            const kw = toks[k++];
+            const x = toks[k];
+            if (!x || x.t !== 'word' || ['at', 'nocap'].includes(String(x.v))) { err(kw.from, kw.to, 'Expected the parts to keep whole, e.g. keep @lid, machine'); continue; }
+            k++;
+            let to = x.to, text = x.v as string;
+            while (text.endsWith(',') && toks[k]?.t === 'word') { text += toks[k].v; to = toks[k].to; k++; }
+            step.keep = { value: text.replace(/,+$/, ''), from: x.from, to };
+          } else if (w === 'nocap' && !step.flag) step.flag = arg(toks[k++]);   // leave the cut open
+          else break;
         }
-        if (peek()?.t === 'word' && peek()!.v === 'nocap') step.flag = arg(toks[k++]);   // leave the cut open
         tail(); break;
       }
       case 'thumbnail': {                               // thumbnail [shaded|outline|hidden]: this moment is the card image
@@ -294,7 +308,7 @@ export function toActions(steps: AnimStep[]): { camera?: any; timeline: any[] } 
       case 'label': return { ...base, label: s.text![0]?.value, sub: s.text![1]?.value };
       case 'camera': return { ...base, camera: s.word ? { view: s.word.value } : { pos: s.vec!.value, look: s.look?.value }, dur: s.dur?.value ?? 0 };
       case 'thumbnail': return { ...base, thumbnail: s.word?.value ?? 'shaded' };
-      case 'cutaway': return { ...base, cutaway: { mode: s.word!.value, sides: s.items?.value ? s.items.value.split(',') : undefined, at: s.vec?.value, of: tgt, nocap: !!s.flag } };
+      case 'cutaway': return { ...base, cutaway: { mode: s.word!.value, sides: s.items?.value ? s.items.value.split(',') : undefined, at: s.vec?.value, of: tgt, nocap: !!s.flag, keep: s.keep?.value.split(',').map((x) => x.trim()).filter(Boolean) } };
       case 'wait': return { ...base, wait: s.dur!.value };
       case 'parallel': return { ...base, parallel: s.children!.map((c) => [conv(c)]) };
       case 'list': return { ...base, list: tgt, items: (s.items?.value ?? '').split(',').map((x) => x.trim()).filter(Boolean) };

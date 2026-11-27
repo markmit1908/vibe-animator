@@ -50,6 +50,8 @@ export interface AnimModel {
   colors?: Record<string, string>;
   /** Parts removed from this animation's assembly (the CAD file is untouched). */
   removed?: string[];
+  /** Parts every cut leaves whole (ids, @groups, ~names); a script cut's `keep` adds to them. */
+  cutKeep?: string[];
   /** Display names for parts (ids, used by scripts, are unchanged). */
   labels?: Record<string, string>;
   /** Named camera views (script: `camera <name> 2s`). */
@@ -69,7 +71,7 @@ export const joinLines = (l: Lines | undefined) => (Array.isArray(l) ? l.join('\
 export const splitLines = (s: string): string[] => s.replace(/\n$/, '').split('\n');
 
 /** Key order for writing (stable diffs); unknown keys follow in their own order. */
-const ORDER = ['name', 'uuid', 'solver', 'format', 'description', 'scene', 'script', 'snapshots', 'groups', 'folders', 'colors', 'removed', 'labels', 'views', 'keyframe', 'shapes', 'view', 'chat'];
+const ORDER = ['name', 'uuid', 'solver', 'format', 'description', 'scene', 'script', 'snapshots', 'groups', 'folders', 'colors', 'removed', 'cutKeep', 'labels', 'views', 'keyframe', 'shapes', 'view', 'chat'];
 
 export function canonical(m: AnimModel): string {
   const out: Record<string, unknown> = {};

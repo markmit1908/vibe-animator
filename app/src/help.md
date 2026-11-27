@@ -29,6 +29,7 @@ New, Duplicate, Rename, Delete (to the trash), folders and versions for your ani
 - **Centre cut on selection** (or on the origin): where the cut is.
 - **Caps**: cut faces are filled in each part's colour, darker (**Cap shade**). Off, or `nocap` in the script, shows the hollow insides.
 - **⤓ Insert this cut into the script** writes it as a `cutaway` line.
+- **Keep uncut** (✂ on the tool bar, **K**; right-click in the tree; or **Kept uncut** here): every cut leaves those parts whole. In the script, `keep` adds parts for one cut: `cutaway half x keep @lid, machine`.
 
 # Assembly tree
 
@@ -45,6 +46,7 @@ Right-click a row for its menu; **F2** renames, **Delete** removes, ⌘/Ctrl-cli
 
 **Tools** (floating bar on the left of the 3D view):
 - **Blank / Unblank** (H) the selection; **Blank others** (⇧H); **Show all**.
+- **Keep uncut** (K): cuts leave the selection whole.
 - **Select by name** (F): every part whose name contains the text.
 - **Set origin**: click a cylindrical face (the axis), then a flat face (the height); the model moves so that point is 0,0,0.
 - **Shape**: add a box, cylinder, tube, sphere, cone, plane or hex prism, with sizes, position, colour and a linear or circular array. Select a shape to edit it. In scripts use its name (`pipe`); array copies are `bolt-0`, `bolt-1`… (`bolt-*`).
@@ -80,6 +82,7 @@ label "Remove lid" "subtitle"
 cutaway quarter
 cutaway half -z at @reactor          # side removed (x -x y -y z -z), centred on a point or target
 cutaway half nocap                    # cut faces are capped (darker part colour); nocap leaves them open
+cutaway half x keep @lid, machine     # …leaving these parts whole
 wait 2s
 thumbnail outline                     # this moment is the card image on Home
 parallel {

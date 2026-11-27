@@ -52,6 +52,8 @@ const CSS = `
 #tree .row.hidden .lbl { color: #5b6670; }
 #tree .row.supp .lbl { color: #5b6670; text-decoration: line-through; }
 #tree .badge { color: #7b8794; margin-left: 6px; }
+#tree .kept { color: #6fc3df; margin-left: 5px; font-size: 11px; }
+#tree .kept.inh { opacity: .45; }
 #tree .row.drop { outline: 1px dashed #f2b705; outline-offset: -2px; }
 #tree .row .fold { color: #c9a45c; margin-right: 3px; }
 #tree .info { border-top: 1px solid #222a33; padding: 8px; font-size: 11px; color: #9aa6b2; min-height: 64px; }
@@ -90,6 +92,10 @@ export interface TreeHooks {
   removedIds?: () => string[];
   /** A group was renamed (rewrite @old → @new in the script) – called before the groups change is applied. */
   onGroupRename?: (from: string, to: string) => void;
+  /** Kept uncut by the animation's list: 'own', 'inh' (through an assembly) or not. */
+  keptOf?: (obj: THREE.Object3D | undefined, group?: string) => 'own' | 'inh' | undefined;
+  /** Keep parts uncut / cut them again. */
+  onKeep?: (specs: string[], objs: THREE.Object3D[], on: boolean) => void;
   /** User groups were created/changed (recompile the script). */
   onGroups?: () => void;
 }
@@ -324,7 +330,7 @@ export class TreePanel {
     r.innerHTML = `<span class="caret">${hasKids ? (this.open.has(n) ? '▾' : '▸') : ''}</span>
       <span class="tg ${hidden ? 'off' : ''} ${explicitH ? '' : 'inh'}" title="show / hide">●</span>
       <span class="tg ${locked ? '' : 'off'} ${explicitL ? '' : 'inh'}" title="lock / unlock">${locked ? '🔒' : '🔓'}</span>
-      <span class="lbl" title="${esc(n.id ?? n.folder ?? n.label)}">${n.folder ? '<span class="fold">▤</span>' : ''}${esc(n.label)}</span>${(() => { const c = this.hooks.colorOf?.(n.group ? `@${n.group}` : n.id ?? ''); return c ? `<span style="width:9px;height:9px;border-radius:2px;margin-left:6px;flex:none;background:${c}"></span>` : ''; })()}${n.badge ? `<span class="badge">${n.badge}</span>` : ''}`;
+      <span class="lbl" title="${esc(n.id ?? n.folder ?? n.label)}">${n.folder ? '<span class="fold">▤</span>' : ''}${esc(n.label)}</span>${(() => { const c = this.hooks.colorOf?.(n.group ? `@${n.group}` : n.id ?? ''); return c ? `<span style="width:9px;height:9px;border-radius:2px;margin-left:6px;flex:none;background:${c}"></span>` : ''; })()}${(() => { const k = n.folder === undefined && !n.removedRow ? this.hooks.keptOf?.(n.obj, n.group) : undefined; return k ? `<span class="kept ${k}" title="${k === 'own' ? 'Kept uncut: cuts leave it whole' : 'Kept uncut through an assembly it belongs to'}">✂</span>` : ''; })()}${n.badge ? `<span class="badge">${n.badge}</span>` : ''}`;
     const [caret, eye, lock] = r.children as unknown as HTMLElement[];
     caret.onclick = (e) => { e.stopPropagation(); this.toggleOpen(n); };
     eye.onclick = (e) => { e.stopPropagation(); this.setFlag(n, 'hidden', !hidden); };
@@ -543,6 +549,8 @@ export class TreePanel {
 
   // ---------- base colours ----------
   /** Specs of the selection: "@group" for group rows, ids for parts (virtual folders: their parts). */
+  /** Script specs of the selection ("@group", ids; folders: their groups). */
+  selectedSpecs() { return this.selSpecs(); }
   private selSpecs(): string[] {
     return [...new Set(this.sel.flatMap((n) => (n.group ? [`@${n.group}`] : n.folder !== undefined ? this.groupsIn(n).map((g) => `@${g}`) : n.id ? [n.id] : this.objsOf(n).map((o) => (o.userData.id ?? o.name) as string))))];
   }
@@ -720,6 +728,11 @@ export class TreePanel {
       const allLocked = objs.length > 0 && objs.every(isLocked), allHidden = objs.length > 0 && objs.every(isHidden);
       items.push([allLocked ? 'Unlock' : 'Lock', () => this.sel.forEach((s) => this.setFlag(s, 'locked', !allLocked))]);
       items.push([allHidden ? 'Show' : 'Hide', () => this.sel.forEach((s) => this.setFlag(s, 'hidden', !allHidden))]);
+    }
+    if (!n.removedRow && this.hooks.onKeep) {
+      const objs = this.sel.flatMap((s) => this.objsOf(s));
+      const all = objs.length > 0 && this.sel.every((s) => s.group ? this.hooks.keptOf?.(undefined, s.group) : s.obj ? this.hooks.keptOf?.(s.obj) : false);
+      if (objs.length) items.push([all ? 'Cut again' : 'Keep uncut  K', () => this.hooks.onKeep!(this.selSpecs(), objs, !all)]);
     }
     if (!many && n.id) items.push(['Copy id', () => navigator.clipboard?.writeText(n.id!)]);
     const m = document.createElement('div');

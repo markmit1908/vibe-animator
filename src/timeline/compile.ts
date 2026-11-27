@@ -309,7 +309,9 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
           }
           if (!box.isEmpty()) at = box.getCenter(new THREE.Vector3()).toArray();
         }
-        steps.push({ t, kind: 'cutaway', value: typeof val === 'string' ? val : { mode: val.mode, sides: val.sides, at, nocap: val.nocap } });
+        // parts this cut leaves whole (resolved now: unknown names are errors on this line)
+        const keep = val?.keep?.length ? [...new Set((val.keep as string[]).flatMap((k) => resolveTargets(k)))] : undefined;
+        steps.push({ t, kind: 'cutaway', value: typeof val === 'string' ? val : { mode: val.mode, sides: val.sides, at, nocap: val.nocap, keep } });
         return t;
       }
 

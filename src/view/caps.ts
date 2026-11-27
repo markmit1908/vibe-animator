@@ -39,13 +39,17 @@ void main() {
   #include <logdepthbuf_vertex>
   #include <clipping_planes_vertex>
 }`;
-const FRAG = (body: string) => `#include <common>
+const FRAG = (body: string, sumOnly = '') => `#include <common>
 #include <logdepthbuf_pars_fragment>
 #include <clipping_planes_pars_fragment>
-uniform float partId; uniform vec3 partColor; uniform float capShade; uniform float sumIds;
+uniform float partId; uniform vec3 partColor; uniform float capShade; uniform float sumIds; uniform float noClip;
 varying vec3 vN;
 void main() {
+  // a part kept uncut: not clipped (normal pass), and not part of any cap (sums)
+  if (noClip > 0.5) { ${sumOnly} }
+  else {
   #include <clipping_planes_fragment>
+  }
   ${body}
   #include <logdepthbuf_fragment>
 }`;
@@ -58,13 +62,14 @@ void main() {
 export function partPassMaterial(kind: 'normals' | 'capSum', planes: THREE.Plane[]) {
   const sum = kind === 'capSum';
   const m = new THREE.ShaderMaterial({
-    uniforms: { partId: { value: 0 }, partColor: { value: new THREE.Color() }, capShade: capUniforms.capShade, sumIds: { value: 0 } },
+    uniforms: { partId: { value: 0 }, partColor: { value: new THREE.Color() }, capShade: capUniforms.capShade, sumIds: { value: 0 }, noClip: { value: 0 } },
     vertexShader: VERT,
     fragmentShader: FRAG(!sum
       ? 'vec3 n = normalize(vN) * (gl_FrontFacing ? 1.0 : -1.0); gl_FragColor = vec4(n * 0.5 + 0.5, partId);'
       // leaving a part (back face) adds it, entering (front face) subtracts it: what's left is the part(s) containing the
       // point where the ray starts (on the cut plane); parts wholly behind it cancel out. a = how many.
-      : 'float sg = gl_FrontFacing ? -1.0 : 1.0; gl_FragColor = sumIds > 0.5 ? vec4(partId * sg, 0.0, 0.0, sg) : vec4(partColor * capShade * sg, sg);'),
+      : 'float sg = gl_FrontFacing ? -1.0 : 1.0; gl_FragColor = sumIds > 0.5 ? vec4(partId * sg, 0.0, 0.0, sg) : vec4(partColor * capShade * sg, sg);',
+      sum ? 'discard;' : ''),
     side: THREE.DoubleSide,
     clipping: true, clippingPlanes: planes, clipIntersection: !sum,
     ...(sum ? {
@@ -92,6 +97,7 @@ function onPartRender(this: THREE.Mesh, _r: THREE.WebGLRenderer, _s: THREE.Scene
   if (!mat.userData.partPass) return;
   const u = (mat as THREE.ShaderMaterial).uniforms;
   u.partId.value = partHash(this);
+  u.noClip.value = this.userData.uncut ? 1 : 0;
   const own = this.material as THREE.MeshToonMaterial;
   if (own?.color) u.partColor.value.copy(own.color);
   (mat as THREE.ShaderMaterial).uniformsNeedUpdate = true;

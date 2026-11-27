@@ -971,6 +971,82 @@ test("hidden line: a line where two parts touch flush (part ids), smooth lines, 
   expect(column.mid2).toBeGreaterThan(220);
 });
 
+test("keep uncut: the cut leaves chosen parts whole (tool bar / saved list, script keep for one cut), shaded and hidden line; core blocks too", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await page.goto("/");
+  const box = (id: string, z: number, color: string) => ({ id, kind: "box", size: [2, 2, 2], position: [0, 1, z], rotation: [0, 0, 0], color });
+  const m = { name: "Keep uncut", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] },
+    script: { language: "anim", text: 'camera [0,1,10] look [0,1,0]\nlabel "K"\ncutaway half' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {},
+    shapes: [box("back", -1.5, "#dddddd"), box("front", 1.5, "#dddddd")] };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Keep uncut");
+  const status = page.locator("#script .status");
+  await expect(status).toHaveText("✓", { timeout: 15_000 });
+  // luminance at world points (front box: x -1..1, z 0.5..2.5; the half cut removes x > 0)
+  const lum = (pts: number[][], t?: number) => page.evaluate(async ({ pts, t }) => {
+    const s = (window as any).__studio;
+    if (t !== undefined) { s.player.playing = false; s.player.seek(t); }
+    await new Promise((r) => setTimeout(r, 200));
+    s.drawFrame();
+    const cv = s.renderer.domElement as HTMLCanvasElement;
+    const c2 = document.createElement("canvas"); c2.width = cv.width; c2.height = cv.height; const g = c2.getContext("2d")!; g.drawImage(cv, 0, 0);
+    return pts.map((p) => { const v = new s.THREE.Vector3(...p).project(s.camera); const d = g.getImageData(Math.round((v.x + 1) / 2 * cv.width), Math.round((1 - v.y) / 2 * cv.height), 1, 1).data; return (d[0] + d[1] + d[2]) / 3; });
+  }, { pts, t });
+  const cutSide = [0.75, 1.75, 2.5], keptEdge = [1, 1.75, 2.5], uncutSide = [-0.5, 1.75, 2.5];   // clear of the gizmo's arrows
+  let [cutL, leftL] = await lum([cutSide, uncutSide]);
+  expect(cutL).toBeLessThan(40);                 // the front box's right half is cut away (background)
+  expect(leftL).toBeGreaterThan(100);            // its left half is there
+  // keep the front box uncut from the tool bar: saved, badge in the tree, drawn whole
+  const row = (t: string) => page.locator("#tree .row", { has: page.locator(".lbl", { hasText: new RegExp(`^${t}$`) }) }).first();
+  await row("front").click();
+  await page.locator("#toolsbar [data-t=keep]").click();
+  await expect(page.locator("#toolsbar [data-t=keep]")).toContainText("Cut again");
+  await expect.poll(async () => (await model(page, a.id)).cutKeep).toEqual(["shapes/front"]);
+  await expect(row("front").locator(".kept")).toBeVisible();
+  await page.keyboard.press("Escape");                                       // deselect (no highlight colour)
+  [cutL] = await lum([cutSide]);
+  expect(cutL).toBeGreaterThan(100);
+  // hidden line: the kept box's far edge (x = 1) is drawn; the back box, cut, has none there
+  await page.locator("#viewbar button", { hasText: "Hidden line" }).click();
+  let [edge, backEdge] = await lum([keptEdge, [1, 1.75, -0.5]]);
+  expect(edge).toBeLessThan(140);
+  expect(backEdge).toBeGreaterThan(200);
+  // undo: cut again
+  await page.locator("#viewbar button", { hasText: "Shaded" }).first().click();
+  await page.keyboard.press("Meta+z");
+  await expect.poll(async () => (await model(page, a.id)).cutKeep).toEqual([]);
+  [cutL] = await lum([cutSide]);
+  expect(cutL).toBeLessThan(40);
+  // the script: keep for one cut only
+  await page.evaluate(() => {
+    (window as any).__studio.scriptPanel.setText('camera [0,1,10] look [0,1,0]\nlabel "K"\ncutaway half keep front\nwait 1s\ncutaway half\nwait 1s');
+  });
+  await expect(status).toHaveText("✓");
+  expect((await lum([cutSide], 0.5))[0]).toBeGreaterThan(100);
+  expect((await lum([cutSide], 1.5))[0]).toBeLessThan(40);
+  // unknown parts after keep are errors on that line
+  await page.evaluate(() => {
+    (window as any).__studio.scriptPanel.setText('label "K"\ncutaway half keep nothing-here');
+  });
+  await expect(status).toHaveText("1 error");
+});
+
+test("keep uncut: a core block kept uncut stays visible inside the cut", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Keep block", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "B"\ncutaway half' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Keep block");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const id = await page.evaluate(() => { const s = (window as any).__studio; return s.built.blockIds.find((b: string) => { const o = s.built.registry.get(b); return o.position.x > 0.5 && !o.visible; }); });
+  expect(id).toBeTruthy();
+  await page.evaluate((id) => {
+    (window as any).__studio.scriptPanel.setText(`label "B"\ncutaway half keep ${id}`);
+  }, id);
+  await expect(page.locator("#script .status")).toHaveText("✓");
+  await expect.poll(() => page.evaluate((id) => (window as any).__studio.built.registry.get(id).visible, id)).toBe(true);
+});
+
 test("section caps: overlapping solids (a dowel in a block without a hole) are capped, not holed", async ({ page }) => {
   await page.setViewportSize({ width: 1200, height: 800 });
   await page.goto("/");

@@ -9,7 +9,7 @@ import { Player } from '../timeline/player';
 import { fitVerticalCylinder, planeHeight } from '../scene/origin';
 import { buildShape, freeName, KINDS, SHAPES_ROOT, shapePartId, SIZES, validName, type ShapeDef, type ShapeKind } from '../scene/shapes';
 import { capUniforms, SectionCaps, withCaps } from '../view/caps';
-import { applyCutaway, cutLine, DEFAULT_SIDES, type Cut, type CutMode, type CutSide } from '../view/cutaway';
+import { applyCutaway, cutLine, DEFAULT_SIDES, toCut, Uncut, type Cut, type CutMode, type CutSide } from '../view/cutaway';
 import { CadManager } from '../scene/cad';
 import { setStore, setStoreWriter, store, useSnapshot, captureSnapshot, writeStore, markDirty, isDirty, onDirtyChange,
   isLocked, isHidden, isCad, state, type Snapshot } from '../scene/state';
@@ -59,7 +59,7 @@ const edit = (patch: Partial<AnimModel>) => {
   if (THUMB_KEYS.some((k) => k in patch)) scheduleThumb();
 };
 /** Edits that change what the card image shows. */
-const THUMB_KEYS = ['script', 'colors', 'snapshots', 'groups', 'folders', 'labels', 'removed', 'views', 'scene', 'keyframe', 'shapes'];
+const THUMB_KEYS = ['script', 'colors', 'snapshots', 'groups', 'folders', 'labels', 'removed', 'views', 'scene', 'keyframe', 'shapes', 'cutKeep'];
 let thumbTimer: number | undefined;
 /** Re-render the card image once things have been quiet for a moment. */
 function scheduleThumb(delay = 2000) {
@@ -70,13 +70,13 @@ function scheduleThumb(delay = 2000) {
 // ---------- undo / redo (⌘/Ctrl+Z, ⇧⌘Z / Ctrl+Y) of the animation's state ----------
 // Every change goes through edit(): before the first change of a burst (400 ms), the state as it was is pushed.
 // Script typing has the editor's own undo; script changes made by code (gizmo write-back, an accepted proposal) undo here.
-type UndoKey = 'colors' | 'snapshots' | 'groups' | 'folders' | 'labels' | 'removed' | 'script' | 'views' | 'keyframe' | 'shapes';
-const UNDO_KEYS: UndoKey[] = ['colors', 'snapshots', 'groups', 'folders', 'labels', 'removed', 'script', 'views', 'keyframe', 'shapes'];
+type UndoKey = 'colors' | 'snapshots' | 'groups' | 'folders' | 'cutKeep' | 'labels' | 'removed' | 'script' | 'views' | 'keyframe' | 'shapes';
+const UNDO_KEYS: UndoKey[] = ['colors', 'snapshots', 'groups', 'folders', 'cutKeep', 'labels', 'removed', 'script', 'views', 'keyframe', 'shapes'];
 type DocState = Partial<Record<UndoKey, any>>;
 const clone = <T,>(x: T): T => (x === undefined ? x : JSON.parse(JSON.stringify(x)));
 const docNow: DocState = {
   colors: model.colors ?? {}, snapshots: model.snapshots ?? { active: 'default', items: {} }, groups: model.groups ?? {}, folders: model.folders ?? {},
-  labels: model.labels ?? {}, removed: model.removed ?? [], views: model.views ?? {}, keyframe: model.keyframe, shapes: model.shapes ?? [], script: model.script ? { language: 'anim', text: joinLines(model.script.text) } : undefined,
+  labels: model.labels ?? {}, removed: model.removed ?? [], cutKeep: model.cutKeep ?? [], views: model.views ?? {}, keyframe: model.keyframe, shapes: model.shapes ?? [], script: model.script ? { language: 'anim', text: joinLines(model.script.text) } : undefined,
 };
 const undoStack: DocState[] = [], redoStack: DocState[] = [];
 let undoing = false, typing = false, burst = false, burstTimer: number | undefined;
@@ -188,12 +188,14 @@ for (const id of removed) { const o = built.registry.get(id); if (o) o.userData.
 for (const [id, l] of Object.entries(labels)) { const o = built.registry.get(id); if (o) o.userData.label = l; }
 
 // ---------- shapes (basic modelling): parts made in the studio, saved in the model ----------
+let regVersion = 0;                                  // bumped when parts are rebuilt (shapes): kept-uncut lists re-resolve
 let shapes: ShapeDef[] = clone(model.shapes ?? []);
 const shapesRoot = new THREE.Group();
 shapesRoot.name = 'shapes'; shapesRoot.userData.shapesRoot = true; shapesRoot.userData.id = SHAPES_ROOT;
 built.root.add(shapesRoot); built.registry.set(SHAPES_ROOT, shapesRoot);
 /** (Re)build every shape's parts from `shapes`; their home pose is the shape's own. */
 function buildShapes() {
+  regVersion++;
   for (const id of [...built.registry.keys()]) if (id.startsWith(SHAPES_ROOT + '/')) built.registry.delete(id);
   for (const c of [...shapesRoot.children]) {
     shapesRoot.remove(c);
@@ -219,6 +221,55 @@ function applyPlacements() {
 }
 // ---------- base colours (model.colors: part id or @group → #hex; a part's own colour wins) ----------
 let colors: Record<string, string> = { ...(model.colors ?? {}) };
+// ---------- keep uncut: parts every cut leaves whole (model.cutKeep: ids / @groups / ~names), plus a script cut's own keep ----------
+let cutKeep: string[] = [...(model.cutKeep ?? [])];
+const uncut = new Uncut(built.clipPlanes);
+let keptMemo: { key: string; saved: THREE.Object3D[]; roots: THREE.Object3D[] } | undefined;
+/** The saved list's parts, and those plus a cut's own keep ids (top-most objects only). */
+function keptRoots(extra: string[] = []) {
+  const key = `${regVersion}|${cutKeep.join('\u0001')}|${extra.join(',')}|${Object.keys(store.groups).length}`;
+  if (keptMemo?.key !== key) {
+    const top = (ids: string[]) => {
+      const objs = [...new Set(ids)].map((x) => built.registry.get(x)).filter(Boolean) as THREE.Object3D[];
+      return objs.filter((o) => { for (let p = o.parent; p; p = p.parent) if (objs.includes(p)) return false; return true; });
+    };
+    const saved = top(cutKeep.flatMap((s) => (s.startsWith('~') ? partsNamed(s.slice(1)).map(idOfObj) : resolveIds([s]).ids)));
+    keptMemo = { key, saved, roots: top([...saved.map(idOfObj), ...extra]) };
+  }
+  return keptMemo;
+}
+/** Kept uncut by the saved list: 'own' (listed itself, or its group is), 'inh' (an ancestor is), or no. */
+function keptState(o?: THREE.Object3D, group?: string): 'own' | 'inh' | undefined {
+  if (group) return cutKeep.includes(`@${group}`) ? 'own' : undefined;
+  if (!o) return;
+  const saved = keptRoots().saved;
+  if (saved.includes(o)) return 'own';
+  for (let p = o.parent; p; p = p.parent) if (saved.includes(p)) return 'inh';
+}
+/** Keep the selection uncut (on) or cut it again (off): saved with the animation. */
+function setKeep(specs: string[], objs: THREE.Object3D[], on: boolean) {
+  if (on) cutKeep = [...new Set([...cutKeep, ...specs])];
+  else {
+    const within = (o: THREE.Object3D) => { for (let p: THREE.Object3D | null = o; p; p = p.parent) if (objs.includes(p)) return true; return false; };
+    cutKeep = cutKeep.filter((s) => !specs.includes(s) && !(s.startsWith('~') ? [] : resolveIds([s]).ids).some((x) => { const o = built.registry.get(x); return o && within(o); }));
+    const still = objs.filter((o) => keptState(o));
+    if (still.length) toast(`✂ Still kept uncut through an assembly or group that contains ${still.length === 1 ? 'it' : `${still.length} of them`}`);
+  }
+  edit({ cutKeep: [...cutKeep] });
+  tree.redraw(); updateTools(); renderKeepCtl();
+}
+function toast(msg: string, ms = 2200) {
+  undoToast.textContent = msg; undoToast.style.display = '';
+  clearTimeout(toastTimer); toastTimer = window.setTimeout(() => (undoToast.style.display = 'none'), ms);
+}
+/** Apply a cut this frame: planes, core blocks, the parts kept whole, caps on/off. */
+function applyCut(cutNow: Cut | CutMode) {
+  const c = toCut(cutNow);
+  const roots = c.mode === 'none' ? [] : keptRoots(c.keep ?? []).roots;
+  uncut.update(roots);
+  applyCutaway(built, c, (o) => uncut.has(o));
+  capUniforms.capOn.value = ui.caps && !c.nocap ? 1 : 0;
+}
 let coloured: THREE.Mesh[] = [];
 let materialColours: string[] | undefined; // the model's own material colours (computed once, for the swatches)
 /** Put a material on a mesh, respecting the tree's selection highlight (which keeps the real one in origMat). */
@@ -404,6 +455,23 @@ const cutActions = {
 view.add(cutActions, 'centreOnSelection').name('Centre cut on selection');
 view.add(cutActions, 'centreOnOrigin').name('Centre cut on origin');
 view.add(cutActions, 'insert').name('⤓ Insert this cut into the script');
+// keep uncut: the saved list (every cut leaves these whole)
+const keepUi = {
+  kept: 'none',
+  add: () => { if (!gSel.objs.length) return alert('Select the parts to keep whole first.'); setKeep(tree.selectedSpecs(), gSel.objs, true); },
+  remove: () => { if (!gSel.objs.length) return alert('Select the parts to cut again first.'); setKeep(tree.selectedSpecs(), gSel.objs, false); },
+  clear: () => { if (cutKeep.length) setKeep([...cutKeep], [], false); },
+};
+const keptCtl = view.add(keepUi, 'kept').name('Kept uncut').disable();
+view.add(keepUi, 'add').name('✂ Keep selection uncut  [K]');
+view.add(keepUi, 'remove').name('Cut selection again');
+view.add(keepUi, 'clear').name('Clear the kept list');
+function renderKeepCtl() {
+  const short = (s: string) => (s.startsWith('@') || s.startsWith('~') ? s : labels[s] ?? s.slice(s.lastIndexOf('/') + 1));
+  keepUi.kept = cutKeep.length ? `${cutKeep.slice(0, 3).map(short).join(', ')}${cutKeep.length > 3 ? ` +${cutKeep.length - 3}` : ''}` : 'none';
+  keptCtl.updateDisplay();
+}
+renderKeepCtl();
 /** The cut the Controls choose. */
 function uiCut(): Cut {
   const mode = (ui.cutaway === 'script' ? 'half' : ui.cutaway) as CutMode;
@@ -701,7 +769,8 @@ function persistWorking() {
   edit({ snapshots: { active: store.active, items: JSON.parse(JSON.stringify(store.snapshots)) } });
   markDirty(false);
 }
-async function applyStateChanges(changes: { ids: string[]; targets?: string[]; lock?: boolean; hide?: boolean; color?: string | null; remove?: boolean }[]) {
+async function applyStateChanges(changes: { ids: string[]; targets?: string[]; lock?: boolean; hide?: boolean; color?: string | null; remove?: boolean; keep_uncut?: boolean }[]) {
+  for (const c of changes) if (c.keep_uncut !== undefined) setKeep(c.targets ?? c.ids, c.ids.map((x) => built.registry.get(x)).filter(Boolean) as THREE.Object3D[], c.keep_uncut);
   for (const c of changes) if (c.color !== undefined) setColors(c.targets ?? c.ids, c.color);
   for (const c of changes) if (c.remove !== undefined) await setRemoved(c.ids, c.remove);
   const touched: THREE.Object3D[] = [];
@@ -810,7 +879,7 @@ Selection: ${sel}${selBox && !selBox.isEmpty() ? ` – bbox centre [${selBox.get
 Camera views: ${Object.keys(views).map((v) => `${v} (pos [${views[v].pos.map((x) => x.toFixed(1))}], look [${views[v].look.map((x) => x.toFixed(1))}])`).join(', ') || 'none'}
 Shapes: ${shapes.map((s) => `${s.id} (${s.kind} [${s.size}] at [${s.position}]${s.rotation.some((r) => r) ? ` rot [${s.rotation}]°` : ''}${s.array ? `, ×${s.array.count} ${s.array.type}` : ''})`).join(', ') || 'none'}
 Groups: ${Object.entries(store.groups).map(([g, ids]) => { const f = Object.entries(store.folders).find(([, gs]) => gs.includes(g))?.[0]; return `@${g} (${ids.length} members${f ? `, folder ${f}` : ''})`; }).join(', ') || 'none'}
-Snapshot: ${store.active}. Explicitly hidden: ${hidden.length ? hidden.slice(0, 20).join(', ') + (hidden.length > 20 ? ` … ${hidden.length - 20} more` : '') : 'none'}. Placed away from their CAD position: ${Object.keys(state.placements).slice(0, 20).join(', ') || 'none'}. Unlocked (animatable) CAD: ${unlocked.length ? unlocked.slice(0, 20).join(', ') + (unlocked.length > 20 ? ' …' : '') : 'none – CAD is locked by default'}.
+Snapshot: ${store.active}. Explicitly hidden: ${hidden.length ? hidden.slice(0, 20).join(', ') + (hidden.length > 20 ? ` … ${hidden.length - 20} more` : '') : 'none'}. Kept uncut by every cut: ${cutKeep.join(', ') || 'none'}. Placed away from their CAD position: ${Object.keys(state.placements).slice(0, 20).join(', ') || 'none'}. Unlocked (animatable) CAD: ${unlocked.length ? unlocked.slice(0, 20).join(', ') + (unlocked.length > 20 ? ' …' : '') : 'none – CAD is locked by default'}.
 
 Assembly (top levels; use get_tree / find_parts for more):
 ${tree}
@@ -858,6 +927,8 @@ const tree = new TreePanel(built, scene3, {
     if (colors[`@${from}`]) { colors[`@${to}`] = colors[`@${from}`]; delete colors[`@${from}`]; edit({ colors: { ...colors } }); }
   },
   onColor: (specs, hex) => setColors(specs, hex),
+  keptOf: (o, group) => keptState(o, group),
+  onKeep: (specs, objs, on) => setKeep(specs, objs, on),
   onGroups: () => { buildTimeline(); edit({ groups: JSON.parse(JSON.stringify(store.groups)), folders: JSON.parse(JSON.stringify(store.folders)) }); }, // groups are part of the animation: saved at once
   stats: () => {
     const c = cad.stats(), r = renderer.info;
@@ -1050,6 +1121,7 @@ on('keydown', (e: any) => {
   if (e.key === 'f' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); toggleFind(true); }
   if (e.key === 'h' && !e.metaKey && !e.ctrlKey) { tree.toggleHiddenSelected(); updateTools(); }
   if (e.key === 'g' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); tree.groupSelected(); updateTools(); }
+  if (e.key === 'k' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); toggleKeep(); }
   if (e.key === 'e') gizmo.setMode('rotate');
   if (e.key === 'Escape' && originPick) { endOrigin(); return; }
   if (e.key === 'Escape') { gizmo.detach(); tree.select(undefined, false); }
@@ -1203,7 +1275,7 @@ const undoToast = document.createElement('div');
 undoToast.style.cssText = 'position:absolute;left:50%;bottom:16px;transform:translateX(-50%);z-index:8;background:rgba(14,17,21,.95);color:#d7dde4;border:1px solid #2b3540;border-radius:6px;padding:5px 12px;font:12px system-ui;display:none;pointer-events:none';
 host().appendChild(undoToast);
 let toastTimer: number | undefined;
-const WHAT: Record<UndoKey, string> = { colors: 'colour', snapshots: 'move / lock / hide', groups: 'groups', folders: 'folders', labels: 'rename', removed: 'remove / restore', script: 'script edit', views: 'views', keyframe: 'thumbnail', shapes: 'shapes' };
+const WHAT: Record<UndoKey, string> = { colors: 'colour', snapshots: 'move / lock / hide', groups: 'groups', folders: 'folders', cutKeep: 'keep uncut', labels: 'rename', removed: 'remove / restore', script: 'script edit', views: 'views', keyframe: 'thumbnail', shapes: 'shapes' };
 async function restoreDoc(d: DocState, verb: string) {
   const what = UNDO_KEYS.filter((k) => d[k] !== undefined && JSON.stringify(d[k]) !== JSON.stringify(docNow[k])).map((k) => WHAT[k]);
   undoing = true;
@@ -1212,6 +1284,7 @@ async function restoreDoc(d: DocState, verb: string) {
     player.seek(0);
     if (d.groups) store.groups = clone(d.groups);
     if (d.folders) store.folders = clone(d.folders);
+    if (d.cutKeep) cutKeep = clone(d.cutKeep);
     if (d.snapshots) {
       store.active = d.snapshots.active; store.snapshots = clone(d.snapshots.items);
       useSnapshot(store.snapshots[store.active] ?? { locked: {}, hidden: {} });
@@ -1236,7 +1309,7 @@ async function restoreDoc(d: DocState, verb: string) {
     }
     buildTimeline({ atStart: true });
     player.seek(Math.min(t, player.duration));
-    edit({ colors: { ...colors }, snapshots: { active: store.active, items: clone(store.snapshots) }, groups: clone(store.groups), folders: clone(store.folders), labels: { ...labels }, removed: [...removed], views: clone(views), shapes: clone(shapes) });
+    edit({ colors: { ...colors }, snapshots: { active: store.active, items: clone(store.snapshots) }, groups: clone(store.groups), folders: clone(store.folders), cutKeep: [...cutKeep], labels: { ...labels }, removed: [...removed], views: clone(views), shapes: clone(shapes) });
     tree.rebuild();
     gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs);
     updateTools(); renderSnapBar(); markDirty(false);
@@ -1270,6 +1343,7 @@ on('keydown', (e: KeyboardEvent) => {
 const toolbar = document.createElement('div'); toolbar.id = 'toolsbar';
 toolbar.innerHTML = `<button data-t="blank" title="Blank / unblank the selected parts (H)"><span class="i">◐</span><span class="l">Blank</span></button>
   <button data-t="others" title="Reverse blank: hide everything that is not selected (⇧H)"><span class="i">◑</span><span class="l">Blank others</span></button>
+  <button data-t="keep" title="Keep uncut: cuts leave the selected parts whole (saved with the animation; K). A script cut can add its own: cutaway half x keep @lid"><span class="i">✂</span><span class="l">Keep uncut</span></button>
   <button data-t="find" title="Select by name: every part whose name contains the text (or matches a glob with *), e.g. V-005202-001 – then Blank, Group, colour… (F)"><span class="i">⌕</span><span class="l">Select by name</span></button>
   <div class="fpop" hidden><input placeholder="Part of a name, e.g. V-005202-001" spellcheck="false"><div class="hint"></div><button data-f="go">Select</button></div>
   <button data-t="showall" title="Show all: unblank every part (removed parts stay removed)"><span class="i">●</span><span class="l">Show all</span></button>
@@ -1281,9 +1355,18 @@ toolbar.innerHTML = `<button data-t="blank" title="Blank / unblank the selected 
   <div class="vpop" hidden></div>
   <button data-t="group" title="Create a group from the selected parts, or add them to one (G)"><span class="i">⊞</span><span class="l">Group</span></button>`;
 host().appendChild(toolbar);
+/** Keep the tool bar clear of the view toolbar, which wraps to more rows in narrow windows. */
+function layoutToolbar() {
+  const vb = host().querySelector<HTMLElement>('#viewbar');
+  const h = host().getBoundingClientRect();
+  const below = vb ? vb.getBoundingClientRect().bottom - h.top + 8 : 64;
+  toolbar.style.top = `${Math.max(64, Math.round(below))}px`;
+}
+{ const tro = new ResizeObserver(layoutToolbar); tro.observe(root); const vb = host().querySelector('#viewbar'); if (vb) tro.observe(vb); }
+layoutToolbar();
 {
   const css = document.createElement('style');
-  css.textContent = `#toolsbar { position: absolute; left: 352px; top: 50%; transform: translateY(-50%); z-index: 6; display: flex; flex-direction: column; gap: 4px; padding: 4px;
+  css.textContent = `#toolsbar { position: absolute; left: 352px; top: 64px; z-index: 6; display: flex; flex-direction: column; gap: 4px; padding: 4px;
       background: rgba(14,17,21,.9); border: 1px solid #2b3540; border-radius: 6px; font: 11px system-ui; }
     .studio-root.tree-collapsed #toolsbar { left: 12px; }
     #toolsbar button { width: 60px; text-align: center; line-height: 1.15; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 5px 2px; background: #1b222a; color: #d7dde4; border: 1px solid #2b3540; border-radius: 4px; cursor: pointer; font: inherit; }
@@ -1430,9 +1513,7 @@ async function renderThumb(): Promise<string | undefined> {
   try {
     player.playing = false;
     player.seek(Math.min(f.t, player.duration));
-    applyCutaway(built, (player.current('cutaway')?.value ?? 'none') as Cut | CutMode);
-    const cut = player.current('cutaway')?.value;
-    capUniforms.capOn.value = ui.caps && !(typeof cut === 'object' && cut?.nocap) ? 1 : 0;
+    applyCut((player.current('cutaway')?.value ?? 'none') as Cut | CutMode);
     const cam = f.camera ?? { pos: player.tl.camera.pos.toArray(), look: player.tl.camera.look.toArray() };
     camera.position.fromArray(cam.pos); camera.lookAt(new THREE.Vector3(...cam.look));
     camera.aspect = THUMB_W / THUMB_H; camera.updateProjectionMatrix();
@@ -1646,7 +1727,14 @@ function updateTools() {
   blank.disabled = group.disabled = toolbar.querySelector<HTMLButtonElement>('[data-t=others]')!.disabled = !count;
   blank.querySelector('.l')!.textContent = allHidden ? 'Unblank' : 'Blank';
   blank.classList.toggle('on', allHidden);
+  const keep = toolbar.querySelector<HTMLButtonElement>('[data-t=keep]')!, allKept = keptAll();
+  keep.disabled = !count;
+  keep.classList.toggle('on', allKept);
+  keep.querySelector('.l')!.textContent = allKept ? 'Cut again' : 'Keep uncut';
 }
+function keptAll() { return gSel.objs.length > 0 && gSel.objs.every((o) => keptState(o)); }
+function toggleKeep() { if (gSel.objs.length) setKeep(tree.selectedSpecs(), gSel.objs, !keptAll()); }
+toolbar.querySelector<HTMLElement>('[data-t=keep]')!.onclick = toggleKeep;
 toolbar.querySelector<HTMLElement>('[data-t=blank]')!.onclick = () => { tree.toggleHiddenSelected(); updateTools(); };
 toolbar.querySelector<HTMLElement>('[data-t=others]')!.onclick = () => void blankOthers();
 toolbar.querySelector<HTMLElement>('[data-t=showall]')!.onclick = () => void showAll();
@@ -1736,8 +1824,7 @@ renderer.setAnimationLoop(() => {
   if (player.playing) player.tick(dt); else player.seek(player.time);
 
   const cutNow = ui.cutaway === 'script' ? (player.current('cutaway')?.value ?? 'none') as Cut | CutMode : uiCut();
-  applyCutaway(built, cutNow);
-  capUniforms.capOn.value = ui.caps && !(typeof cutNow === 'object' && cutNow.nocap) ? 1 : 0;
+  applyCut(cutNow);
 
   if (ui.followCamera) { camera.position.copy(player.tl.camera.pos); controls.target.copy(player.tl.camera.look); }
   controls.update();
@@ -1853,7 +1940,7 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
   addTestBox: () => {
     const m = withCaps(new THREE.MeshToonMaterial({ color: 0xd0d0d0, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));
     const b = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), m); b.position.y = 1; built.root.add(b);
-  }, assist: { host: assistHost, mount: assist }, get player() { return player; } };
+  }, assist: { host: assistHost, mount: assist }, get player() { return player; }, get scriptPanel() { return scriptPanel; } };
 
 return {
   dispose() {

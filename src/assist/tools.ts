@@ -443,7 +443,7 @@ export function modelProposeTools(d: ModelProposeDeps): AssistTool[] {
     },
     {
       name: 'propose_state',
-      description: 'Propose lock/unlock, hide/show and base-colour changes for parts (ids, globs or @groups). Parts must be unlocked before a script can animate them; hidden + locked CAD parts are unloaded from memory. Changes go into the working snapshot (unsaved until the user saves). The user accepts or rejects.',
+      description: 'Propose lock/unlock, hide/show, base-colour and keep-uncut (left whole by every cutaway) changes for parts (ids, globs or @groups). Parts must be unlocked before a script can animate them; hidden + locked CAD parts are unloaded from memory. Changes go into the working snapshot (unsaved until the user saves). The user accepts or rejects.',
       input_schema: {
         type: 'object',
         properties: {
@@ -454,6 +454,7 @@ export function modelProposeTools(d: ModelProposeDeps): AssistTool[] {
             hide: { type: 'boolean', description: 'true = hide, false = show' },
             remove: { type: 'boolean', description: 'true = remove from this animation\'s assembly (hidden, unloaded; the CAD file is untouched), false = restore' },
             color: { type: ['string', 'null'], description: 'Base colour #rrggbb to show the parts in (null = back to their own colour). Use colour to clarify / highlight components.' },
+            keep_uncut: { type: 'boolean', description: 'true = every cutaway leaves these parts whole (the animation\'s keep-uncut list), false = cut them again' },
           }, required: ['targets'] } },
         },
         required: ['summary', 'changes'],
@@ -465,9 +466,9 @@ export function modelProposeTools(d: ModelProposeDeps): AssistTool[] {
         const changes = i.changes.map((c: any) => {
           const r = d.resolve(c.targets ?? []);
           r.unknown.forEach((u) => problems.push(`unknown target "${u}"`));
-          if (c.lock === undefined && c.hide === undefined && c.color === undefined && c.remove === undefined) problems.push('a change needs lock, hide, color and/or remove');
+          if (c.lock === undefined && c.hide === undefined && c.color === undefined && c.remove === undefined && c.keep_uncut === undefined) problems.push('a change needs lock, hide, color, remove and/or keep_uncut');
           if (c.color && !/^#[0-9a-fA-F]{6}$/.test(c.color)) problems.push(`colour must be #rrggbb, not ${c.color}`);
-          return { targets: c.targets, ids: r.ids, lock: c.lock, hide: c.hide, color: c.color, remove: c.remove };
+          return { targets: c.targets, ids: r.ids, lock: c.lock, hide: c.hide, color: c.color, remove: c.remove, keep_uncut: c.keep_uncut };
         });
         const ok = !problems.length;
         const n = changes.reduce((a: number, c: any) => a + c.ids.length, 0);

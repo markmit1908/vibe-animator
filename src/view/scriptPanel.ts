@@ -80,7 +80,8 @@ const timesField = StateField.define<{ lines: Map<number, LineTiming>; active: S
   create: () => ({ lines: new Map(), active: new Set() }),
   update: (v, tr) => { for (const e of tr.effects) if (e.is(setTimes)) return e.value; return v; },
 });
-const activeDeco = EditorView.decorations.compute([timesField], (state) => {
+// depends on the doc too: line starts move when the text changes (stale positions crash the next update)
+const activeDeco = EditorView.decorations.compute(['doc', timesField], (state) => {
   const { active } = state.field(timesField);
   const b = new RangeSetBuilder<Decoration>();
   for (const ln of [...active].sort((a, c) => a - c)) {
@@ -170,7 +171,7 @@ export class ScriptPanel {
   private pick?: { from: number; to: number };
   private pickEl!: HTMLElement;
   /** Verbs whose next word is a target. */
-  private static TARGETED = /^(\s*)(?:move|rotate|hide|show|fade|highlight|color|pivot|each|unblank|blank(?:\s+others)?|list\s+@[\w.-]+\s*=)\s+([^\s]*(?:,\s*[^\s]*)*)$/;
+  private static TARGETED = /^(\s*)(?:move|rotate|hide|show|fade|highlight|color|pivot|each|unblank|blank(?:\s+others)?|cutaway\s[^#]*?\bkeep|list\s+@[\w.-]+\s*=)\s+([^\s]*(?:,\s*[^\s]*)*)$/;
 
   constructor(public right: HTMLElement, public name: string, text: string, public hooks: ScriptHooks) {
     const style = document.createElement('style'); style.textContent = CSS; document.head.appendChild(style);
@@ -261,8 +262,9 @@ export class ScriptPanel {
       if (cut2) {
         if (/\bat\s*$/.test(cut2[2])) return null;      // a point or target follows
         if (/\bnocap\b/.test(cut2[2])) return null;
-        const sides = /\bat\b/.test(cut2[2]) ? [] : ['x', '-x', 'y', '-y', 'z', '-z'];
-        return kw(from, [...sides, ...(/\bat\b/.test(cut2[2]) ? [] : ['at']), 'nocap']);
+        const has = (w: string) => new RegExp(`\\b${w}\\b`).test(cut2[2]);
+        const sides = has('at') || has('keep') ? [] : ['x', '-x', 'y', '-y', 'z', '-z'];
+        return kw(from, [...sides, ...(has('at') ? [] : ['at']), ...(has('keep') ? [] : ['keep']), 'nocap']);
       }
       // after the target(s): the step's keywords
       const am = before.match(/^\s*(\w+)\s+(?:others\s+)?[^\s,]+(?:\s*,\s*[^\s,]+)*\s+(.*)$/);

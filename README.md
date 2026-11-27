@@ -76,6 +76,7 @@ use the **Import old project (.zip)…** link on Home; the model goes into `CAD/
 **View toolbar:**
 - **Shaded / Shaded + outline / Hidden line:** hidden line draws visible edges only, black on white; shaded + outline draws those edges over the cel-shaded view. Lines are anti-aliased: silhouettes/outlines (against the background or a part behind) and edges (creases, and the boundary wherever two parts touch) have their own weights in ⚙, with crease angle, outline sensitivity and colours. ⚙ sets line weight, crease angle, sensitivity and colours.
 - **Cutaway** (Controls → View): **Caps** on/off and **Cap shade**; `script` follows the script; or choose half / quarter, which side it removes, and **Centre cut on selection**. **⤓ Insert this cut into the script** writes it as a `cutaway` line.
+- **Keep uncut:** parts the cut leaves whole, saved with the animation and applied to every cut (the Controls' and the script's): ✂ **Keep uncut** on the tool bar (**K**; **Cut again** when the selection is kept), right-click **Keep uncut** in the tree (kept rows show ✂, dimmed when kept through an assembly), or **Controls → View → Kept uncut** (*Keep selection uncut*, *Cut selection again*, *Clear*). Kept parts are drawn whole and solid, aren't capped, and kept core blocks stay visible. A script cut can keep more for that cut only: `cutaway half x keep @lid, machine`.
 - **Iso / Front / Top / Side / Fit:** frame everything visible.
 - **⤓ PNG:** saves the view at 2× resolution with a transparent background (no grid). In hidden-line mode the parts keep their white fill.
 
@@ -105,6 +106,7 @@ save into the active snapshot automatically. **Save** also records the camera; *
 |---|---|
 | **Blank / Unblank** (**H**) | Hides the selected parts, or shows them again |
 | **Blank others** (**⇧H**) | Hides everything that isn't selected (reverse blank) |
+| **Keep uncut** (**K**) | Cuts leave the selection whole (saved; **Cut again** undoes it) |
 | **Show all** | Unblanks every part |
 | **Select by name** (**F**) | Selects every part whose name contains the text you type (or matches a `*` glob) – then blank, group or colour them |
 | **Set origin** (⊕) | Click a cylindrical face (its vertical axis, fitted from the mesh), then a flat face (its height); after you confirm, the CAD moves so that point is (0, 0, 0). Saved views and snapshot cameras move with it; absolute numbers in the script don't |
@@ -136,7 +138,7 @@ One step per line; steps run in sequence. `#` starts a comment. Durations: `2s`,
 | `highlight` | `highlight @spent #c0392b 1s` | Like `color`; also takes palette names (`spent`, `fresh`, `fuel`). |
 | `camera` | `camera [12,16,14] look [0,5,0] 3s` · `camera overview 2s` | Moves the camera over the time given (instant without one). A name is a view saved with **Views**. A leading instant `camera` sets the opening view. |
 | `label` | `label "Remove lid" "Unbolt and lift"` | Chapter title (+ subtitle); listed under Chapters. |
-| `cutaway` | `cutaway quarter` · `cutaway half -z at @reactor` · `cutaway half y at [0,8,0]` | `none`, `half`, `quarter`. Optionally the side removed (`x`, `-x`, `y` = top, `-y`, `z`, `-z`; a quarter takes two, e.g. `x -z`) and the centre: `at [x,y,z]` or `at TARGET` (its bounding-box centre). Defaults: `half x`, `quarter x z`, at the origin. Cuts CAD and shells. Cut faces are **capped** (inside faces drawn flat in the part's colour, darker; outlined in the line views); `nocap` at the end leaves that cut open. |
+| `cutaway` | `cutaway quarter` · `cutaway half -z at @reactor` · `cutaway half y at [0,8,0]` | `none`, `half`, `quarter`. Optionally the side removed (`x`, `-x`, `y` = top, `-y`, `z`, `-z`; a quarter takes two, e.g. `x -z`) and the centre: `at [x,y,z]` or `at TARGET` (its bounding-box centre). Defaults: `half x`, `quarter x z`, at the origin. Cuts CAD and shells. Cut faces are **capped** (inside faces drawn flat in the part's colour, darker; outlined in the line views); `nocap` leaves that cut open. `keep TARGETS` leaves those parts whole for this cut, as well as the animation's **Keep uncut** list (e.g. `cutaway half x keep @lid, machine`). |
 | `wait` | `wait 2s` | |
 | `thumbnail` | `thumbnail outline` | This moment is the card image on Home (`shaded`, `outline`, `hidden`; default shaded). Wins over the Thumbnail button. |
 | `parallel { … }` | see below | The steps inside run together. |
@@ -245,7 +247,7 @@ Every node appears in the tree with an id `plant/<child>/…`; duplicate sibling
 - [x] Assembly: lock/hide/suppress, groups in folders, range selection, colours and palette, rename, remove/restore, snapshots, undo/redo
 - [x] Tools bar: blank / blank others / show all, select by name, set origin, camera views, thumbnail
 - [x] Basic modelling: box, cylinder, tube, sphere, cone, plane, hex prism; linear / circular arrays
-- [x] Cutaways with sections (side, centre) and section caps; hidden-line and shaded + outline views; PNG export
+- [x] Cutaways with sections (side, centre), section caps and parts kept uncut; hidden-line and shaded + outline views; PNG export
 - [x] AI assist (SolverKit's panel) with proposals
 - [x] STEP → glTF with multi-body splitting and re-instancing
 - [ ] Real dimensions for the placeholder reactor
