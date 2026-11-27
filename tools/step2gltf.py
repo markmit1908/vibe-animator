@@ -7,12 +7,19 @@ STEP -> glTF (.glb) converter for the refuelling viewer, using OpenCASCADE (OCP)
 
 Keeps the assembly hierarchy, part names and colours. Converts mm -> m and Z-up -> Y-up.
 Big plant models: use `tree` first, then filter with --include/--exclude/--min-size.
+Very big files (GBs; OCCT would need more memory than the machine has): `convert --split`.
 
   uv run tools/step2gltf.py tree    data/model.step [--depth 3]
   uv run tools/step2gltf.py audit   data/model.step > data/audit.md
   uv run tools/step2gltf.py convert data/model.step -o public/cad/model.glb \
         [--include 'Vessel*' ...] [--exclude '*Screw*' ...] [--min-size 50] \
         [--deflection 2] [--angle 20] [--up z|y]
+  uv run tools/step2gltf.py convert huge.step -o out.glb --split [-v] [--jobs N] [--budget 200]
+
+--split indexes the STEP text without loading it into OCCT, finds duplicate bodies (same name and
+shape, placed elsewhere – they become instances), converts the rest in parallel units of at most
+--budget MB of STEP text, and merges them into one .glb with the full assembly tree. A progress bar
+shows each phase; -v also logs each unit and the largest groups of copies. See tools/stepsplit.py.
 
 Patterns are fnmatch globs (case-insensitive) matched against each component's
 name and its full path ("Top/Sub/Part"). --include keeps matching subtrees (and
@@ -541,7 +548,19 @@ def main():
     c.add_argument("--match-tol", type=float, default=0.05, help="vertex match tolerance for re-instancing, mm")
     c.add_argument("--no-optimize", dest="optimize", action="store_false",
                    help="skip the gltf-transform dedup pass")
+    c.add_argument("--split", action="store_true",
+                   help="low-memory mode for very big files: index, drop copies, convert in parallel units, merge")
+    c.add_argument("--jobs", type=int, default=0, help="--split: units converted at once (default: what fits in RAM)")
+    c.add_argument("--budget", type=float, default=200, help="--split: STEP text per unit, MB (memory per job ~10x)")
+    c.add_argument("--temp", default="", help="--split: folder for the unit files (default: system temp)")
+    c.add_argument("--keep-temp", action="store_true", help="--split: keep each unit's .step/.glb/.log")
+    c.add_argument("-v", "--verbose", action="store_true", help="--split: log every unit and the copies found")
     a = ap.parse_args()
+    if a.cmd == "convert" and a.split:
+        sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
+        import stepsplit
+        stepsplit.run(a, optimize)
+        return
     doc, st = load(a.step)
     if a.cmd == "tree":
         cmd_tree(st, a.depth)

@@ -220,6 +220,23 @@ What `convert` does:
 
 Reading a large STEP is slow: the 757 MB plant takes about 3 minutes and 6 GB of RAM.
 
+**Very big files: `--split`.** OCCT loads the whole file, so multi-GB exports run out of memory. `--split` doesn't:
+```bash
+uv run tools/step2gltf.py convert huge.step -o ~/Documents/Refuel\ animations/CAD/huge.glb --deflection 2 --split -v
+```
+1. **Index:** one streaming pass over the STEP text (no OCCT): every record's offset and type, plus the
+   assembly tree, placements, part and body names, colours.
+2. **Copies:** Shapr3D writes every copy of a body as separate geometry. Bodies with the same name (an `-N` / `_N`
+   instance suffix ignored) and the same face and point counts are checked by solving the rigid transform between
+   their geometry points (`--match-tol`, 0.05 mm); a confirmed copy isn't converted again, it instances the first.
+3. **Convert:** the rest goes in units of at most `--budget` MB of STEP text (default 200 → about 2 GB each),
+   each a small standalone STEP converted by a child process; `--jobs` at once (default: what fits in 60% of RAM).
+4. **Merge:** one `.glb` with the full tree, the same names and node layout as `convert` gives.
+
+A progress bar shows each phase (index, bodies, copies, convert, merge) with an ETA; `-v` also logs every unit and
+the biggest groups of copies. `--include` / `--exclude` / `--min-size` work as above; `--keep-temp` keeps the units.
+On the plant it takes 1 minute (vs 6) and matches the normal conversion.
+
 To use the result, put the `.glb` in the vault's `CAD/` folder and reference it in the animation's `scene.cad_models`:
 ```json
 "cad_models": [{ "id": "plant", "file": "CAD/plant.glb", "up": "y", "ground": true, "position": [0, 0, 0] }]
@@ -239,6 +256,7 @@ Every node appears in the tree with an id `plant/<child>/…`; duplicate sibling
 | `src/view/` | Tree (groups, folders), script panel, hidden-line drawing (`drawing.ts`), section caps (`caps.ts`), cutaway and keep-uncut (`cutaway.ts`), outline glows (`glow.ts`), palette, triad |
 | `src/assist/` | Assist loop (Anthropic SDK over the key proxy), read and proposal tools (script, groups, part state, shapes, positions), system prompt, the host interface for the panel |
 | `tools/step2gltf.py` | STEP → glTF converter |
+| `tools/stepindex.py`, `tools/stepsplit.py` | `convert --split`: streaming STEP index; copies, parallel units, merge |
 | `TODO.md` | Open work |
 
 ## Status / roadmap
