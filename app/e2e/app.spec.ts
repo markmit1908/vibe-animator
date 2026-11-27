@@ -1373,13 +1373,24 @@ test("drawing sheets: the .draw script in the Illustration tab – view, hide, c
   await page.evaluate(() => { const p = (window as any).__studio.drawPanel; p.setText(p.text + "\nsheet d\n  hide nothing-here\n"); });
   expect((await run("d")).errors[0].message).toContain("nothing-here");
   // preview
-  await page.evaluate(() => (window as any).__studio.previewSheet("a"));
-  await expect(page.locator("#sheet-preview img")).toBeVisible();
+  await page.evaluate(() => (window as any).__studio.previewSheet("c"));
+  await expect(page.locator("#sheet-preview .page img")).toBeVisible();
+  await expect(page.locator("#sheet-preview .strip .th")).toHaveCount(7);          // every sheet
+  await expect(page.locator("#sheet-preview .strip .th.on")).toHaveAttribute("data-s", "c");
+  await expect(page.locator("#sheet-preview .strip .th.bad")).toHaveCount(1);      // sheet d's unknown part
+  await page.locator("#sheet-preview .strip .th[data-s=b]").click();
+  await expect(page.locator("#sheet-preview header b")).toHaveText("b");
+  for (const n of ["a", "section-AA", "g"]) {
+    const r = await api(page).get(`/api/files/Drawings/Sheets/${n}.png`);
+    expect(r.status()).toBe(200);
+    expect((await r.body()).subarray(1, 4).toString()).toBe("PNG");
+  }
   await page.locator("#sheet-preview [data-a=close]").click();
   await expect(page.locator("#sheet-preview")).toHaveCount(0);
   // save all → the vault
   await panel.locator("[data-a=save]").click();
-  await expect(panel.locator(".st")).toContainText(/1 error|Saved/, { timeout: 30_000 });   // sheet d's unknown part
+  await expect.poll(async () => (await api(page).get("/api/files/Drawings/Sheets/d.pdf")).status(), { timeout: 30_000 }).toBe(200);
+  await expect(panel.locator(".st")).toContainText("1 error");                    // sheet d's unknown part
   for (const n of ["a", "b", "c", "d", "section-AA"]) {
     const r = await api(page).get(`/api/files/Drawings/Sheets/${n}.svg`);
     expect(r.status()).toBe(200);
@@ -1433,6 +1444,12 @@ test("fast sheet PNG: one GPU frame per sheet in its style, on the paper with th
   expect(o.dark).toBeGreaterThanOrEqual(2);                                       // its outline
   const sh = await run("s");
   expect(Math.abs(sh.red - red2m)).toBeLessThan(red2m * 0.1);
+  // a half cut frames what's left: the cut box is centred
+  await page.evaluate(() => { const p = (window as any).__studio.drawPanel; p.setText(p.text + "\nsheet cut\n  view front\n  scale 1:20\n  dpi 100\n  paper A4\n  cut half x at [0,0,0]\n"); });
+  const cutRow = await page.evaluate(async () => { const r = await (window as any).__studio.renderSheetPng("cut"); const g = r.canvas.getContext("2d"); const W = r.canvas.width;
+    const row = g.getImageData(0, Math.round(r.canvas.height * 0.45), W, 1).data; let a = -1, b = -1; for (let x = 0; x < W; x++) if (row[x * 4] > 150 && row[x * 4 + 1] < 120) { if (a < 0) a = x; b = x; } return { a, b, W }; });
+  expect(Math.abs((cutRow.a + cutRow.b) / 2 - cutRow.W * (10 + 277 / 2) / 297)).toBeLessThan(6);   // centred in the drawing area
+  expect(Math.abs(cutRow.b - cutRow.a - red2m / 4)).toBeLessThan(6);                                 // 1 m wide at 1:20
   const h = await run("h");
   expect(h.red).toBe(0); expect(h.dark).toBeGreaterThan(1);                        // lines only
   const big = await run("big");

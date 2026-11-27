@@ -215,6 +215,8 @@ sheet core-section "Core – half section"
   file core-section-AA    # export file name: core-section-AA.svg / .pdf (default: the sheet name)
 ```
 
+**▶ Preview** renders every sheet fast – one GPU frame each, in the sheet's `style` – saves `<file>.png` to the vault and shows them: a strip of thumbnails with the cursor's sheet large. ⤓ SVG / ⤓ PDF there make that sheet's exact drawing; **Save all** writes SVG, PDF and PNG for every sheet.
+
 **Batch** (the app must be running – `npm run dev`): `npm run drawings -- "<animation>" [sheet …]` saves the sheets
 (SVG + PDF) the same way, headless; `npm run drawings -- --all` does every animation with sheets; `--url` points at
 another server. It exits 1 if a sheet has an error.

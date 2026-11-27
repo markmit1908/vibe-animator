@@ -40,7 +40,7 @@ const hl = HighlightStyle.define([
 export interface DrawPanelHooks {
   /** the text changed (typed by the user, or set by code) */
   change(text: string, typed: boolean): void;
-  /** Preview the named sheet */
+  /** Preview every sheet, the named one shown first */
   preview(sheet: string): void;
   /** Draw every sheet and save the SVGs to the vault */
   saveAll(): void;
@@ -60,7 +60,7 @@ export class DrawPanel {
   constructor(parent: HTMLElement, text: string, private hooks: DrawPanelHooks) {
     this.el = document.createElement('div'); this.el.className = 'draw-script';
     this.el.innerHTML = `<header><span>Drawing script</span><span class="st"></span><span style="flex:1"></span>
-      <button data-a="preview" title="Draw the sheet the cursor is in and show it over the view">▶ Preview sheet</button>
+      <button data-a="preview" title="Render every sheet fast (PNG, in each sheet's style), save the PNGs to the vault and show them – the cursor's sheet first">▶ Preview</button>
       <button data-a="save" title="Draw every sheet and save SVG + PDF to the vault (Drawings/<animation>/<file or sheet>.svg, .pdf)">⤓ Save all</button></header>
       <div class="ed"></div><div class="busy" hidden></div>`;
     parent.appendChild(this.el);

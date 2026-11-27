@@ -576,7 +576,12 @@ tabCss.textContent = `#right { position: absolute; top: 0; right: 0; bottom: 0; 
 #sheet-preview header .info { color: #7b8794; flex: 1; }
 #sheet-preview header button { background: #1b222a; color: #d7dde4; border: 1px solid #2b3540; border-radius: 4px; padding: 3px 8px; cursor: pointer; font: 12px system-ui; }
 #sheet-preview .page { flex: 1; min-height: 0; padding: 16px; display: flex; align-items: center; justify-content: center; }
-#sheet-preview img { max-width: 100%; max-height: 100%; box-shadow: 0 2px 12px rgba(0,0,0,.25); background: #fff; }`;
+#sheet-preview .page img { max-width: 100%; max-height: 100%; box-shadow: 0 2px 12px rgba(0,0,0,.25); background: #fff; }
+#sheet-preview .strip { flex: none; display: flex; gap: 8px; padding: 8px 10px; overflow-x: auto; background: rgba(14,17,21,.95); }
+#sheet-preview .strip .th { flex: none; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 4px; background: transparent; border: 2px solid transparent; border-radius: 4px; cursor: pointer; color: #9aa5b1; font: 11px system-ui; }
+#sheet-preview .strip .th img { height: 64px; min-width: 40px; background: #fff; box-shadow: none; }
+#sheet-preview .strip .th.on { border-color: #f2b705; color: #d7dde4; }
+#sheet-preview .strip .th.bad span { color: #ff6b6b; }`;
 document.head.appendChild(tabCss);
 right.prepend(tabs);
 // ---------- Illustration: drawing controls + (phase 2) the drawing script ----------
@@ -1317,11 +1322,20 @@ async function renderSheetPng(name: string): Promise<{ png: Blob; canvas: HTMLCa
     (only ?? [built.root]).forEach(walk);
     // frame: the parts' bounds in view space (each mesh's box corners; the pose was just set, so update the matrices)
     scene3.updateMatrixWorld();
-    const inv = cam.matrixWorld.clone().invert(), b = new THREE.Box3(), v = new THREE.Vector3(), m = new THREE.Matrix4();
+    const inv = cam.matrixWorld.clone().invert(), b = new THREE.Box3(), v = new THREE.Vector3();
+    // a half cut (an axis plane) trims each cut part's world box to the side kept, as the exact drawing frames what's left
+    const half = capUniforms.cutActive.value === 1 ? built.clipPlanes[0] : null;
+    const wb = new THREE.Box3();
     for (const o of drawn) {
       const g = o.geometry; if (!g.boundingBox) g.computeBoundingBox();
-      const bb = g.boundingBox!; m.multiplyMatrices(inv, o.matrixWorld);
-      for (let i = 0; i < 8; i++) b.expandByPoint(v.set(i & 1 ? bb.max.x : bb.min.x, i & 2 ? bb.max.y : bb.min.y, i & 4 ? bb.max.z : bb.min.z).applyMatrix4(m));
+      wb.copy(g.boundingBox!).applyMatrix4(o.matrixWorld);
+      const mats = (o.material as THREE.Material).clippingPlanes;
+      if (half && mats?.length && !o.userData.uncut) {
+        const nrm = half.normal, ax = Math.abs(nrm.x) > 0.5 ? 'x' : Math.abs(nrm.y) > 0.5 ? 'y' : 'z', sg = Math.sign(nrm[ax]), at = -half.constant / nrm[ax];
+        if (sg > 0) wb.min[ax] = Math.max(wb.min[ax], at); else wb.max[ax] = Math.min(wb.max[ax], at);   // kept where normal·p + constant ≥ 0
+        if (wb.isEmpty()) continue;
+      }
+      for (let i = 0; i < 8; i++) b.expandByPoint(v.set(i & 1 ? wb.max.x : wb.min.x, i & 2 ? wb.max.y : wb.min.y, i & 4 ? wb.max.z : wb.min.z).applyMatrix4(inv));
     }
     if (b.isEmpty()) b.set(new THREE.Vector3(-1, -1, -1), new THREE.Vector3(1, 1, 1));
     const opt = { paper: (spec.paper ?? 'A3') as keyof typeof PAPER, portrait: spec.portrait, titleBlock: spec.titleblock === false ? false as const : {} };
@@ -1384,35 +1398,100 @@ async function renderSheetPng(name: string): Promise<{ png: Blob; canvas: HTMLCa
 }
 const isAncestor = (a: THREE.Object3D, b: THREE.Object3D) => { for (let p = b.parent; p; p = p.parent) if (p === a) return true; return false; };
 const progress = new ProgressSplash(() => host());
-let previewEl: HTMLElement | undefined, previewUrl: string | undefined;
-function closePreview() { previewEl?.remove(); previewEl = undefined; if (previewUrl) URL.revokeObjectURL(previewUrl); previewUrl = undefined; }
-async function previewSheet(name: string) {
-  drawPanel!.busy(`Drawing ${name}…`);
-  await progress.start(`Preview sheet “${name}”`, 'Posing the model and drawing hidden lines…');
+// ---------- sheet preview: fast PNGs of every sheet, a strip of thumbnails, the chosen one full size ----------
+interface SheetImg { url: string; ms: number; errors: { line: number; message: string }[]; spec: SheetSpec }
+let previewEl: HTMLElement | undefined, previewCur: string | undefined;
+const sheetImgs = new Map<string, SheetImg>();
+function closePreview() {
+  previewEl?.remove(); previewEl = undefined; previewCur = undefined;
+  for (const x of sheetImgs.values()) URL.revokeObjectURL(x.url);
+  sheetImgs.clear();
+}
+function ensurePreviewEl() {
+  if (previewEl) return previewEl;
+  previewEl = document.createElement('div'); previewEl.id = 'sheet-preview';
+  previewEl.innerHTML = `<header><b></b><span class="info"></span><button data-a="png" title="This sheet's PNG (fast render)">⤓ PNG</button>
+    <button data-a="dl" title="The exact line drawing (hidden-line removal from the geometry; takes longer)">⤓ SVG</button><button data-a="pdf" title="The exact drawing as a vector PDF">⤓ PDF</button><button data-a="close">✕ Close</button></header>
+    <div class="page"><img alt="sheet"></div><div class="strip"></div>`;
+  previewEl.querySelector<HTMLElement>('[data-a=close]')!.onclick = closePreview;
+  const fileOf = () => sheetImgs.get(previewCur!)?.spec.file ?? previewCur!;
+  const download = (url: string, name: string) => { const a = document.createElement('a'); a.href = url; a.download = name; a.click(); };
+  previewEl.querySelector<HTMLElement>('[data-a=png]')!.onclick = () => { const x = sheetImgs.get(previewCur!); if (x) download(x.url, `${fileOf()}.png`); };
+  // SVG / PDF: the exact drawing, made on demand
+  const exact = async (pdf: boolean) => {
+    const name = previewCur!, fn = fileOf();
+    await progress.start(`Exact drawing “${name}”`, 'Hidden-line removal from the geometry…');
+    try {
+      const r = await runSheet(name);
+      if (!r) return;
+      drawPanel!.setRunErrors(r.errors);
+      let blob = new Blob([r.svg], { type: 'image/svg+xml' });
+      if (pdf) { await progress.step('Converting to a vector PDF…', 0.8); blob = await svgToPdf(r.svg, r.spec.title ?? name); }
+      const u = URL.createObjectURL(blob); download(u, `${fn}.${pdf ? 'pdf' : 'svg'}`); setTimeout(() => URL.revokeObjectURL(u), 1000);
+    } finally { progress.done(); }
+  };
+  previewEl.querySelector<HTMLElement>('[data-a=dl]')!.onclick = () => void exact(false);
+  previewEl.querySelector<HTMLElement>('[data-a=pdf]')!.onclick = () => void exact(true);
+  host().appendChild(previewEl);
+  return previewEl;
+}
+/** Show `name` full size and mark it in the strip. */
+function showSheet(name: string) {
+  const el = ensurePreviewEl(), x = sheetImgs.get(name);
+  previewCur = name;
+  el.querySelectorAll<HTMLElement>('.strip .th').forEach((t) => t.classList.toggle('on', t.dataset.s === name));
+  if (!x) return;
+  el.querySelector('b')!.textContent = x.spec.title ?? name;
+  const paper = `${x.spec.paper ?? 'A3'} ${x.spec.portrait ? 'portrait' : 'landscape'}, ${x.spec.scale ? `1:${x.spec.scale}` : 'fit'}, ${x.spec.style ?? 'outline'}`;
+  el.querySelector('.info')!.textContent = `${paper} · ${Math.round(x.ms)} ms${x.errors.length ? ` · ${x.errors.length} problem(s), see the script` : ''}`;
+  el.querySelector<HTMLImageElement>('.page img')!.src = x.url;
+}
+/** The strip: one thumbnail per sheet in the script, in order (missing images show as blank). */
+function syncStrip() {
+  const strip = ensurePreviewEl().querySelector<HTMLElement>('.strip')!;
+  const names = drawPanel!.parsed.sheets.map((x) => x.name);
+  strip.replaceChildren(...names.map((n) => {
+    const t = document.createElement('button'); t.className = 'th'; t.dataset.s = n; t.title = n;
+    const x = sheetImgs.get(n);
+    t.innerHTML = `<img alt=""><span></span>`;
+    if (x) t.querySelector('img')!.src = x.url;
+    t.querySelector('span')!.textContent = n;
+    t.classList.toggle('on', n === previewCur); t.classList.toggle('bad', !!x?.errors.length);
+    t.onclick = () => showSheet(n);
+    return t;
+  }));
+}
+/** Fast-render one sheet into the preview (replacing its image). */
+async function renderIntoPreview(name: string): Promise<{ png: Blob; spec: SheetSpec; errors: { line: number; message: string }[] } | null> {
+  const r = await renderSheetPng(name);
+  if (!r) return null;
+  const old = sheetImgs.get(name);
+  if (old) URL.revokeObjectURL(old.url);
+  sheetImgs.set(name, { url: URL.createObjectURL(r.png), ms: r.ms, errors: r.errors, spec: r.spec });
+  return { png: r.png, spec: r.spec, errors: r.errors };
+}
+/** Preview: fast PNGs of every sheet (saved to the vault), the strip, and `focus` (the cursor's sheet) full size. */
+async function previewSheet(focus: string, save = true) {
+  const sheets = drawPanel!.parsed.sheets;
+  if (!sheets.length) return;
+  const N = sheets.length, errors: { line: number; message: string }[] = [];
+  drawPanel!.busy(`Rendering ${N} sheet${N === 1 ? '' : 's'}…`);
+  await progress.start(`Preview ${N} sheet${N === 1 ? '' : 's'}`, '');
   try {
-    const r = await runSheet(name);
-    if (!r) return;
-    await progress.step('Showing the sheet…', 0.95);
-    drawPanel!.setRunErrors(r.errors);
-    closePreview();
-    previewUrl = URL.createObjectURL(new Blob([r.svg], { type: 'image/svg+xml' }));
-    previewEl = document.createElement('div'); previewEl.id = 'sheet-preview';
-    const paper = `${r.spec.paper ?? 'A3'} ${r.spec.portrait ? 'portrait' : 'landscape'}, ${r.spec.scale ? `1:${r.spec.scale}` : 'fit'}`;
-    previewEl.innerHTML = `<header><b></b><span class="info"></span><button data-a="dl">⤓ SVG</button><button data-a="pdf">⤓ PDF</button><button data-a="close">✕ Close</button></header><div class="page"><img alt="sheet"></div>`;
-    previewEl.querySelector('b')!.textContent = r.spec.title ?? name;
-    previewEl.querySelector('.info')!.textContent = `${paper} · ${Math.round(r.stats.msTotal)} ms · ${r.stats.segments} pieces${r.errors.length ? ` · ${r.errors.length} problem(s), see the script` : ''}`;
-    previewEl.querySelector<HTMLImageElement>('img')!.src = previewUrl;
-    previewEl.querySelector<HTMLElement>('[data-a=close]')!.onclick = closePreview;
-    previewEl.querySelector<HTMLElement>('[data-a=dl]')!.onclick = () => { const a = document.createElement('a'); a.href = previewUrl!; a.download = `${r.spec.file ?? name}.svg`; a.click(); };
-    previewEl.querySelector<HTMLElement>('[data-a=pdf]')!.onclick = async () => {
-      await progress.start(`Export PDF “${name}”`, 'Converting the SVG to a vector PDF…');
-      let pdf: Blob;
-      try { pdf = await svgToPdf(r.svg, r.spec.title ?? name); } finally { progress.done(); }
-      const u = URL.createObjectURL(pdf);
-      const a = document.createElement('a'); a.href = u; a.download = `${r.spec.file ?? name}.pdf`; a.click(); setTimeout(() => URL.revokeObjectURL(u), 1000);
-    };
-    host().appendChild(previewEl);
+    // the focused sheet first, so it shows while the rest render
+    const order = [focus, ...sheets.map((x) => x.name).filter((n) => n !== focus)].filter((n) => sheets.some((x) => x.name === n));
+    for (const [i, n] of order.entries()) {
+      await progress.step(`Rendering ${n} (${i + 1} of ${N})…`, i / N);
+      const r = await renderIntoPreview(n);
+      if (!r) continue;
+      errors.push(...r.errors);
+      if (i === 0) { syncStrip(); showSheet(n); } else syncStrip();
+      if (save && io.files) await io.files.upload(`${drawingsFolder()}/${r.spec.file ?? n}.png`, new File([r.png], `${r.spec.file ?? n}.png`, { type: 'image/png' }), undefined, true);
+    }
+    await progress.step('Done', 1);
   } finally { drawPanel!.busy(null); progress.done(); }
+  drawPanel!.setRunErrors(errors);
+  if (!errors.length) drawPanel!.setStatus(save && io.files ? `Previewed ${N} sheet${N === 1 ? '' : 's'} · PNGs in ${drawingsFolder()}/` : `Previewed ${N} sheet${N === 1 ? '' : 's'}`);
 }
 /** Draw every sheet (or the named ones) and save <sheet>.svg and .pdf into the vault's Drawings/<animation>/. */
 async function saveAllSheets(only?: string[]): Promise<{ saved: string[]; errors: { line: number; message: string }[] }> {
