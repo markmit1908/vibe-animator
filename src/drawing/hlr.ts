@@ -15,6 +15,8 @@ export interface HlrOptions {
   /** keep hidden pieces (for a dashed layer) */ hidden?: boolean;
   /** depth-buffer pre-pass size (long side, pixels; 0 = off): skips edges buried behind other parts (orthographic only) */
   cullRes?: number;
+  /** more edges to draw (section hatching); they hide nothing and split nothing */
+  extra?: Edge3[];
 }
 export interface HlrResult {
   segs: Seg2[];
@@ -45,7 +47,8 @@ export function hiddenLines(soups: MeshSoup[], camera: THREE.Camera, opt: HlrOpt
   // 1. feature edges
   const view = { ortho, dir: fwd.toArray() as [number, number, number], eye: eye.toArray() as [number, number, number] };
   const edges: Edge3[] = [];
-  soups.forEach((s, i) => { for (const e of featureEdges(s, view, opt.creaseDeg ?? 30, weldTol, i)) edges.push(e); });
+  soups.forEach((s, i) => { if (!s.occluder) for (const e of featureEdges(s, view, opt.creaseDeg ?? 30, weldTol, i)) edges.push(e); });
+  for (const e of opt.extra ?? []) edges.push(e);
   const t1 = performance.now(); stats.edges = edges.length; stats.msEdges = t1 - t0;
 
   // 2. BVH over all triangles
@@ -118,7 +121,7 @@ export function hiddenLines(soups: MeshSoup[], camera: THREE.Camera, opt: HlrOpt
   stats.projected = pes.length;
 
   // 4. grid of contours in NDC
-  const contours = pes.filter((p) => p.e.kind !== 'crease');
+  const contours = pes.filter((p) => p.e.kind === 'silhouette' || p.e.kind === 'boundary');
   const G = Math.max(1, Math.min(2048, Math.round(Math.sqrt(contours.length) * 2)));
   const cell = (v: number) => Math.max(0, Math.min(G - 1, Math.floor(((v + 1) / 2) * G)));
   const grid: number[][] = Array.from({ length: G * G }, () => []);
@@ -138,7 +141,7 @@ export function hiddenLines(soups: MeshSoup[], camera: THREE.Camera, opt: HlrOpt
     const dx = p.x1 - p.x0, dy = p.y1 - p.y0;
     if (buried(p)) {
       culled++;
-      if (keepHidden) segs.push({ a: [p.x0, p.y0], b: [p.x1, p.y1], kind: p.e.kind, hidden: true, part: p.e.part });
+      if (keepHidden && p.e.kind !== 'hatch') segs.push({ a: [p.x0, p.y0], b: [p.x1, p.y1], kind: p.e.kind, hidden: true, part: p.e.part });
       return;
     }
     const minU = minNdc / Math.max(Math.hypot(dx, dy), 1e-12);
@@ -165,7 +168,7 @@ export function hiddenLines(soups: MeshSoup[], camera: THREE.Camera, opt: HlrOpt
     const sOf = (u: number) => (u * p.w0) / (p.w1 * (1 - u) + u * p.w0);
     let runStart = 0, runHidden: boolean | null = null;
     const emit = (u0: number, u1: number, hidden: boolean) => {
-      if (hidden && !keepHidden) return;
+      if (hidden && (!keepHidden || p.e.kind === 'hatch')) return;
       segs.push({ a: [p.x0 + dx * u0, p.y0 + dy * u0], b: [p.x0 + dx * u1, p.y0 + dy * u1], kind: p.e.kind, hidden, part: p.e.part });
     };
     for (let k = 0; k + 1 < us.length; k++) {

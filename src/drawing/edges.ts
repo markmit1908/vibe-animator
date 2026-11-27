@@ -1,7 +1,7 @@
 // Feature edges of a mesh for one view: silhouettes, open boundaries and creases.
 import type { MeshSoup } from './collect';
 
-export type EdgeKind = 'silhouette' | 'boundary' | 'crease';
+export type EdgeKind = 'silhouette' | 'boundary' | 'crease' | 'hatch';
 export interface Edge3 { a: [number, number, number]; b: [number, number, number]; kind: EdgeKind; part: string; /** index of its mesh in the soup list */ mesh: number }
 
 /** Camera for front/back tests: ortho → a fixed view direction; perspective → the eye position. */

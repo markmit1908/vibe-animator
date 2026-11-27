@@ -3,10 +3,13 @@ import * as THREE from 'three';
 import { collectMeshes, type MeshSoup } from './collect';
 export { parseDraw, withDefaults, DEFAULT_DRAW, type SheetSpec, type DrawScript } from './script';
 import { hiddenLines, type HlrOptions } from './hlr';
-import { toSvg, type SheetOptions } from './svg';
+import { fitScale, toSvg, type SheetOptions } from './svg';
+import { capTriangles, hatchEdges } from './sections';
+import type { Edge3 } from './edges';
 
 export { collectMeshes, hiddenLines, toSvg };
-export interface DrawingOptions extends HlrOptions, SheetOptions { /** orthographic along the camera's view direction (default true) */ ortho?: boolean; exclude?: THREE.Object3D[]; only?: THREE.Object3D[] }
+export interface DrawingOptions extends HlrOptions, SheetOptions { /** orthographic along the camera's view direction (default true) */ ortho?: boolean; exclude?: THREE.Object3D[]; only?: THREE.Object3D[];
+  /** section hatch spacing on the paper, mm (0 = no hatching; default 2.5) */ hatch?: number }
 
 /** An orthographic camera looking the same way as `cam`, framing every mesh. */
 export function orthoFrom(cam: THREE.Camera, soups: MeshSoup[]): THREE.OrthographicCamera {
@@ -31,7 +34,28 @@ export function makeDrawing(root: THREE.Object3D, camera: THREE.Camera, opt: Dra
   const soups = collectMeshes(root, { exclude: opt.exclude, only: opt.only });
   const tc = performance.now() - t0;
   const cam = opt.ortho === false ? camera : orthoFrom(camera, soups);
-  const r = hiddenLines(soups, cam, opt);
+  // section faces: caps hide what's inside a cut part; hatching at 45° / 135° (alternating by part), spacing in paper mm
+  const extra: Edge3[] = [];
+  let k = 0; // mm per metre
+  if ((cam as THREE.OrthographicCamera).isOrthographicCamera) {
+    const o = cam as THREE.OrthographicCamera;
+    k = opt.scale ? 1000 / opt.scale : fitScale(opt, (o.right - o.left) / o.zoom, (o.top - o.bottom) / o.zoom);
+  }
+  const hatchMm = opt.hatch ?? 2.5;
+  const parts = new Map<string, number>();
+  const n0 = soups.length;
+  for (let i = 0; i < n0; i++) {
+    const s = soups[i];
+    if (!s.sections) continue;
+    if (!parts.has(s.part)) parts.set(s.part, parts.size);
+    for (const sec of s.sections) {
+      const cap = capTriangles(sec);
+      if (!cap.idx.length) continue;
+      soups.push({ ...cap, part: s.part, occluder: true });
+      if (hatchMm > 0 && k > 0) extra.push(...hatchEdges(sec, cam, hatchMm / k, parts.get(s.part)! % 2 ? 135 : 45, s.part, soups.length - 1));
+    }
+  }
+  const r = hiddenLines(soups, cam, { ...opt, extra });
   const t1 = performance.now();
   const out = toSvg(r, opt);
   const stats = { msCollect: tc, ...r.stats, msSvg: performance.now() - t1, ...Object.fromEntries(Object.entries(out.stats).map(([k, v]) => [`lines.${k}`, v])), bytes: out.svg.length };

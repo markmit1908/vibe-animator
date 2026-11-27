@@ -185,7 +185,7 @@ each @layer3 stagger 0.2s order ring {   # $ = the item, $i = its index (0, 1, 2
 
 The **Illustration** tab makes print-quality vector line drawings (SVG) from the geometry, not from screen pixels.
 Hidden lines are removed exactly, line weights are in mm at a chosen paper size and scale, and each line type is
-its own layer (`outline` 0.5, `crease` 0.25, `hidden` 0.18 dashed, `border`, as in ISO 128). Views are orthographic.
+its own layer (`outline` 0.5, `crease` 0.25, `hidden` 0.18 dashed, `hatch` 0.18, `border`, `titleblock`; weights as in ISO 128). Views are orthographic.
 
 - **Controls:** paper, scale, hidden lines and crease angle for **⤓ Export SVG**, which draws the current view.
 - **Drawing script** (`.draw`, saved with the animation): each `sheet` is one drawing. Settings before the first sheet
@@ -198,6 +198,8 @@ paper A1 landscape        # A0–A4, landscape | portrait
 scale 1:50                # or: scale fit
 hidden off                # dashed hidden lines (busy on big assemblies: use with `only`)
 crease 30                 # crease angle, degrees
+hatch 2.5                 # section hatch spacing in mm, or: hatch off
+drawn "MM"                # title block: title, number, rev, drawn, project (default: the animation's name)
 
 sheet core-section "Core – half section"
   view front              # iso front back top bottom side left right, a saved view, or [dx, dy, dz]
@@ -206,9 +208,11 @@ sheet core-section "Core – half section"
   cut half x at [0,0,0]   # none | half [side] | quarter [side side]; default: the animation's cut at that time
   hide @building, ~bolt   # parts left out (ids, globs, @groups, names, ~text)
   only @core              # draw just these
+  number D-001            # title block fields per sheet; titleblock off leaves it out
+  rev A
 ```
 
-Cut faces are drawn as outlines (section hatching comes later). A big assembly takes a few seconds per sheet
+Cut faces are capped (what's inside a cut part stays hidden), outlined and hatched at 45° on the paper (135° for every other part). The title block (bottom right) fills in the scale (NTS when fitted), paper size and date. A big assembly takes a few seconds per sheet
 (the plant model: 8M triangles, 6–8 s).
 
 ## AI assist (AI Assist tab)

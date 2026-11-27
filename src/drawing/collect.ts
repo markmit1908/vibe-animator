@@ -1,5 +1,6 @@
 // Gather the visible meshes of a scene as world-space triangle soups (one per mesh/instance).
 import * as THREE from 'three';
+import { sectionLoops, type Section } from './sections';
 
 export interface MeshSoup {
   /** world-space vertex positions (x, y, z …) */
@@ -8,13 +9,18 @@ export interface MeshSoup {
   idx: Uint32Array;
   /** the part this mesh belongs to (userData.id of the nearest registered ancestor) */
   part: string;
+  /** the section faces where a cut opened this mesh (for caps and hatching) */
+  sections?: Section[];
+  /** an occluder only (section caps): hides things, draws no edges of its own */
+  occluder?: boolean;
 }
 
 const shown = (o: THREE.Object3D) => { for (let p: THREE.Object3D | null = o; p; p = p.parent) if (!p.visible) return false; return true; };
 const partOf = (o: THREE.Object3D) => { for (let p: THREE.Object3D | null = o; p; p = p.parent) if (p.userData.id) return String(p.userData.id); return o.uuid; };
 const seeThrough = (m: THREE.Material | THREE.Material[]) => (Array.isArray(m) ? m : [m]).every((x) => x.visible === false || (x.transparent && x.opacity < 0.05) || x.side === THREE.BackSide); // BackSide = outline hulls
 
-type P4 = [number, number, number, number]; // plane: normal, constant (three's Plane: n·p + c, clipped where < 0)
+type P4 = [number, number, number, number];
+const MESH_TOL = 1e-6; // plane: normal, constant (three's Plane: n·p + c, clipped where < 0)
 
 /**
  * Cut a triangle soup the way the cutaway clips it on screen: split triangles by every plane and drop the cells
@@ -107,7 +113,12 @@ export function collectMeshes(root: THREE.Object3D, opt: CollectOptions | THREE.
         if (inst) { inst.getMatrixAt(k, m); m.premultiply(o.matrixWorld); } else m.copy(o.matrixWorld);
         const pos = new Float32Array(n * 3);
         for (let i = 0; i < n; i++) { v.fromBufferAttribute(src, i).applyMatrix4(m); pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z; }
-        if (cut) { const c = clipSoup(pos, idx, cut.planes, cut.intersection); if (c.idx.length) out.push({ ...c, part: partOf(o) }); }
+        if (cut) {
+          const c = clipSoup(pos, idx, cut.planes, cut.intersection);
+          if (!c.idx.length) continue;
+          const sections = cut.intersection && (c.idx.length !== idx.length || c.pos.length !== pos.length) ? sectionLoops(pos, idx, cut.planes, MESH_TOL * 10) : [];
+          out.push({ ...c, part: partOf(o), ...(sections.length ? { sections } : {}) });
+        }
         else out.push({ pos, idx, part: partOf(o) });
       }
     }

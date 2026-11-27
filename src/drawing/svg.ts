@@ -8,7 +8,8 @@ export interface Layer { name: string; weight: number; dash?: number[]; match: (
 export const ISO_LAYERS: Layer[] = [
   { name: 'hidden', weight: 0.18, dash: [3, 1.5], match: (s) => s.hidden },
   { name: 'crease', weight: 0.25, match: (s) => !s.hidden && s.kind === 'crease' },
-  { name: 'outline', weight: 0.5, match: (s) => !s.hidden && s.kind !== 'crease' },
+  { name: 'outline', weight: 0.5, match: (s) => !s.hidden && (s.kind === 'silhouette' || s.kind === 'boundary') },
+  { name: 'hatch', weight: 0.18, match: (s) => !s.hidden && s.kind === 'hatch' },
 ];
 
 export interface SheetOptions {
@@ -20,6 +21,44 @@ export interface SheetOptions {
   layers?: Layer[];
   border?: boolean;
   title?: string;
+  /** the title block (bottom right); false = none */
+  titleBlock?: TitleBlock | false;
+}
+export interface TitleBlock { title?: string; sheet?: string; number?: string; rev?: string; drawn?: string; project?: string; date?: string }
+
+const TB_W = 180, TB_H = 32;
+/** Paper size (mm) and the area left for the drawing: inside the margin, above the title block. */
+export function layout(opt: SheetOptions) {
+  let [W, H] = typeof opt.paper === 'object' ? opt.paper : PAPER[opt.paper ?? 'A3'];
+  if (opt.portrait ? W > H : H > W) [W, H] = [H, W];
+  const m = opt.margin ?? 10;
+  const tb = opt.titleBlock !== false;
+  const area = { x0: m, y0: m, x1: W - m, y1: H - m - (tb ? TB_H : 0) };
+  return { W, H, m, area, tb };
+}
+/** mm per drawing unit to fit a frame (w × h drawing units) into the sheet's area. */
+export function fitScale(opt: SheetOptions, w: number, h: number) {
+  const { area } = layout(opt);
+  return Math.min((area.x1 - area.x0) / Math.max(w, 1e-9), (area.y1 - area.y0) / Math.max(h, 1e-9));
+}
+const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+function titleBlockSvg(W: number, H: number, m: number, tb: TitleBlock, scale: string, paper: string): string {
+  const x = W - m / 2 - TB_W, y = H - m / 2 - TB_H;
+  const cols = [70, 30, 40, 40];
+  const cx = cols.map((_, i) => x + cols.slice(0, i).reduce((a, b) => a + b, 0));
+  const cell = (i: number, row: number, label: string, value: string) => {
+    const yy = y + 14 + row * 9;
+    return `<text x="${f(cx[i] + 1.5)}" y="${f(yy + 2.6)}" font-size="2">${esc(label)}</text><text x="${f(cx[i] + 1.5)}" y="${f(yy + 7.2)}" font-size="3.5">${esc(value)}</text>`;
+  };
+  const lines = [`M${f(x)} ${f(y + 14)}H${f(x + TB_W)}`, `M${f(x)} ${f(y + 23)}H${f(x + TB_W)}`, ...cx.slice(1).map((c) => `M${f(c)} ${f(y + 14)}V${f(y + TB_H)}`)].join('');
+  return `<g id="titleblock" inkscape:groupmode="layer" inkscape:label="titleblock" font-family="Helvetica, Arial, sans-serif" fill="#000">
+<rect x="${f(x)}" y="${f(y)}" width="${TB_W}" height="${TB_H}" fill="#fff" stroke="#000" stroke-width="0.5"/>
+<path d="${lines}" fill="none" stroke="#000" stroke-width="0.25"/>
+<text x="${f(x + 2)}" y="${f(y + 4.2)}" font-size="2">TITLE</text><text x="${f(x + 2)}" y="${f(y + 11)}" font-size="6" font-weight="bold">${esc(tb.title ?? '')}</text>
+${cell(0, 0, 'DRAWING NO.', tb.number ?? '')}${cell(1, 0, 'REV', tb.rev ?? '')}${cell(2, 0, 'SCALE', scale)}${cell(3, 0, 'SHEET', tb.sheet ?? '')}
+${cell(0, 1, 'PROJECT', tb.project ?? '')}${cell(1, 1, 'DRAWN', tb.drawn ?? '')}${cell(2, 1, 'DATE', tb.date ?? '')}${cell(3, 1, 'SIZE', paper)}
+</g>`;
 }
 
 const f = (v: number) => (Math.round(v * 1000) / 1000).toString();
@@ -74,18 +113,16 @@ function simplify(l: [number, number][], tol = 0.002): [number, number][] {
 }
 
 export function toSvg(r: HlrResult, opt: SheetOptions = {}): { svg: string; scale: number | null; stats: Record<string, number> } {
-  let [W, H] = typeof opt.paper === 'object' ? opt.paper : PAPER[opt.paper ?? 'A3'];
-  if (opt.portrait ? W > H : H > W) [W, H] = [H, W];
-  const m = opt.margin ?? 10;
+  const { W, H, m, area, tb } = layout(opt);
   // content bounds (or the camera frame when empty)
   let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
   for (const s of r.segs) for (const p of [s.a, s.b]) { x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]); }
   if (!(x1 > x0)) [x0, y0, x1, y1] = r.frame;
   let k: number, scale: number | null = null; // mm per drawing unit
   if (opt.scale && r.metric) { scale = opt.scale; k = 1000 / opt.scale; }
-  else k = Math.min((W - 2 * m) / Math.max(x1 - x0, 1e-9), (H - 2 * m) / Math.max(y1 - y0, 1e-9));
-  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-  const X = (x: number) => W / 2 + (x - cx) * k, Y = (y: number) => H / 2 - (y - cy) * k;
+  else k = fitScale(opt, x1 - x0, y1 - y0);
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, ax = (area.x0 + area.x1) / 2, ay = (area.y0 + area.y1) / 2;
+  const X = (x: number) => ax + (x - cx) * k, Y = (y: number) => ay - (y - cy) * k;
 
   const layers = opt.layers ?? ISO_LAYERS;
   const stats: Record<string, number> = {};
@@ -99,10 +136,11 @@ export function toSvg(r: HlrResult, opt: SheetOptions = {}): { svg: string; scal
   const border = opt.border !== false ? `<g id="border" inkscape:groupmode="layer" inkscape:label="border" fill="none" stroke="#000" stroke-width="0.7"><rect x="${m / 2}" y="${m / 2}" width="${W - m}" height="${H - m}"/></g>` : '';
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="${W}mm" height="${H}mm" viewBox="0 0 ${W} ${H}">
-<title>${(opt.title ?? 'Drawing').replace(/[<&]/g, '')}</title>
+<title>${esc(opt.title ?? 'Drawing')}</title>
 <rect id="paper" width="${W}" height="${H}" fill="#fff"/>
 ${groups.join('\n')}
 ${border}
+${tb ? titleBlockSvg(W, H, m, opt.titleBlock || {}, scale ? `1:${scale}` : 'NTS', typeof opt.paper === 'object' ? `${W}×${H}` : opt.paper ?? 'A3') : ''}
 </svg>
 `;
   return { svg, scale, stats };

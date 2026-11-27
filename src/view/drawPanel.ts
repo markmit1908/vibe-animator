@@ -77,7 +77,7 @@ export class DrawPanel {
       const opts: string[] = kw === 'view' ? ['iso', 'front', 'back', 'top', 'bottom', 'side', 'left', 'right', ...hooks.views().map((v) => `"${v}"`)]
         : kw === 'snapshot' ? hooks.snapshots().map((s) => `"${s}"`)
         : kw === 'paper' ? [...PAPERS, 'landscape', 'portrait'] : kw === 'cut' ? ['none', 'half', 'quarter', 'x', '-x', 'y', '-y', 'z', '-z', 'at']
-        : kw === 'hidden' ? ['on', 'off'] : kw === 'scale' ? ['fit', '1:10', '1:20', '1:50', '1:100', '1:200'] : [];
+        : kw === 'hidden' || kw === 'titleblock' ? ['on', 'off'] : kw === 'hatch' ? ['2.5', 'off'] : kw === 'scale' ? ['fit', '1:10', '1:20', '1:50', '1:100', '1:200'] : [];
       return opts.length ? { from: w.from, options: opts.map((label) => ({ label, type: 'constant' })) } : null;
     };
     this.view = new EditorView({

@@ -15,6 +15,9 @@
  *     cut half x at [0,0,0]   none | half [side] | quarter [side side] [at [x,y,z]]; default: the animation's cut at that time
  *     hide @building, ~bolt   parts left out (ids, globs, @groups, names – as in animation scripts)
  *     only @core              draw just these
+ *
+ *   Section hatching: `hatch 2.5` (spacing in paper mm) or `hatch off`. Title block: `title`, `number`, `rev`, `drawn`,
+ *   `project` (default: the animation's name); `titleblock off` leaves it out. Scale and date are filled in.
  */
 import type { Cut, CutMode, CutSide } from '../view/cutaway';
 
@@ -29,6 +32,13 @@ export interface SheetSpec {
   scale?: number;
   hidden?: boolean;
   crease?: number;
+  /** section hatch spacing, paper mm; 0 = off */
+  hatch?: number;
+  number?: string;
+  rev?: string;
+  drawn?: string;
+  project?: string;
+  titleblock?: boolean;
   view?: string | [number, number, number];
   snapshot?: string;
   at?: number | string;
@@ -39,14 +49,14 @@ export interface SheetSpec {
 export interface DrawError { line: number; message: string }
 export interface DrawScript { defaults: SheetSpec; sheets: SheetSpec[]; errors: DrawError[] }
 
-export const DRAW_KEYWORDS = ['sheet', 'paper', 'scale', 'hidden', 'crease', 'title', 'view', 'snapshot', 'at', 'cut', 'hide', 'only'];
+export const DRAW_KEYWORDS = ['sheet', 'paper', 'scale', 'hidden', 'crease', 'hatch', 'title', 'number', 'rev', 'drawn', 'project', 'titleblock', 'view', 'snapshot', 'at', 'cut', 'hide', 'only'];
 export const PAPERS = ['A0', 'A1', 'A2', 'A3', 'A4'];
 const SIDES = ['x', '-x', 'y', '-y', 'z', '-z'];
 
 /** Settings a sheet takes from the defaults when it doesn't set them. */
 export function withDefaults(s: SheetSpec, d: SheetSpec): SheetSpec {
   const out = { ...s };
-  for (const k of ['paper', 'portrait', 'scale', 'hidden', 'crease', 'view', 'snapshot', 'at', 'cut'] as const) if (out[k] === undefined) (out as any)[k] = d[k];
+  for (const k of ['paper', 'portrait', 'scale', 'hidden', 'crease', 'hatch', 'number', 'rev', 'drawn', 'project', 'titleblock', 'view', 'snapshot', 'at', 'cut'] as const) if (out[k] === undefined) (out as any)[k] = d[k];
   out.hide = [...d.hide, ...s.hide];
   out.only = s.only.length ? s.only : d.only;
   return out;
@@ -81,6 +91,18 @@ export function parseDraw(text: string): DrawScript {
         return;
       }
       case 'title': cur.title = unq(rest); return;
+      case 'number': case 'rev': case 'drawn': case 'project':
+        if (!rest) { err(`${kw}: a value (quoted if it has spaces)`); return; }
+        cur[kw] = unq(rest); return;
+      case 'titleblock':
+        if (rest !== 'on' && rest !== 'off') { err('titleblock: on or off'); return; }
+        cur.titleblock = rest === 'on'; return;
+      case 'hatch': {
+        if (rest === 'off') { cur.hatch = 0; return; }
+        const n = Number(rest.replace(/mm$/, ''));
+        if (!(n > 0)) { err('hatch: spacing in mm (e.g. 2.5) or off'); return; }
+        cur.hatch = n; return;
+      }
       case 'paper': {
         const [p, o] = rest.split(/\s+/);
         if (!PAPERS.includes(p?.toUpperCase())) { err(`paper: one of ${PAPERS.join(', ')}`); return; }

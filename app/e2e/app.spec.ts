@@ -1344,6 +1344,16 @@ test("drawing sheets: the .draw script in the Illustration tab – view, hide, c
   const c = await run("c");
   expect(c.errors).toEqual([]);
   expect(xs(c.svg)).toBeCloseTo(100, 0);                                     // the front box cut in half at x = 0
+  // looking at the cut face: the section is capped (the inside of the box doesn't show) and hatched
+  await page.evaluate(() => { const p = (window as any).__studio.drawPanel; p.setText(p.text + '\nsheet e "Section A-A"\n  view side\n  only front\n  cut half x\n  number D-042\n  rev B\n'); });
+  const e = await run("e");
+  expect(e.errors).toEqual([]);
+  expect(e.stats["lines.outline"]).toBe(1);                                  // the cut outline: one square
+  expect(e.stats["lines.crease"]).toBe(0);                                   // nothing inside shows through
+  expect(e.stats["lines.hatch"]).toBeGreaterThan(100);                       // 200 mm square at 2.5 mm, 45°
+  expect(e.stats["lines.hatch"]).toBeLessThan(125);
+  expect(e.svg).toContain('id="titleblock"');
+  for (const t of ["Section A-A", "D-042", ">B<", "1:10", "A4"]) expect(e.svg).toContain(t);
   // the studio's own cut is back afterwards (the script has none)
   expect(await page.evaluate(() => (window as any).__studio.built.clipPlanes[0].constant)).toBeGreaterThan(1e8);
   // unknown parts are errors on the sheet's line
@@ -1357,7 +1367,7 @@ test("drawing sheets: the .draw script in the Illustration tab – view, hide, c
   // save all → the vault
   await panel.locator("[data-a=save]").click();
   await expect(panel.locator(".st")).toContainText(/1 error|Saved/, { timeout: 30_000 });   // sheet d's unknown part
-  for (const n of ["a", "b", "c", "d"]) {
+  for (const n of ["a", "b", "c", "d", "e"]) {
     const r = await api(page).get(`/api/files/Drawings/Sheets/${n}.svg`);
     expect(r.status()).toBe(200);
     expect(await r.text()).toContain("<svg");
