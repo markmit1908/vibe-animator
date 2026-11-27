@@ -544,6 +544,51 @@ test("align: sit a part on top of another (typed or picked target), a copy besid
   expect(await page.evaluate(() => (window as any).__studio.gizmo.rotationSnap)).toBeCloseTo(Math.PI / 12, 6);   // 15° by default
 });
 
+test("clean-up: Remove and Keep only the selection (undoable); move and turn a CAD model in the CAD panel", async ({ page }) => {
+  await page.goto("/");
+  const { readFileSync } = await import("node:fs");
+  await api(page).put("/api/files/CAD/small.glb?overwrite=true", { data: readFileSync(new URL("./fixtures/small.glb", import.meta.url)) });
+  const m = { name: "Clean up", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [{ id: "plant", file: "CAD/small.glb", up: "y", position: [0, 0, 0] }] },
+    script: { language: "anim", text: 'label "C"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Clean up");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const ids = await page.evaluate(() => { const r = (window as any).__studio.built.registry; const f = (s: string) => [...r.keys()].find((id: string) => id.endsWith(s)); return { p1: f("/Pin_1"), p2: f("/Pin_2") }; });
+  const shownMeshes = () => page.evaluate(() => { const s = (window as any).__studio; let n = 0; const vis = (o: any): boolean => !o || (o.visible && vis(o.parent));
+    s.built.root.traverse((o: any) => { if (o.isMesh && vis(o)) n++; }); return n; });
+  const all = await shownMeshes();
+  // Keep only Pin_1
+  await page.evaluate((id) => (window as any).__studio.tree.selectId(id), ids.p1);
+  await page.locator("#toolsbar [data-t=keeponly]").click();
+  await expect.poll(shownMeshes).toBe(1);
+  await expect.poll(async () => (await model(page, a.id)).removed?.length ?? 0).toBeGreaterThan(0);
+  await expect(page.locator("#tree .row", { hasText: "Removed" })).toBeVisible();
+  // one undo brings everything back
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.keyboard.press("Meta+z");
+  await expect.poll(shownMeshes).toBe(all);
+  // Remove Pin_2
+  await page.evaluate((id) => (window as any).__studio.tree.selectId(id), ids.p2);
+  await page.locator("#toolsbar [data-t=remove]").click();
+  await expect.poll(shownMeshes).toBe(all - 1);
+  await expect.poll(async () => (await model(page, a.id)).removed).toEqual([ids.p2]);
+  // the CAD panel: move the model 5 m along x, then turn it 90° – Pin_1 follows; saved, no reload
+  const pin = () => page.evaluate((id) => { const s = (window as any).__studio, T = s.THREE, o = s.built.registry.get(id); o.updateWorldMatrix(true, true);
+    return new T.Box3().setFromObject(o).getCenter(new T.Vector3()).toArray().map((v: number) => +v.toFixed(3)); }, ids.p1);
+  const p0 = await pin();
+  await page.locator("#toolsbar [data-t=cad]").click();
+  const x = page.locator("#toolsbar .cadpop .pose [data-k=p0]");
+  await x.fill("5"); await x.dispatchEvent("input");
+  await expect.poll(async () => (await pin())[0]).toBeCloseTo(p0[0] + 5, 3);
+  await expect.poll(async () => (await model(page, a.id)).scene.cad_models[0].position).toEqual([5, 0, 0]);
+  const ry = page.locator("#toolsbar .cadpop .pose [data-k=ry]");
+  await ry.fill("90"); await ry.dispatchEvent("input");
+  await expect.poll(async () => (await model(page, a.id)).scene.cad_models[0].rotation_deg).toEqual([0, 90, 0]);
+  const p1 = await pin();                                 // turned 90° about y through (5, 0, 0): x' - 5 = z, z' = -(x - 0)
+  expect(p1[0] - 5).toBeCloseTo(p0[2], 2); expect(p1[2]).toBeCloseTo(-p0[0], 2);
+  expect(await page.evaluate(() => (window as any).__studio.built.registry.has("plant"))).toBe(true);
+});
+
 test("the tree keeps its open rows, selection and scroll when it rebuilds (making a group)", async ({ page }) => {
   await page.goto("/");
   const { readFileSync } = await import("node:fs");
@@ -756,6 +801,7 @@ test("floating tools: blank / unblank the selection, and group it", async ({ pag
 });
 
 test("group folders in the tree: create, file by menu and by drag, select and hide a folder, rename, delete", async ({ page }) => {
+  test.setTimeout(60_000);   // ~26 s on its own
   await page.goto("/");
   const m = { name: "Group folder test", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
     script: { language: "anim", text: 'label "F"\nmove @lid by [0,1,0] 1s' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } },
@@ -1178,6 +1224,14 @@ test("assist: propose_shapes makes, changes and deletes shapes through an accept
   });
   expect(bad.ok).toBe(false);
   expect(bad.problems.join(" | ")).toMatch(/inner_radius must be less.*bad shape name.*no shape "ghost".*kind must be/);
+  // models often send an empty or "none" array for single shapes: that's no array, not a problem
+  const noArr = await page.evaluate(async () => {
+    const s = (window as any).__studio, t = s.tools.find((x: any) => x.name === "propose_shapes");
+    const g = t.run({ summary: "x", changes: [{ action: "create", name: "r1", kind: "box", array: {} }, { action: "create", name: "r2", kind: "box", array: { type: "none" } }, { action: "create", name: "r3", kind: "box", array: { count: 3 } }] });
+    let x = await g.next(); let p: any; for (; !x.done; x = await g.next()) p = x.value; return { problems: p.problems, arrays: p.changes.map((c: any) => c.def?.array ?? null) };
+  });
+  expect(noArr.problems).toEqual(["r3: array.type is \"linear\" or \"circular\" (leave array out for a single one)"]);
+  expect(noArr.arrays.slice(0, 2)).toEqual([null, null]);
   // the user's request: a 6 m tube, 0.3 m inner / 0.6 m outer diameter, standing on the floor (y = 0)
   const propose = (changes: any[], summary: string) => page.evaluate(async ({ changes, summary }) => {
     const s = (window as any).__studio, t = s.tools.find((x: any) => x.name === "propose_shapes");

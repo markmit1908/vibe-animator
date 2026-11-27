@@ -290,7 +290,8 @@ function copyChanges(input: any[], d: ModelProposeDeps): { changes: CopyChange[]
     let mirror = c.mirror === null ? undefined : (c.mirror ?? base?.mirror);
     if (mirror !== undefined && !['x', 'y', 'z'].includes(mirror)) { problems.push(`${name}: mirror is x, y or z`); mirror = undefined; }
     let array = c.array === null ? undefined : base?.array;
-    if (c.array) {
+    if (noArray(c.array)) { if (c.array === null || Object.keys(c.array).length) array = undefined; }   // {} = no change
+    else if (c.array) {
       const n = Math.round(Number(c.array.count));
       if (!(n >= 2 && n <= 500)) problems.push(`${name}: array count must be 2..500`);
       if (c.array.type === 'linear') array = { type: 'linear', count: n, step: v3(c.array.step, 'array step') ?? [1, 0, 0] };
@@ -298,7 +299,7 @@ function copyChanges(input: any[], d: ModelProposeDeps): { changes: CopyChange[]
         const ce = c.array.centre ?? [0, 0];
         if (!Array.isArray(ce) || ce.length !== 2) problems.push(`${name}: circular array centre is [x, z]`);
         array = { type: 'circular', count: n, centre: (Array.isArray(ce) ? ce : [0, 0]).map(Number), angle: Number(c.array.angle ?? 360) };
-      } else problems.push(`${name}: array type is linear or circular`);
+      } else problems.push(`${name}: array.type is "linear" or "circular" (leave array out for a single one)`);
     }
     let rename: string | undefined;
     if (action === 'update' && c.rename && c.rename !== name) {
@@ -338,6 +339,20 @@ export interface PlacementPlan {
 /** Size field names per kind for the assistant: "outer radius" → outer_radius, "width (x)" → width. */
 export const sizeKeys = (k: ShapeKind) => SIZES[k].map((f) => f.label.replace(/\s*\(.*\)/, '').trim().replace(/\s+/g, '_'));
 const SIZE_DOC = KINDS.map((k) => `${k} {${sizeKeys(k).join(', ')}}`).join('; ');
+/** No array wanted: null, {}, or an array with type none/off/single (models send these). */
+const noArray = (a: any) => a === null || (typeof a === 'object' && a !== null && (!Object.keys(a).length || ['none', 'off', 'single', ''].includes(String(a.type ?? 'x').toLowerCase())));
+const ARRAY_SCHEMA = {
+  type: ['object', 'null'],
+  description: 'Optional – leave it out for a single one; null removes an existing array. linear: {type: "linear", count, step [x,y,z] m}; circular: {type: "circular", count, centre [x,z] of a vertical axis, angle (360 = evenly round)}',
+  properties: {
+    type: { type: 'string', enum: ['linear', 'circular'] },
+    count: { type: 'integer', minimum: 2 },
+    step: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 },
+    centre: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 },
+    angle: { type: 'number' },
+  },
+  required: ['type', 'count'],
+};
 const vec3 = { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 };
 
 /** One shape change, checked: the full new definition (create/update) or the name (delete). */
@@ -374,7 +389,8 @@ function shapeChanges(input: any[], existing: ShapeDef[]): { changes: ShapeChang
     const color = c.color ?? base?.color ?? '#c8d0d9';
     if (!/^#[0-9a-fA-F]{6}$/.test(color)) problems.push(`${name}: colour must be #rrggbb`);
     let array = c.array === null ? undefined : base?.array;
-    if (c.array) {
+    if (noArray(c.array)) { if (c.array === null || Object.keys(c.array).length) array = undefined; }   // {} = no change
+    else if (c.array) {
       const n = Math.round(Number(c.array.count));
       if (!(n >= 2 && n <= 500)) problems.push(`${name}: array count must be 2..500`);
       if (c.array.type === 'linear') array = { type: 'linear', count: n, step: v3(c.array.step, [1, 0, 0], 'array step') };
@@ -382,7 +398,7 @@ function shapeChanges(input: any[], existing: ShapeDef[]): { changes: ShapeChang
         const ce = c.array.centre ?? [0, 0];
         if (!Array.isArray(ce) || ce.length !== 2) problems.push(`${name}: circular array centre is [x, z]`);
         array = { type: 'circular', count: n, centre: (Array.isArray(ce) ? ce : [0, 0]).map(Number), angle: Number(c.array.angle ?? 360) };
-      } else problems.push(`${name}: array type is linear or circular`);
+      } else problems.push(`${name}: array.type is "linear" or "circular" (leave array out for a single one)`);
     }
     let rename: string | undefined;
     if (action === 'update' && c.rename && c.rename !== name) {
@@ -447,7 +463,7 @@ export function modelProposeTools(d: ModelProposeDeps): AssistTool[] {
             position: { ...vec3, description: 'Centre [x, y, z] in metres' },
             rotation: { ...vec3, description: 'Degrees about X, Y, Z' },
             color: { type: 'string', description: '#rrggbb' },
-            array: { type: ['object', 'null'] },
+            array: ARRAY_SCHEMA,
             rename: { type: 'string' },
           }, required: ['action', 'name'] } },
         },
@@ -478,7 +494,7 @@ export function modelProposeTools(d: ModelProposeDeps): AssistTool[] {
             offset: { ...vec3, description: 'Or: how far from the sources [dx, dy, dz] m' },
             rotation: { ...vec3, description: 'Degrees about X, Y, Z' },
             mirror: { type: ['string', 'null'], enum: ['x', 'y', 'z', null] },
-            array: { type: ['object', 'null'] },
+            array: ARRAY_SCHEMA,
             rename: { type: 'string' },
           }, required: ['action', 'name'] } },
         },

@@ -7,6 +7,7 @@ import { buildScene } from '../scene/build';
 import { compile } from '../timeline/compile';
 import { Player } from '../timeline/player';
 import { fitVerticalCylinder, planeHeight } from '../scene/origin';
+import { poseModel } from '../scene/cad';
 import { buildCopy, COPIES_ROOT, copyPartId, freeCopyName, sourcesBox, type CopyDef } from '../scene/copies';
 import { buildShape, freeName, KINDS, SHAPES_ROOT, shapePartId, SIZES, validName, type ShapeDef, type ShapeKind } from '../scene/shapes';
 import { capUniforms, SectionCaps, withCaps } from '../view/caps';
@@ -1925,6 +1926,8 @@ toolbar.innerHTML = `<button data-t="blank" title="Blank / unblank the selected 
   <button data-t="keep" title="Keep uncut: cuts leave the selected parts whole (saved with the animation; K). A script cut can add its own: cutaway half x keep @lid"><span class="i">✂</span><span class="l">Keep uncut</span></button>
   <button data-t="find" title="Select by name: every part whose name contains the text (or matches a glob with *), e.g. V-005202-001 – then Blank, Group, colour… (F)"><span class="i">⌕</span><span class="l">Select by name</span></button>
   <div class="fpop" hidden><input placeholder="Part of a name, e.g. V-005202-001" spellcheck="false"><div class="hint"></div><button data-f="go">Select</button></div>
+  <button data-t="remove" title="Remove the selected parts from this animation (they're listed under Removed in the tree, with Restore; the CAD file is untouched). Delete in the tree"><span class="i">✕</span><span class="l">Remove</span></button>
+  <button data-t="keeponly" title="Keep only the selection: remove every other part of the model (one undoable step; Restore under Removed)"><span class="i">◉</span><span class="l">Keep only</span></button>
   <button data-t="showall" title="Show all: unblank every part (removed parts stay removed)"><span class="i">●</span><span class="l">Show all</span></button>
   <button data-t="origin" title="Set the model origin: click a cylindrical face (its axis), then a flat face (its height); the model moves so that point is (0,0,0)"><span class="i">⊕</span><span class="l">Set origin</span></button>
   <button data-t="shape" title="Shapes: add a box, cylinder, tube, sphere, cone, plane or hex prism – sizes, position, colour, linear / circular arrays. Select a shape to edit it."><span class="i">◇</span><span class="l">Shape</span></button>
@@ -1975,6 +1978,8 @@ layoutToolbar();
     #toolsbar .fpop button { width: auto; flex-direction: row; justify-content: center; padding: 4px; }
     #toolsbar .fpop .hint { color: #7b8794; font-size: 10.5px; }
     #toolsbar .vpop .row { display: flex; align-items: center; gap: 4px; }
+    #toolsbar .cadpop .pose { display: grid; grid-template-columns: repeat(3, 1fr) 0.8fr; gap: 3px; margin: 0 0 4px 0; }
+    #toolsbar .cadpop .pose input { width: 100%; box-sizing: border-box; background: #0a0c0f; color: inherit; border: 1px solid #2b3540; border-radius: 4px; padding: 2px 3px; font: 11px ui-monospace, monospace; }
     #toolsbar .vpop .row .n { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #toolsbar .vpop button { width: auto; flex-direction: row; padding: 3px 6px; }
     #toolsbar .vpop .hint { color: #7b8794; font-size: 10.5px; }`;
@@ -2446,6 +2451,40 @@ function refreshCopyPanel(force = false) {
   placePop(cppop, 'dup');
 }
 
+// ---- Remove / Keep only (the selection) ----
+/** Registered parts in the selection (not the containers for shapes / copies). */
+const selParts = () => gSel.objs.filter((o) => o !== built.root && o !== shapesRoot && o !== copiesRoot && built.registry.get(idOfObj(o)) === o);
+async function removeSelection() {
+  const ids = [...new Set(selParts().map(idOfObj))];
+  if (!ids.length) return;
+  tree.select(undefined, false);
+  await setRemoved(ids, true);
+  toast(`Removed ${ids.length} part${ids.length === 1 ? '' : 's'} – Restore under Removed, or ⌘Z`);
+}
+/** Remove everything except the selection: the fewest top-most parts not holding any of it. */
+async function keepOnly() {
+  const keep = selParts();
+  if (!keep.length) return;
+  const holds = new Set<THREE.Object3D>();                  // the kept parts and every ancestor
+  for (const o of keep) for (let p: THREE.Object3D | null = o; p; p = p.parent) holds.add(p);
+  const inside = (o: THREE.Object3D) => { for (let p: THREE.Object3D | null = o; p; p = p.parent) if (keep.includes(p)) return true; return false; };
+  const gone: string[] = [];
+  const walk = (o: THREE.Object3D) => {
+    for (const c of o.children) {
+      if (inside(c)) continue;
+      const id = c.userData.id as string | undefined;
+      const part = id && built.registry.get(id) === c;
+      if (holds.has(c) || !part) { walk(c); continue; }        // an ancestor of something kept, or an unregistered level
+      if (!isRemoved(c) && c.visible !== undefined) gone.push(id!);
+    }
+  };
+  walk(built.root);
+  if (!gone.length) { toast('Nothing else to remove'); return; }
+  await setRemoved(gone, true);
+  tree.selectObjects(keep);
+  toast(`Kept ${keep.length} – removed ${gone.length} other part${gone.length === 1 ? '' : 's'} (⌘Z undoes it)`);
+}
+
 // ---- Align: move the selection so its box lines up with another part's (start pose) ----
 type AlignRule = '' | 'min' | 'centre' | 'max' | 'on' | 'under';
 const align = { target: '', rules: { x: 'centre', y: 'on', z: 'centre' } as Record<'x' | 'y' | 'z', AlignRule>, gap: 0 };
@@ -2524,6 +2563,7 @@ async function showAll() {
 function updateTools() {
   const { count, allHidden } = tree.selectionInfo();
   toolbar.querySelector<HTMLButtonElement>('[data-t=dup]')!.disabled = !count;
+  toolbar.querySelector<HTMLButtonElement>('[data-t=remove]')!.disabled = toolbar.querySelector<HTMLButtonElement>('[data-t=keeponly]')!.disabled = !gSel.objs.length;
   const blank = toolbar.querySelector<HTMLButtonElement>('[data-t=blank]')!, group = toolbar.querySelector<HTMLButtonElement>('[data-t=group]')!;
   blank.disabled = group.disabled = toolbar.querySelector<HTMLButtonElement>('[data-t=others]')!.disabled = !count;
   blank.querySelector('.l')!.textContent = allHidden ? 'Unblank' : 'Blank';
@@ -2545,6 +2585,8 @@ toolbar.querySelector<HTMLElement>('[data-t=align]')!.onclick = () => {
   toolbar.querySelector('[data-t=align]')!.classList.toggle('on', !alpop.hidden);
   refreshAlignPanel();
 };
+toolbar.querySelector<HTMLElement>('[data-t=remove]')!.onclick = () => void removeSelection();
+toolbar.querySelector<HTMLElement>('[data-t=keeponly]')!.onclick = () => void keepOnly();
 toolbar.querySelector<HTMLElement>('[data-t=dup]')!.onclick = () => void duplicateSelection();
 toolbar.querySelector<HTMLElement>('[data-t=shape]')!.onclick = () => {
   shpop.hidden = !shpop.hidden;
@@ -2643,7 +2685,8 @@ async function renderCad() {
   const mb = (n: number) => n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${Math.max(1, Math.round(n / 1e6))} MB`;
   cadpop.innerHTML = `<b>CAD models in this animation</b>
     ${list.length ? list.map((m, i) => `<div class="row"><span class="n" title="${escH(m.file)}">${escH(m.id)} <span class="hint">${escH(m.file)}</span></span>
-      <button data-c="del" data-i="${i}" title="Remove from this animation (the file stays in the vault)">✕</button></div>`).join('') : '<div class="hint">None yet.</div>'}
+      <button data-c="del" data-i="${i}" title="Remove from this animation (the file stays in the vault)">✕</button></div>
+      <div class="pose" data-i="${i}" title="Where this model sits: position x, y, z (m) and a turn about the vertical axis (°)">${[0, 1, 2].map((k) => `<input type="number" step="0.1" data-k="p${k}" value="${+(m.position?.[k] ?? 0).toFixed(4)}">`).join('')}<input type="number" step="15" data-k="ry" value="${+(m.rotation_deg?.[1] ?? 0).toFixed(3)}" title="Turn about Y (°)"></div>`).join('') : '<div class="hint">None yet.</div>'}
     <b style="margin-top:6px">Add</b>
     <div class="vault"><div class="hint">Loading the vault's CAD folder…</div></div>
     <button data-c="up" ${cadBusy ? 'disabled' : ''}>⤒ Upload a .glb from disk…</button>
@@ -2654,6 +2697,17 @@ async function renderCad() {
     if (!confirm(`Remove ${m.id} (${m.file}) from this animation?\nScript lines and groups that use its parts will show errors. The file stays in the vault.`)) return;
     setCad(list.filter((_, j) => j !== +b.dataset.i!));
   }));
+  cadpop.querySelectorAll<HTMLElement>('.pose').forEach((row) => {
+    let timer: number | undefined;
+    row.querySelectorAll<HTMLInputElement>('input').forEach((inp) => (inp.oninput = () => {
+      clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const v = (k: string) => { const x = parseFloat(row.querySelector<HTMLInputElement>(`[data-k=${k}]`)!.value); return Number.isFinite(x) ? x : 0; };
+        void setCadPose(+row.dataset.i!, [v('p0'), v('p1'), v('p2')], v('ry'));
+      }, 300);
+    }));
+  });
+  cadpop.onkeydown = (e) => e.stopPropagation();
   cadpop.querySelector<HTMLElement>('[data-c=up]')!.onclick = () => {
     const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.glb,model/gltf-binary';
     inp.onchange = () => { const f = inp.files?.[0]; if (f) void uploadCad(f); };
@@ -2669,6 +2723,34 @@ async function renderCad() {
     box.querySelectorAll<HTMLElement>('[data-f]').forEach((b) => (b.onclick = () => addCad(b.dataset.f!)));
   } catch (e) { box.innerHTML = `<div class="hint">Couldn't list the CAD folder: ${escH(String(e))}</div>`; }
   placePop(cadpop, 'cad');
+}
+/** Move / turn a loaded CAD model in place (saved in the scene; no reload). Copies of its parts follow. */
+async function setCadPose(i: number, position: number[], turnY: number) {
+  const list = clone(cadList()), m = list[i];
+  if (!m) return;
+  const rot = [...(m.rotation_deg ?? [0, 0, 0])];
+  const turned = Math.abs((rot[1] ?? 0) - turnY) > 1e-9;
+  rot[1] = turnY;
+  m.position = position.map((x) => +x.toFixed(4));
+  m.rotation_deg = rot.some((x) => x) ? rot : undefined;
+  if (!m.rotation_deg) delete m.rotation_deg;
+  const wrapper = built.registry.get(m.id);
+  const t = player.time, playing = player.playing;
+  player.playing = false; player.seek(0);
+  if (wrapper) {
+    // locked CAD skips matrix updates: turn them on for the change (reconcile locks it again)
+    wrapper.traverse((x) => { x.matrixAutoUpdate = true; x.matrixWorldAutoUpdate = true; });
+    if (turned) poseModel(wrapper, m); else wrapper.position.fromArray(m.position);
+    for (const o of [wrapper, ...wrapper.children]) { o.userData.homeP = o.position.toArray(); o.userData.homeQ = o.quaternion.toArray(); }
+    wrapper.updateMatrixWorld(true);
+  }
+  cfg.cad_models = list;
+  edit({ scene: { ...clone(model.scene ?? {}), cad_models: list } });
+  applyPlacements();
+  if (wrapper) await reconcile(wrapper);
+  if (copies.length) await syncCopies(false);
+  buildTimeline({ atStart: true });
+  player.seek(Math.min(t, player.duration)); player.playing = playing;
 }
 async function uploadCad(f: File) {
   if (!io.files) return;

@@ -59,6 +59,8 @@ In the 3D view, **Shift-drag** a box to select parts: dragged left → right (bl
 - **Keep uncut** (K): cuts leave the selection whole.
 - **Select by name** (F): every part whose name contains the text.
 - **Set origin**: click a cylindrical face (the axis), then a flat face (the height); the model moves so that point is 0,0,0.
+- **Remove** (✕) / **Keep only** (◉): take the selected parts out of this animation, or every *other* part (the fewest top-level pieces not holding the selection). Removed parts are listed under **Removed** in the tree with Restore; ⌘Z undoes either in one step. Handy after Shift-drag box selection when trimming an imported model.
+- **CAD** (📦): each loaded model has a position (x, y, z m) and a turn about the vertical (°) – edit them to line several models up; changes apply at once and are saved.
 - **Align** (⊟): move the selection so its box lines up with another part's – type the target or **⌖ Pick** it (click it in the view or tree), then per axis min / centre / max, *on* (sits on its far side) or *under*, with a gap; presets Sit on top, Centre on, Under, Beside +x. It sets the start pose (shapes and copies get new numbers, other parts a placement); ⌘Z undoes it.
 - **Gizmo snap** (Controls): move step (off, 0.01 … 1 m) and rotate step (off, 1 … 90°, 15° by default).
 - **Shape**: add a box, cylinder, tube, sphere, cone, plane or hex prism, with sizes, position, colour and a linear or circular array. Select a shape to edit it. In scripts use its name (`pipe`); array copies are `bolt-0`, `bolt-1`… (`bolt-*`).

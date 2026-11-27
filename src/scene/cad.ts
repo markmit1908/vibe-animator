@@ -47,6 +47,24 @@ const UP: Record<string, THREE.Euler> = {
   '-y': new THREE.Euler(-Math.PI / 2, 0, 0),
 };
 
+/** Orient and place a loaded model (wrapper → "model" inner): its up axis, extra rotation, grounding, position. */
+export function poseModel(wrapper: THREE.Object3D, m: CadModel) {
+  const inner = wrapper.children.find((c) => c.name === 'model') ?? wrapper.children[0];
+  inner.position.set(0, 0, 0);
+  inner.rotation.copy(UP[m.up ?? 'z']);
+  if (m.rotation_deg) inner.quaternion.premultiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(...(m.rotation_deg.map(THREE.MathUtils.degToRad) as [number, number, number]))));
+  wrapper.position.set(0, 0, 0); wrapper.quaternion.identity();
+  wrapper.updateMatrixWorld(true);
+  if (m.ground) {
+    // the base on y = 0, centred in x/z (in the wrapper's frame)
+    const box = new THREE.Box3().setFromObject(inner);
+    const c = box.getCenter(new THREE.Vector3());
+    inner.position.set(-c.x, -box.min.y, -c.z);
+  }
+  if (m.position) wrapper.position.fromArray(m.position);
+  wrapper.updateMatrixWorld(true);
+}
+
 /**
  * Loads CAD models and manages geometry suppression.
  * Every node is registered as "<model id>/<child>/…" in the scene registry.
@@ -74,20 +92,9 @@ export class CadManager {
       wrapper.userData.cad = true;
       const inner = gltf.scene;
       inner.name = 'model';
-      inner.rotation.copy(UP[m.up ?? 'z']);
-      if (m.rotation_deg) {
-        const extra = new THREE.Quaternion().setFromEuler(new THREE.Euler(...(m.rotation_deg.map(THREE.MathUtils.degToRad) as [number, number, number])));
-        inner.quaternion.premultiply(extra);
-      }
       if (m.scale) inner.scale.setScalar(m.scale);
       wrapper.add(inner);
-      if (m.ground) {
-        inner.updateMatrixWorld(true);
-        const box = new THREE.Box3().setFromObject(inner);
-        const c = box.getCenter(new THREE.Vector3());
-        inner.position.set(-c.x, -box.min.y, -c.z);
-      }
-      if (m.position) wrapper.position.fromArray(m.position);
+      poseModel(wrapper, m);
 
       this.restyle(inner, m);
       this.register(wrapper, m.id);
