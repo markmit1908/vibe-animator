@@ -9,7 +9,9 @@ import type { Edge3 } from './edges';
 
 export { collectMeshes, hiddenLines, toSvg };
 export interface DrawingOptions extends HlrOptions, SheetOptions { /** orthographic along the camera's view direction (default true) */ ortho?: boolean; exclude?: THREE.Object3D[]; only?: THREE.Object3D[];
-  /** section hatch spacing on the paper, mm (0 = no hatching; default 2.5) */ hatch?: number }
+  /** section hatch spacing on the paper, mm (0 = no hatching; default 2.5) */ hatch?: number;
+  /** part fills under the lines: the part colours, or tinted halfway to white */ fill?: 'off' | 'tint' | 'colour';
+  /** fill tracing resolution on the paper, mm per pixel (default 0.25) */ fillMm?: number }
 
 /** An orthographic camera looking the same way as `cam`, framing every mesh. */
 export function orthoFrom(cam: THREE.Camera, soups: MeshSoup[]): THREE.OrthographicCamera {
@@ -51,11 +53,24 @@ export function makeDrawing(root: THREE.Object3D, camera: THREE.Camera, opt: Dra
     for (const sec of s.sections) {
       const cap = capTriangles(sec);
       if (!cap.idx.length) continue;
-      soups.push({ ...cap, part: s.part, occluder: true });
+      soups.push({ ...cap, part: s.part, color: s.color, occluder: true });
       if (hatchMm > 0 && k > 0) extra.push(...hatchEdges(sec, cam, hatchMm / k, parts.get(s.part)! % 2 ? 135 : 45, s.part, soups.length - 1));
     }
   }
-  const r = hiddenLines(soups, cam, { ...opt, extra });
+  let fill: { palette: string[]; meshColor: Int32Array; res: number } | undefined;
+  if (opt.fill && opt.fill !== 'off' && k > 0) {
+    const o = cam as THREE.OrthographicCamera;
+    const palette: string[] = [], at = new Map<string, number>();
+    const tint = (hex: string) => opt.fill !== 'tint' ? hex.toLowerCase() : '#' + [1, 3, 5].map((i) => Math.round((parseInt(hex.slice(i, i + 2), 16) + 255) / 2).toString(16).padStart(2, '0')).join(''); // halfway to white, in sRGB
+    const meshColor = Int32Array.from(soups, (s) => {
+      if (!s.color) return -1;
+      const c = tint(s.color);
+      if (!at.has(c)) { at.set(c, palette.length); palette.push(c); }
+      return at.get(c)!;
+    });
+    fill = { palette, meshColor, res: Math.max(o.right - o.left, o.top - o.bottom) / o.zoom * k / (opt.fillMm ?? 0.25) };
+  }
+  const r = hiddenLines(soups, cam, { ...opt, extra, fillBuffer: fill });
   const t1 = performance.now();
   const out = toSvg(r, opt);
   const stats = { msCollect: tc, ...r.stats, msSvg: performance.now() - t1, ...Object.fromEntries(Object.entries(out.stats).map(([k, v]) => [`lines.${k}`, v])), bytes: out.svg.length };

@@ -11,6 +11,8 @@ export interface MeshSoup {
   part: string;
   /** the section faces where a cut opened this mesh (for caps and hatching) */
   sections?: Section[];
+  /** the material's colour (#rrggbb), for fills */
+  color?: string;
   /** an occluder only (section caps): hides things, draws no edges of its own */
   occluder?: boolean;
 }
@@ -104,6 +106,8 @@ export function collectMeshes(root: THREE.Object3D, opt: CollectOptions | THREE.
     const mesh = o as THREE.Mesh;
     if (mesh.isMesh && !(o as any).isSprite && mesh.geometry?.attributes.position && !seeThrough(mesh.material) && shown(o) && (!only || under(o))) {
       const cut = o0.clip === false ? null : clipOf(mesh);
+      const m0 = (mesh.userData.origMat ?? (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material)) as THREE.MeshBasicMaterial;
+      const color = m0?.color ? '#' + m0.color.getHexString() : undefined;
       const g = mesh.geometry, src = g.attributes.position as THREE.BufferAttribute;
       const n = src.count;
       const idx = g.index ? new Uint32Array(g.index.array) : Uint32Array.from({ length: n - (n % 3) }, (_, i) => i);
@@ -117,9 +121,9 @@ export function collectMeshes(root: THREE.Object3D, opt: CollectOptions | THREE.
           const c = clipSoup(pos, idx, cut.planes, cut.intersection);
           if (!c.idx.length) continue;
           const sections = cut.intersection && (c.idx.length !== idx.length || c.pos.length !== pos.length) ? sectionLoops(pos, idx, cut.planes, MESH_TOL * 10) : [];
-          out.push({ ...c, part: partOf(o), ...(sections.length ? { sections } : {}) });
+          out.push({ ...c, part: partOf(o), color, ...(sections.length ? { sections } : {}) });
         }
-        else out.push({ pos, idx, part: partOf(o) });
+        else out.push({ pos, idx, part: partOf(o), color });
       }
     }
     for (const c of o.children) walk(c);

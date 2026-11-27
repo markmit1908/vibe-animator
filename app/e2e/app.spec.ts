@@ -1354,6 +1354,18 @@ test("drawing sheets: the .draw script in the Illustration tab – view, hide, c
   expect(e.stats["lines.hatch"]).toBeLessThan(125);
   expect(e.svg).toContain('id="titleblock"');
   for (const t of ["Section A-A", "D-042", ">B<", "1:10", "A4"]) expect(e.svg).toContain(t);
+  // fills: the part colour (or tinted) under the lines, traced at 0.25 mm
+  await page.evaluate(() => { const s = (window as any).__studio; s.built.registry.get("front").material.color.set("#ff0000");
+    s.drawPanel.setText(s.drawPanel.text + '\nsheet f\n  view front\n  scale 1:20\n  fill colour\nsheet g\n  view front\n  fill tint\n'); });
+  const fl = await run("f");
+  expect(fl.errors).toEqual([]);
+  const red = fl.svg.match(/<path fill="#ff0000" d="([^"]+)"/)![1];
+  const nums = [...red.matchAll(/[ML](-?[\d.]+) (-?[\d.]+)/g)].map((x) => [Number(x[1]), Number(x[2])]);
+  const w = Math.max(...nums.map((p) => p[0])) - Math.min(...nums.map((p) => p[0])), h = Math.max(...nums.map((p) => p[1])) - Math.min(...nums.map((p) => p[1]));
+  expect(Math.abs(w - 100)).toBeLessThan(0.6); expect(Math.abs(h - 100)).toBeLessThan(0.6);   // the 2 m box at 1:20
+  expect(fl.svg).not.toContain('fill="#ffffff" d=');                          // the white box behind is hidden
+  expect(fl.svg.indexOf('id="fill"')).toBeLessThan(fl.svg.indexOf('id="outline"')); // under the lines
+  expect((await run("g")).svg).toContain('fill="#ff8080"');
   // the studio's own cut is back afterwards (the script has none)
   expect(await page.evaluate(() => (window as any).__studio.built.clipPlanes[0].constant)).toBeGreaterThan(1e8);
   // unknown parts are errors on the sheet's line

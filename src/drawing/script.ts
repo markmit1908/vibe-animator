@@ -34,6 +34,7 @@ export interface SheetSpec {
   crease?: number;
   /** section hatch spacing, paper mm; 0 = off */
   hatch?: number;
+  fill?: 'off' | 'tint' | 'colour';
   number?: string;
   rev?: string;
   drawn?: string;
@@ -49,14 +50,14 @@ export interface SheetSpec {
 export interface DrawError { line: number; message: string }
 export interface DrawScript { defaults: SheetSpec; sheets: SheetSpec[]; errors: DrawError[] }
 
-export const DRAW_KEYWORDS = ['sheet', 'paper', 'scale', 'hidden', 'crease', 'hatch', 'title', 'number', 'rev', 'drawn', 'project', 'titleblock', 'view', 'snapshot', 'at', 'cut', 'hide', 'only'];
+export const DRAW_KEYWORDS = ['sheet', 'paper', 'scale', 'hidden', 'crease', 'hatch', 'fill', 'title', 'number', 'rev', 'drawn', 'project', 'titleblock', 'view', 'snapshot', 'at', 'cut', 'hide', 'only'];
 export const PAPERS = ['A0', 'A1', 'A2', 'A3', 'A4'];
 const SIDES = ['x', '-x', 'y', '-y', 'z', '-z'];
 
 /** Settings a sheet takes from the defaults when it doesn't set them. */
 export function withDefaults(s: SheetSpec, d: SheetSpec): SheetSpec {
   const out = { ...s };
-  for (const k of ['paper', 'portrait', 'scale', 'hidden', 'crease', 'hatch', 'number', 'rev', 'drawn', 'project', 'titleblock', 'view', 'snapshot', 'at', 'cut'] as const) if (out[k] === undefined) (out as any)[k] = d[k];
+  for (const k of ['paper', 'portrait', 'scale', 'hidden', 'crease', 'hatch', 'fill', 'number', 'rev', 'drawn', 'project', 'titleblock', 'view', 'snapshot', 'at', 'cut'] as const) if (out[k] === undefined) (out as any)[k] = d[k];
   out.hide = [...d.hide, ...s.hide];
   out.only = s.only.length ? s.only : d.only;
   return out;
@@ -97,6 +98,9 @@ export function parseDraw(text: string): DrawScript {
       case 'titleblock':
         if (rest !== 'on' && rest !== 'off') { err('titleblock: on or off'); return; }
         cur.titleblock = rest === 'on'; return;
+      case 'fill':
+        if (rest !== 'off' && rest !== 'tint' && rest !== 'colour' && rest !== 'color') { err('fill: off, tint (part colours, lightened) or colour'); return; }
+        cur.fill = rest === 'color' ? 'colour' : rest as 'off' | 'tint' | 'colour'; return;
       case 'hatch': {
         if (rest === 'off') { cur.hatch = 0; return; }
         const n = Number(rest.replace(/mm$/, ''));

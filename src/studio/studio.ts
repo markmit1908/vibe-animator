@@ -1277,7 +1277,7 @@ async function runSheet(name: string): Promise<{ svg: string; stats: Record<stri
     const hide = objs(spec.hide, 'hide'), only = spec.only.length ? objs(spec.only, 'only') : undefined;
     const r = makeDrawing(scene3, cam, {
       exclude: [gizmo.getHelper(), ...hide], only, title: spec.title ?? spec.name,
-      paper: (spec.paper ?? 'A3') as DrawingOptions['paper'], portrait: spec.portrait, scale: spec.scale || undefined, hidden: spec.hidden, creaseDeg: spec.crease, hatch: spec.hatch,
+      paper: (spec.paper ?? 'A3') as DrawingOptions['paper'], portrait: spec.portrait, scale: spec.scale || undefined, hidden: spec.hidden, creaseDeg: spec.crease, hatch: spec.hatch, fill: spec.fill,
       titleBlock: spec.titleblock === false ? false : { title: spec.title ?? spec.name, sheet: spec.name, number: spec.number, rev: spec.rev, drawn: spec.drawn, project: spec.project ?? model.name, date: new Date().toISOString().slice(0, 10) },
     });
     if (spec.scale && !r.scale) err('scale: only orthographic views have a scale');

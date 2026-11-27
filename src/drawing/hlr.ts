@@ -8,6 +8,7 @@ import { MeshBVH } from 'three-mesh-bvh';
 import type { MeshSoup } from './collect';
 import { featureEdges, type Edge3, type EdgeKind } from './edges';
 import { rasterise, type ZBuffer } from './zbuffer';
+import { makeFills, type Fill } from './fills';
 
 export interface Seg2 { a: [number, number]; b: [number, number]; kind: EdgeKind; hidden: boolean; part: string }
 export interface HlrOptions {
@@ -17,6 +18,8 @@ export interface HlrOptions {
   cullRes?: number;
   /** more edges to draw (section hatching); they hide nothing and split nothing */
   extra?: Edge3[];
+  /** part fills (orthographic): a colour per mesh (index into palette, -1 = none) and the buffer's long side in pixels */
+  fillBuffer?: { palette: string[]; meshColor: Int32Array; res: number };
 }
 export interface HlrResult {
   segs: Seg2[];
@@ -24,6 +27,7 @@ export interface HlrResult {
   metric: boolean;
   /** frame of the camera in those units: [xmin, ymin, xmax, ymax] */
   frame: [number, number, number, number];
+  fills?: Fill[];
   stats: Record<string, number>;
 }
 
@@ -57,7 +61,7 @@ export function hiddenLines(soups: MeshSoup[], camera: THREE.Camera, opt: HlrOpt
   const triMesh = new Int32Array(tris);
   { let po = 0, io = 0; soups.forEach((s, i) => { P.set(s.pos, po); triMesh.fill(i, io / 3, io / 3 + s.idx.length / 3); for (let k = 0; k < s.idx.length; k++) I[io++] = s.idx[k] + po / 3; po += s.pos.length; }); }
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(P, 3)); geo.setIndex(new THREE.BufferAttribute(I, 1));
+  geo.setAttribute('position', new THREE.BufferAttribute(P, 3)); geo.setIndex(new THREE.BufferAttribute(I.slice(), 1)); // a copy: MeshBVH reorders the index in place (I and triMesh must stay in step)
   const bvh = tris ? new MeshBVH(geo, { maxLeafTris: 8 }) : null;
   const t2 = performance.now(); stats.msBvh = t2 - t1;
 
@@ -69,15 +73,29 @@ export function hiddenLines(soups: MeshSoup[], camera: THREE.Camera, opt: HlrOpt
   // 2b. depth pre-pass (orthographic): NDC z and the nearest mesh per pixel
   let zb: ZBuffer | null = null, marginZ = 0;
   const cullRes = opt.cullRes ?? 4096;
-  if (ortho && cullRes > 0 && tris) {
-    const o = camera as THREE.OrthographicCamera;
-    const fw = (o.right - o.left) / o.zoom, fh = (o.top - o.bottom) / o.zoom;
-    const W = fw >= fh ? cullRes : Math.max(16, Math.round(cullRes * fw / fh)), H = fh > fw ? cullRes : Math.max(16, Math.round(cullRes * fh / fw));
-    const ndc = new Float32Array(P.length);
+  let fills: Fill[] | undefined;
+  const dims = (res: number, fw: number, fh: number) => [fw >= fh ? res : Math.max(16, Math.round(res * fw / fh)), fh > fw ? res : Math.max(16, Math.round(res * fh / fw))];
+  let ndc: Float32Array | null = null;
+  if (ortho && tris && (cullRes > 0 || opt.fillBuffer)) {
+    ndc = new Float32Array(P.length);
     for (let i = 0; i < P.length; i += 3) {
       const x = P[i], y = P[i + 1], z = P[i + 2];
       ndc[i] = VP[0] * x + VP[4] * y + VP[8] * z + VP[12]; ndc[i + 1] = VP[1] * x + VP[5] * y + VP[9] * z + VP[13]; ndc[i + 2] = VP[2] * x + VP[6] * y + VP[10] * z + VP[14];
     }
+  }
+  if (ndc && opt.fillBuffer) {
+    const o = camera as THREE.OrthographicCamera;
+    const fw = (o.right - o.left) / o.zoom, fh = (o.top - o.bottom) / o.zoom;
+    const [W, H] = dims(Math.min(8192, Math.max(64, Math.round(opt.fillBuffer.res))), fw, fh);
+    const triColor = new Int32Array(tris);
+    for (let t = 0; t < tris; t++) triColor[t] = opt.fillBuffer.meshColor[triMesh[t]] ?? -1;
+        fills = makeFills(ndc, I, triColor, opt.fillBuffer.palette, W, H, fw / 2, fh / 2);
+    stats.msFill = performance.now() - t2;
+  }
+  if (ndc && cullRes > 0) {
+    const o = camera as THREE.OrthographicCamera;
+    const fw = (o.right - o.left) / o.zoom, fh = (o.top - o.bottom) / o.zoom;
+    const [W, H] = dims(cullRes, fw, fh);
     zb = rasterise(ndc, I, triMesh, W, H);
     // a surface counts as in front only if it is nearer by several pixels' worth of depth (slopes, touching parts)
     marginZ = (6 * Math.max(fw / W, fh / H) + rayEps * 4) * 2 / (o.far - o.near);
@@ -199,5 +217,5 @@ export function hiddenLines(soups: MeshSoup[], camera: THREE.Camera, opt: HlrOpt
   for (const s of segs) { s.a = [s.a[0] * sx, s.a[1] * sy]; s.b = [s.b[0] * sx, s.b[1] * sy]; }
   geo.dispose();
   stats.msTotal = performance.now() - t0;
-  return { segs, metric, frame: [-sx, -sy, sx, sy], stats };
+  return { segs, metric, frame: [-sx, -sy, sx, sy], fills, stats };
 }

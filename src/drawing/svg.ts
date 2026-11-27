@@ -133,11 +133,15 @@ export function toSvg(r: HlrResult, opt: SheetOptions = {}): { svg: string; scal
     const dash = L.dash ? ` stroke-dasharray="${L.dash.join(' ')}"` : '';
     return `<g id="${L.name}" inkscape:groupmode="layer" inkscape:label="${L.name}" fill="none" stroke="#000" stroke-width="${L.weight}" stroke-linecap="round" stroke-linejoin="round"${dash}>${d ? `<path d="${d}"/>` : ''}</g>`;
   });
+  const fillSvg = r.fills?.length ? `<g id="fill" inkscape:groupmode="layer" inkscape:label="fill" stroke="none" fill-rule="evenodd">${r.fills.map((fl) =>
+    `<path fill="${fl.color}" d="${fl.loops.map((l) => 'M' + l.map((p) => `${f(X(p[0]))} ${f(Y(p[1]))}`).join('L') + 'Z').join('')}"/>`).join('')}</g>` : '';
+  if (r.fills) stats.fills = r.fills.reduce((n, fl) => n + fl.loops.length, 0);
   const border = opt.border !== false ? `<g id="border" inkscape:groupmode="layer" inkscape:label="border" fill="none" stroke="#000" stroke-width="0.7"><rect x="${m / 2}" y="${m / 2}" width="${W - m}" height="${H - m}"/></g>` : '';
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="${W}mm" height="${H}mm" viewBox="0 0 ${W} ${H}">
 <title>${esc(opt.title ?? 'Drawing')}</title>
 <rect id="paper" width="${W}" height="${H}" fill="#fff"/>
+${fillSvg}
 ${groups.join('\n')}
 ${border}
 ${tb ? titleBlockSvg(W, H, m, opt.titleBlock || {}, scale ? `1:${scale}` : 'NTS', typeof opt.paper === 'object' ? `${W}×${H}` : opt.paper ?? 'A3') : ''}

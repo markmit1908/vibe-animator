@@ -199,6 +199,7 @@ scale 1:50                # or: scale fit
 hidden off                # dashed hidden lines (busy on big assemblies: use with `only`)
 crease 30                 # crease angle, degrees
 hatch 2.5                 # section hatch spacing in mm, or: hatch off
+fill tint                 # part fills under the lines: off | tint (lightened) | colour
 drawn "MM"                # title block: title, number, rev, drawn, project (default: the animation's name)
 
 sheet core-section "Core – half section"
@@ -212,7 +213,7 @@ sheet core-section "Core – half section"
   rev A
 ```
 
-Cut faces are capped (what's inside a cut part stays hidden), outlined and hatched at 45° on the paper (135° for every other part). The title block (bottom right) fills in the scale (NTS when fitted), paper size and date. A big assembly takes a few seconds per sheet
+Cut faces are capped (what's inside a cut part stays hidden), outlined and hatched at 45° on the paper (135° for every other part). Fills (layer `fill`, under the lines) use the parts' base colours; their edges are traced at 0.25 mm on the paper and sit under the exact lines. The title block (bottom right) fills in the scale (NTS when fitted), paper size and date. A big assembly takes a few seconds per sheet
 (the plant model: 8M triangles, 6–8 s).
 
 ## AI assist (AI Assist tab)
