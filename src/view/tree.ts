@@ -161,6 +161,42 @@ export class TreePanel {
 
   // ---------- model ----------
   rebuild() {
+    // keep what was open, the selection and the scroll position (rows are rebuilt: match them by a stable key)
+    const prev = this.roots.length ? this.viewState() : undefined;
+    this.open.clear();                 // the old rows go; buildRoots opens its defaults, restoreView the rest
+    this.buildRoots();
+    if (prev) this.restoreView(prev);
+    this.refresh();
+    if (prev) this.scroll.scrollTop = prev.scroll;
+  }
+
+  /** A row's stable key: its path of ids / groups / folders / labels from the root. */
+  private keyOf(n: Node): string {
+    const own = n.group !== undefined ? `@${n.group}` : n.folder !== undefined ? `f:${n.folder}` : n.removedRow ? `r:${n.id}` : n.id ? `i:${n.id}` : `l:${n.label}`;
+    return n.parent ? `${this.keyOf(n.parent)}>${own}` : own;
+  }
+  private viewState() {
+    const open = new Set<string>(), closed = new Set<string>();
+    const walk = (n: Node) => {
+      if (this.open.has(n)) { open.add(this.keyOf(n)); this.kids(n).forEach(walk); } else closed.add(this.keyOf(n));
+    };
+    this.roots.forEach(walk);
+    return { open, closed, sel: this.sel.map((n) => this.keyOf(n)), scroll: this.scroll.scrollTop };
+  }
+  private restoreView(v: { open: Set<string>; closed: Set<string>; sel: string[] }) {
+    const sel = new Map<string, Node>();
+    const want = new Set(v.sel);
+    const walk = (n: Node) => {
+      const k = this.keyOf(n);
+      if (want.has(k)) sel.set(k, n);
+      if (v.open.has(k)) this.open.add(n); else if (v.closed.has(k)) this.open.delete(n);
+      if (this.open.has(n)) this.kids(n).forEach(walk);
+    };
+    this.roots.forEach(walk);
+    if (this.sel.length) this.sel = v.sel.map((k) => sel.get(k)).filter((n): n is Node => !!n);
+  }
+
+  private buildRoots() {
     const reg = this.scene.registry;
     const mk = (label: string, depth: number, extra: Partial<Node> = {}): Node => ({ label, depth, ...extra });
     // generated core: blocks grouped by column (virtual nodes)
@@ -248,7 +284,6 @@ export class TreePanel {
       rn.virtualKids = removed.map((id) => ({ ...this.objNode(reg.get(id)!, 1, rn), removedRow: true, label: this.hooks.labelOf?.(id) ?? id }));
       this.roots.push(rn);
     }
-    this.refresh();
   }
 
   /** Node for a CAD object. Chains of single-child levels are compacted into one row

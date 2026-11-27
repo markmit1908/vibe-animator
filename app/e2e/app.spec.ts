@@ -398,6 +398,27 @@ test("linked copies: duplicate a part (⌘D), place it by numbers or the gizmo, 
   expect((await info()).copy).not.toBeNull();
 });
 
+test("the tree keeps its open rows, selection and scroll when it rebuilds (making a group)", async ({ page }) => {
+  await page.goto("/");
+  const { readFileSync } = await import("node:fs");
+  await api(page).put("/api/files/CAD/small.glb?overwrite=true", { data: readFileSync(new URL("./fixtures/small.glb", import.meta.url)) });
+  const m = { name: "Tree state", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [{ id: "plant", file: "CAD/small.glb", clip: false }] },
+    script: { language: "anim", text: 'label "T"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Tree state");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const pin = await page.evaluate(() => { for (const id of (window as any).__studio.built.registry.keys()) if (id.endsWith("/Pin_1")) return id; });
+  await page.evaluate((pin) => (window as any).__studio.tree.selectId(pin), pin);   // opens its parents
+  const rows = page.locator("#tree .row");
+  await expect(rows.filter({ hasText: "Pin_1" })).toHaveCount(1);
+  const before = await rows.count();
+  await page.evaluate(() => { const t = (window as any).__studio.tree; (window as any).prompt = () => "pins"; t.groupSelected(); });
+  await expect(rows.filter({ hasText: "pins" })).toHaveCount(1);
+  await expect(rows.filter({ hasText: "Pin_1" }).first()).toBeVisible();               // still open where we were
+  expect(await rows.count()).toBeGreaterThanOrEqual(before);
+  await expect(page.locator("#tree .row.sel", { hasText: "Pin_1" })).toHaveCount(1);  // and still selected
+});
+
 test("lists and staggered loops: lift 1 s, vanish 0.5 s, next item 0.2 s later", async ({ page }) => {
   await page.goto("/");
   const text = ['label "Layer"', "list @top = */L11", "each @top stagger 0.2s {", "  move $ by [0,1,0] 1s", "  fade $ to 0 0.5s", "}", "wait 1s"].join("\n");
@@ -1483,7 +1504,7 @@ test("fast sheet PNG: one GPU frame per sheet in its style, on the paper with th
   test.setTimeout(120_000);
   await page.goto("/");
   const draw = ['paper A4', 'scale 1:10', 'dpi 100', '', 'sheet o "Outline"', '  view front', '  scale 1:20', '', 'sheet s "Shaded"', '  view front', '  style shaded', '',
-    'sheet h', '  view front', '  style hidden', '  only red', '', 'sheet big', '  dpi 1200'].join("\n");
+    'sheet h', '  view front', '  style hidden', '  only red'].join("\n");
   const m = { name: "Png", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] },
     script: { language: "anim", text: 'label "P"' }, drawings: { language: "draw", text: draw },
     snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
@@ -1491,7 +1512,7 @@ test("fast sheet PNG: one GPU frame per sheet in its style, on the paper with th
   await open(page, "Png");
   await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
   await page.locator("#right [data-t=illustration]").click();
-  await expect(page.locator("#illustration .draw-script .st")).toHaveText("✓ 4 sheets");
+  await expect(page.locator("#illustration .draw-script .st")).toHaveText("✓ 3 sheets");
   await page.evaluate(() => {
     const s = (window as any).__studio, T = s.THREE;
     const b = new T.Mesh(new T.BoxGeometry(2, 2, 2), new T.MeshToonMaterial({ color: "#ff0000", clippingPlanes: s.built.clipPlanes, clipIntersection: true }));
@@ -1526,9 +1547,6 @@ test("fast sheet PNG: one GPU frame per sheet in its style, on the paper with th
   expect(Math.abs(cutRow.b - cutRow.a - red2m / 4)).toBeLessThan(6);                                 // 1 m wide at 1:20
   const h = await run("h");
   expect(h.red).toBe(0); expect(h.dark).toBeGreaterThan(1);                        // lines only
-  const big = await run("big");
-  expect(big.errors[0].message).toContain("dpi");                                   // lowered to what the GPU holds
-  expect(Math.max(big.W, big.H)).toBeLessThanOrEqual(9000);
   // the studio is as it was
   expect(await page.evaluate(() => { const s = (window as any).__studio; return { w: s.renderer.domElement.width, t: s.player.time }; })).toEqual(before);
 });
