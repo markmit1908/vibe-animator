@@ -26,7 +26,7 @@ import type { AssistHost, AssistMount } from '../assist/host';
 import { assistClient, migrateChat, runAssist, type ChatMessage } from '../assist/loop';
 import type Anthropic from '@anthropic-ai/sdk';
 import { ASSIST_SYSTEM } from '../assist/system';
-import { readTools, proposeTools, modelProposeTools, type ToolDeps, type ShapeChange, type PlacementInput, type PlacementPlan } from '../assist/tools';
+import { readTools, proposeTools, modelProposeTools, type ToolDeps, type ShapeChange, type CopyChange, type PlacementInput, type PlacementPlan } from '../assist/tools';
 import type { Proposal } from '../assist/loop';
 import { parseAnim, toActions, type ParseError } from '../script/anim';
 import { ScriptError } from '../timeline/compile';
@@ -731,7 +731,8 @@ function resolveIds(specs: string[]) {
 const tools = [
   ...readTools(toolDeps),
   ...proposeTools({ checkScript: toolDeps.checkScript, currentScript: () => scriptPanel?.text ?? '' }),
-  ...modelProposeTools({ resolve: resolveIds, groups: () => store.groups, shapes: () => shapes, planPlacement }),
+  ...modelProposeTools({ resolve: resolveIds, groups: () => store.groups, shapes: () => shapes, planPlacement, copies: () => copies,
+    sourcesCentre: (of) => { const r = copySources({ id: '', of, position: [0, 0, 0], rotation: [0, 0, 0] }); const b = atStart(() => sourcesBox(r.objs)); return { centre: b.isEmpty() ? null : b.getCenter(new THREE.Vector3()).toArray(), unknown: r.unknown }; } }),
 ];
 
 // ---------- positioning parts (assist): a rigid world transform at the start pose → placements / shape numbers ----------
@@ -803,7 +804,7 @@ function planPlacement(c: PlacementInput): PlacementPlan {
 /** Apply accepted placements: each target's local pose = D × its start world pose (shapes: their own numbers). */
 async function applyPlacementChanges(plans: PlacementPlan[]) {
   const t = player.time, playing = player.playing;
-  let shapeMoved = false;
+  let shapeMoved = false, copyMoved = false;
   const moved: THREE.Object3D[] = [];
   player.playing = false; player.seek(0); built.root.updateMatrixWorld(true);
   {
@@ -811,6 +812,7 @@ async function applyPlacementChanges(plans: PlacementPlan[]) {
       const objs = pl.ids.map((x) => built.registry.get(x)).filter(Boolean) as THREE.Object3D[];
       for (const o of objs) {
         const def = o.userData.shape !== undefined && !o.userData.array && o.parent === shapesRoot ? shapes.find((x) => x.id === o.userData.shape) : undefined;
+        const cdef = o.parent === copiesRoot ? copies.find((x) => x.id === o.userData.copy) : undefined;
         if (pl.reset) {
           delete state.placements[idOfObj(o)];
           o.position.fromArray(o.userData.homeP); o.quaternion.fromArray(o.userData.homeQ);
@@ -823,6 +825,12 @@ async function applyPlacementChanges(plans: PlacementPlan[]) {
             def.rotation = new THREE.Euler().setFromQuaternion(o.quaternion, 'XYZ').toArray().slice(0, 3).map((a) => +THREE.MathUtils.radToDeg(a as number).toFixed(3));
             delete state.placements[idOfObj(o)];
             shapeMoved = true;
+          } else if (cdef) {
+            cdef.position = o.position.toArray().map((v) => +v.toFixed(4));
+            cdef.rotation = new THREE.Euler().setFromQuaternion(o.quaternion, 'XYZ').toArray().slice(0, 3).map((a) => +THREE.MathUtils.radToDeg(a as number).toFixed(3));
+            o.userData.homeP = o.position.toArray(); o.userData.homeQ = o.quaternion.toArray();
+            delete state.placements[idOfObj(o)];
+            copyMoved = true;
           } else state.placements[idOfObj(o)] = { p: o.position.toArray(), q: o.quaternion.toArray() };
         }
         // locked parts skip matrix updates: refresh theirs now
@@ -838,6 +846,7 @@ async function applyPlacementChanges(plans: PlacementPlan[]) {
   for (const o of shapeMoved ? [...moved, shapesRoot] : moved) await reconcile(o);
   persistWorking();
   if (shapeMoved) edit({ shapes: clone(shapes) });
+  if (copyMoved) { edit({ copies: clone(copies) }); refreshCopyPanel(true); }
   buildTimeline({ atStart: true });
   player.seek(Math.min(t, player.duration)); player.playing = playing;
   tree.redraw();
@@ -857,6 +866,21 @@ async function applyShapeChanges(changes: ShapeChange[]) {
   }
   await syncShapes(true, rename);
   const made = changes.filter((c) => c.action !== 'delete').map((c) => built.registry.get(shapePartId(c.def!.id))).filter(Boolean) as THREE.Object3D[];
+  if (made.length) tree.selectObjects(made);
+}
+
+/** Apply accepted copy changes (assist): create / update (rename – the script follows) / delete, then rebuild once. */
+async function applyCopyChanges(changes: CopyChange[]) {
+  for (const c of changes) {
+    if (c.action === 'delete') { copies = copies.filter((x) => x.id !== c.name); continue; }
+    if (c.action === 'create') { if (!copies.some((x) => x.id === c.def!.id)) copies.push(clone(c.def!)); continue; }
+    const i = copies.findIndex((x) => x.id === c.name);
+    if (i < 0) continue;
+    if (c.rename) renameCopyRefs(c.name, c.rename);
+    copies[i] = clone(c.def!);
+  }
+  await syncCopies(true);
+  const made = changes.filter((c) => c.action !== 'delete').map((c) => built.registry.get(copyPartId(c.def!.id))).filter(Boolean) as THREE.Object3D[];
   if (made.length) tree.selectObjects(made);
 }
 
@@ -949,6 +973,7 @@ const assistHost: AssistHost = {
     if (p.kind === 'groups') { applyGroupChanges(p.changes as any); return; }
     if (p.kind === 'state') { await applyStateChanges(p.changes as any); return; }
     if (p.kind === 'shapes') { await applyShapeChanges(p.changes as ShapeChange[]); return; }
+    if (p.kind === 'copies') { await applyCopyChanges(p.changes as CopyChange[]); return; }
     if (p.kind === 'placement') { await applyPlacementChanges(p.changes as PlacementPlan[]); return; }
     if (p.kind !== 'script edit' || !scriptPanel) return;
     if (previewing) previewProposal(undefined);
@@ -1018,6 +1043,8 @@ const tree = new TreePanel(built, scene3, {
     updateTools();
     refreshShapePanel();
     refreshCopyPanel();
+    if (!alignPick) refreshAlignPanel();
+    if (alignPicking(spec, objs)) return;
     if (clicked && scriptPanel?.picking) scriptPanel.insertTarget(shortSpec(clicked.spec), clicked.add); // pick mode: into the script
   },
   colorOf: (spec) => colors[spec],
@@ -1199,6 +1226,18 @@ gizmo.setSize(0.8);
 scene3.add(gizmo.getHelper());
 const proxy = new THREE.Object3D(); proxy.name = '__gizmo_pivot'; scene3.add(proxy);
 gizmoReady = true;
+// snap steps for the gizmo (remembered per browser)
+const snap = { move: 'off', rotate: '15°' };
+try { Object.assign(snap, JSON.parse(localStorage.getItem('refuel.snap') ?? '{}')); } catch { /* defaults */ }
+function applySnap() {
+  gizmo.setTranslationSnap(snap.move === 'off' ? null : parseFloat(snap.move));
+  gizmo.setRotationSnap(snap.rotate === 'off' ? null : THREE.MathUtils.degToRad(parseFloat(snap.rotate)));
+  try { localStorage.setItem('refuel.snap', JSON.stringify(snap)); } catch { /* private mode */ }
+}
+applySnap();
+const snapF = gui.addFolder('Gizmo snap');
+snapF.add(snap, 'move', ['off', '0.01 m', '0.05 m', '0.1 m', '0.25 m', '0.5 m', '1 m']).name('Move step').onChange(applySnap);
+snapF.add(snap, 'rotate', ['off', '1°', '5°', '15°', '45°', '90°']).name('Rotate step').onChange(applySnap);
 
 const worldBox = (objs: THREE.Object3D[]) => { const b = new THREE.Box3(); objs.forEach((o) => b.expandByObject(o)); return b; };
 const resolveSpec = (spec: string): THREE.Object3D[] => spec.startsWith('@')
@@ -1892,6 +1931,8 @@ toolbar.innerHTML = `<button data-t="blank" title="Blank / unblank the selected 
   <div class="shpop" hidden></div>
   <button data-t="dup" title="Duplicate the selection (parts, assemblies or a group) as a linked copy: it follows the CAD, has its own position and rotation, and scripts can animate it (⌘D)"><span class="i">⧉</span><span class="l">Duplicate</span></button>
   <div class="cppop" hidden></div>
+  <button data-t="align" title="Align the selection to another part's box: sit on top, centre on, line up faces (sets the start pose)"><span class="i">⊟</span><span class="l">Align</span></button>
+  <div class="alpop" hidden></div>
   <button data-t="thumb" title="Thumbnail: this moment (time, camera, view style) becomes the card image on Home. A thumbnail step in the script takes priority."><span class="i">📌</span><span class="l">Thumbnail</span></button>
   <button data-t="views" title="Camera views: save the current view (position and target), go to one, or put it in the script (camera <name> 2s)"><span class="i">📷</span><span class="l">Views</span></button>
   <div class="vpop" hidden></div>
@@ -1918,17 +1959,17 @@ layoutToolbar();
     #toolsbar button:hover:not(:disabled) { background: #26303a; } #toolsbar button:disabled { opacity: .4; cursor: default; }
     #toolsbar button.on { border-color: #f2b705; color: #f2b705; }
     #toolsbar .vpop { position: absolute; left: calc(100% + 6px); top: 0; width: 250px; background: rgba(14,17,21,.97); border: 1px solid #2b3540; border-radius: 6px; padding: 8px; color: #d7dde4; display: flex; flex-direction: column; gap: 4px; }
-    #toolsbar .vpop[hidden], #toolsbar .fpop[hidden], #toolsbar :is(.shpop, .cppop)[hidden] { display: none; }
-    #toolsbar :is(.shpop, .cppop) { position: absolute; left: calc(100% + 6px); top: 0; width: 290px; max-height: 80vh; overflow: auto; background: rgba(14,17,21,.97); border: 1px solid #2b3540; border-radius: 6px; padding: 8px 10px; color: #d7dde4; display: flex; flex-direction: column; gap: 5px; font: 12px system-ui; }
-    #toolsbar :is(.shpop, .cppop) b { font-size: 12px; }
-    #toolsbar :is(.shpop, .cppop) .r { display: grid; grid-template-columns: 82px 1fr; align-items: center; gap: 6px; }
-    #toolsbar :is(.shpop, .cppop) .v3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
-    #toolsbar :is(.shpop, .cppop) input, #toolsbar :is(.shpop, .cppop) select { width: 100%; box-sizing: border-box; background: #0a0c0f; color: inherit; border: 1px solid #2b3540; border-radius: 4px; padding: 2px 4px; font: 11.5px ui-monospace, monospace; }
-    #toolsbar :is(.shpop, .cppop) input[type=color] { height: 20px; padding: 0; }
-    #toolsbar :is(.shpop, .cppop) .acts { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
-    #toolsbar :is(.shpop, .cppop) button { width: auto; flex-direction: row; padding: 3px 8px; }
-    #toolsbar :is(.shpop, .cppop) .hint { color: #7b8794; font-size: 10.5px; }
-    #toolsbar :is(.shpop, .cppop) .err { color: #e5484d; font-size: 11px; }
+    #toolsbar .vpop[hidden], #toolsbar .fpop[hidden], #toolsbar :is(.shpop, .cppop, .alpop)[hidden] { display: none; }
+    #toolsbar :is(.shpop, .cppop, .alpop) { position: absolute; left: calc(100% + 6px); top: 0; width: 290px; max-height: 80vh; overflow: auto; background: rgba(14,17,21,.97); border: 1px solid #2b3540; border-radius: 6px; padding: 8px 10px; color: #d7dde4; display: flex; flex-direction: column; gap: 5px; font: 12px system-ui; }
+    #toolsbar :is(.shpop, .cppop, .alpop) b { font-size: 12px; }
+    #toolsbar :is(.shpop, .cppop, .alpop) .r { display: grid; grid-template-columns: 82px 1fr; align-items: center; gap: 6px; }
+    #toolsbar :is(.shpop, .cppop, .alpop) .v3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+    #toolsbar :is(.shpop, .cppop, .alpop) input, #toolsbar :is(.shpop, .cppop, .alpop) select { width: 100%; box-sizing: border-box; background: #0a0c0f; color: inherit; border: 1px solid #2b3540; border-radius: 4px; padding: 2px 4px; font: 11.5px ui-monospace, monospace; }
+    #toolsbar :is(.shpop, .cppop, .alpop) input[type=color] { height: 20px; padding: 0; }
+    #toolsbar :is(.shpop, .cppop, .alpop) .acts { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+    #toolsbar :is(.shpop, .cppop, .alpop) button { width: auto; flex-direction: row; padding: 3px 8px; }
+    #toolsbar :is(.shpop, .cppop, .alpop) .hint { color: #7b8794; font-size: 10.5px; }
+    #toolsbar :is(.shpop, .cppop, .alpop) .err { color: #e5484d; font-size: 11px; }
     #toolsbar .fpop { position: absolute; left: calc(100% + 6px); top: 0; width: 260px; background: rgba(14,17,21,.97); border: 1px solid #2b3540; border-radius: 6px; padding: 8px; color: #d7dde4; display: flex; flex-direction: column; gap: 6px; }
     #toolsbar .fpop input { background: #0a0c0f; color: inherit; border: 1px solid #2b3540; border-radius: 4px; padding: 4px 6px; font: 12px ui-monospace, monospace; }
     #toolsbar .fpop button { width: auto; flex-direction: row; justify-content: center; padding: 4px; }
@@ -2309,7 +2350,7 @@ async function duplicateSelection() {
 function renameCopyRefs(oldId: string, newId: string) {
   const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   if (scriptPanel) {
-    const re = new RegExp(`(^|[\\s,=]|${esc(COPIES_ROOT)}/)${esc(oldId)}(?![\\w-])`, 'gm');
+    const re = new RegExp(`(^|[\\s,=]|${esc(COPIES_ROOT)}/)${esc(oldId)}(?=(-\\d+|-\\*)?(?![\\w-]))`, 'gm');   // array members <id>-<i> too
     const next = scriptPanel.text.replace(re, `$1${newId}`);
     if (next !== scriptPanel.text) scriptPanel.setText(next);
   }
@@ -2405,6 +2446,74 @@ function refreshCopyPanel(force = false) {
   placePop(cppop, 'dup');
 }
 
+// ---- Align: move the selection so its box lines up with another part's (start pose) ----
+type AlignRule = '' | 'min' | 'centre' | 'max' | 'on' | 'under';
+const align = { target: '', rules: { x: 'centre', y: 'on', z: 'centre' } as Record<'x' | 'y' | 'z', AlignRule>, gap: 0 };
+const alpop = toolbar.querySelector<HTMLElement>('.alpop')!;
+let alignPick: { prev: THREE.Object3D[] } | null = null;
+/** While picking the target, a selection sets it (and the selection goes back). */
+function alignPicking(spec: string | undefined, objs: THREE.Object3D[]) {
+  if (!alignPick) return false;
+  const prev = alignPick.prev;
+  alignPick = null;
+  if (spec || objs.length) align.target = spec ?? objs.map(idOfObj).join(', ');
+  tree.selectObjects(prev);
+  refreshAlignPanel();
+  return true;
+}
+const RULES: [AlignRule, string][] = [['', '—'], ['min', 'min = min'], ['centre', 'centre = centre'], ['max', 'max = max'], ['on', 'on (min = its max)'], ['under', 'under (max = its min)']];
+/** The move (world) that lines the selection's box up with the target's; null + why when it can't. */
+function alignMove(specs: string[], target: string): { move?: THREE.Vector3; why?: string } {
+  const r = resolveIds(target.split(',').map((x) => x.trim()).filter(Boolean));
+  if (r.unknown.length) return { why: `Not found: ${r.unknown.join(', ')}` };
+  const tObjs = r.ids.map((x) => built.registry.get(x)).filter(Boolean) as THREE.Object3D[];
+  const mObjs = placeTargets(specs).objs;
+  if (!tObjs.length) return { why: 'Pick a target' };
+  if (!mObjs.length) return { why: 'Select what to move' };
+  return atStart(() => {
+    const a = worldBox(mObjs), b = worldBox(tObjs), move = new THREE.Vector3();
+    for (const ax of ['x', 'y', 'z'] as const) {
+      const rule = align.rules[ax], g = align.gap;
+      const ca = (a.min[ax] + a.max[ax]) / 2, cb = (b.min[ax] + b.max[ax]) / 2;
+      move[ax] = rule === 'min' ? b.min[ax] - a.min[ax] : rule === 'max' ? b.max[ax] - a.max[ax] : rule === 'centre' ? cb - ca
+        : rule === 'on' ? b.max[ax] + g - a.min[ax] : rule === 'under' ? b.min[ax] - g - a.max[ax] : 0;
+    }
+    return { move };
+  });
+}
+function refreshAlignPanel() {
+  if (alpop.hidden) return;
+  const specs = tree.selectedSpecs();
+  alpop.innerHTML = `<b>Align ${specs.length ? `${gSel.objs.length} part${gSel.objs.length === 1 ? '' : 's'}` : '(select parts)'}</b>
+    <div class="r">To <div style="display:flex;gap:4px"><input data-f="target" value="${align.target}" placeholder="part id, name or @group" spellcheck="false"><button data-s="pick" style="white-space:nowrap;flex:none" title="Click the target part in the view or the tree">${alignPick ? '…' : '⌖ Pick'}</button></div></div>
+    ${(['x', 'y', 'z'] as const).map((ax) => `<div class="r">${ax.toUpperCase()} <select data-f="${ax}">${RULES.map(([k, l]) => `<option value="${k}" ${align.rules[ax] === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>`).join('')}
+    <div class="r">Gap (m) <input type="number" step="0.05" data-f="gap" value="${align.gap}"></div>
+    <div class="acts"><button data-p="top">Sit on top</button><button data-p="centre">Centre on</button><button data-p="under">Under</button><button data-p="side">Beside +x</button></div>
+    <div class="err"></div>
+    <div class="acts"><button data-s="go" ${specs.length ? '' : 'disabled'}>Align</button></div>
+    <div class="hint">Moves the start pose (t = 0) of the selection: shapes and copies get new numbers, other parts a placement. Undo with ⌘Z.</div>`;
+  const q = <T extends HTMLElement>(f: string) => alpop.querySelector<T>(`[data-f="${f}"]`)!;
+  const errEl = alpop.querySelector<HTMLElement>('.err')!;
+  q<HTMLInputElement>('target').oninput = () => (align.target = q<HTMLInputElement>('target').value);
+  q<HTMLInputElement>('gap').oninput = () => (align.gap = parseFloat(q<HTMLInputElement>('gap').value) || 0);
+  for (const ax of ['x', 'y', 'z'] as const) q<HTMLSelectElement>(ax).onchange = () => (align.rules[ax] = q<HTMLSelectElement>(ax).value as AlignRule);
+  const presets: Record<string, Record<'x' | 'y' | 'z', AlignRule>> = { top: { x: 'centre', y: 'on', z: 'centre' }, centre: { x: 'centre', y: 'centre', z: 'centre' },
+    under: { x: 'centre', y: 'under', z: 'centre' }, side: { x: 'on', y: 'min', z: 'centre' } };
+  alpop.querySelectorAll<HTMLElement>('[data-p]').forEach((b) => (b.onclick = () => { align.rules = { ...presets[b.dataset.p!] }; refreshAlignPanel(); }));
+  alpop.querySelector<HTMLElement>('[data-s=pick]')!.onclick = () => { alignPick = alignPick ? null : { prev: [...gSel.objs] }; refreshAlignPanel(); };
+  alpop.querySelector<HTMLElement>('[data-s=go]')!.onclick = async () => {
+    const r = alignMove(tree.selectedSpecs(), align.target);
+    if (!r.move) { errEl.textContent = r.why ?? ''; return; }
+    if (r.move.lengthSq() < 1e-12) { errEl.textContent = 'Already aligned'; return; }
+    const plan = planPlacement({ targets: tree.selectedSpecs(), move_by: r.move.toArray() });
+    if (plan.problems.length) { errEl.textContent = plan.problems.join('; '); return; }
+    await applyPlacementChanges([plan]);
+    errEl.textContent = '';
+  };
+  alpop.onkeydown = (e) => e.stopPropagation();
+  placePop(alpop, 'align');
+}
+
 /** Show all: clear every hide flag. */
 async function showAll() {
   if (!Object.values(state.hidden).some(Boolean)) return;
@@ -2431,6 +2540,11 @@ toolbar.querySelector<HTMLElement>('[data-t=blank]')!.onclick = () => { tree.tog
 toolbar.querySelector<HTMLElement>('[data-t=others]')!.onclick = () => void blankOthers();
 toolbar.querySelector<HTMLElement>('[data-t=showall]')!.onclick = () => void showAll();
 toolbar.querySelector<HTMLElement>('[data-t=thumb]')!.onclick = setKeyframe;
+toolbar.querySelector<HTMLElement>('[data-t=align]')!.onclick = () => {
+  alpop.hidden = !alpop.hidden;
+  toolbar.querySelector('[data-t=align]')!.classList.toggle('on', !alpop.hidden);
+  refreshAlignPanel();
+};
 toolbar.querySelector<HTMLElement>('[data-t=dup]')!.onclick = () => void duplicateSelection();
 toolbar.querySelector<HTMLElement>('[data-t=shape]')!.onclick = () => {
   shpop.hidden = !shpop.hidden;
@@ -2690,7 +2804,7 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 }
 
 // read-only handle for tests and debugging
-(window as any).__studio = { boxSelect, get copies() { return copies; }, duplicateSelection, renderSheetPng, svgToPdf, vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
+(window as any).__studio = { gizmo, boxSelect, get copies() { return copies; }, duplicateSelection, renderSheetPng, svgToPdf, vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
   /** tests: a block with many small parts buried behind the cut plane (x < 0), like dowels without holes */
   addTestBuried: (count = 60) => {
     const mk = (col: number) => withCaps(new THREE.MeshToonMaterial({ color: col, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));

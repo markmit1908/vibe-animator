@@ -495,6 +495,55 @@ test("window / crossing select: Shift-drag left→right picks parts wholly insid
   await expect.poll(sel).toEqual(["shapes/a", "shapes/c"]);
 });
 
+test("align: sit a part on top of another (typed or picked target), a copy beside it; gizmo snap steps", async ({ page }) => {
+  await page.goto("/");
+  const box = (id: string, x: number, s = 1) => ({ id, kind: "box", size: [s, s, s], position: [x, s / 2, 0], rotation: [0, 0, 0], color: "#c8d0d9" });
+  const m = { name: "Align", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] }, shapes: [box("base", 0, 2), box("cube", 4)],
+    script: { language: "anim", text: 'label "A"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Align");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const boxOf = (id: string) => page.evaluate((id) => { const s = (window as any).__studio, T = s.THREE, o = s.built.registry.get(id); o.updateWorldMatrix(true, true);
+    const b = new T.Box3().setFromObject(o); return { c: b.getCenter(new T.Vector3()).toArray().map((v: number) => +v.toFixed(3)), min: b.min.toArray().map((v: number) => +v.toFixed(3)), max: b.max.toArray().map((v: number) => +v.toFixed(3)) }; }, id);
+  // cube on top of base (target typed)
+  await page.evaluate(() => (window as any).__studio.tree.selectId("shapes/cube"));
+  await page.locator("#toolsbar [data-t=align]").click();
+  const pop = page.locator("#toolsbar .alpop");
+  await expect(pop).toContainText("Align 1 part");
+  await pop.locator("[data-f=target]").fill("base");
+  await pop.locator("[data-p=top]").click();
+  await pop.locator("[data-s=go]").click();
+  await expect.poll(async () => (await boxOf("shapes/cube")).c).toEqual([0, 2.5, 0]);
+  // undo puts it back
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.keyboard.press("Meta+z");
+  await expect.poll(async () => (await boxOf("shapes/cube")).c).toEqual([4, 0.5, 0]);
+  // a copy of base, beside base on +x with a 0.5 m gap; the target picked by clicking it in the tree
+  await page.evaluate(() => (window as any).__studio.tree.selectId("shapes/base"));
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.keyboard.press("Meta+d");
+  await expect.poll(() => page.evaluate(() => (window as any).__studio.copies.length)).toBe(1);
+  await expect(pop).toContainText("Align 1 part");
+  await pop.locator("[data-s=pick]").click();
+  await page.evaluate(() => (window as any).__studio.tree.selectId("shapes/base"));
+  await expect(pop.locator("[data-f=target]")).toHaveValue("shapes/base");
+  await expect(pop).toContainText("Align 1 part");                                    // the copy is still selected
+  await pop.locator("[data-p=side]").click();
+  await pop.locator("[data-f=gap]").fill("0.5");
+  await pop.locator("[data-s=go]").click();
+  const cp = (await page.evaluate(() => (window as any).__studio.copies[0].id)) as string;
+  await expect.poll(async () => (await boxOf(`copies/${cp}`)).min[0]).toBeCloseTo(1.5, 3);
+  expect((await boxOf(`copies/${cp}`)).min[1]).toBeCloseTo(0, 3);
+  // saved as the copy's own position
+  expect(await page.evaluate(() => (window as any).__studio.copies[0].position[0])).toBeCloseTo(2.5, 3);
+  // snap steps reach the gizmo
+  await page.locator(".lil-gui .title", { hasText: "Gizmo snap" }).click();
+  const row = page.locator(".lil-gui .controller", { hasText: "Move step" }).locator("select");
+  await row.selectOption("0.5 m");
+  expect(await page.evaluate(() => (window as any).__studio.gizmo.translationSnap)).toBe(0.5);
+  expect(await page.evaluate(() => (window as any).__studio.gizmo.rotationSnap)).toBeCloseTo(Math.PI / 12, 6);   // 15° by default
+});
+
 test("the tree keeps its open rows, selection and scroll when it rebuilds (making a group)", async ({ page }) => {
   await page.goto("/");
   const { readFileSync } = await import("node:fs");
@@ -1069,6 +1118,47 @@ test("assist: propose_script_patch proposes small edits as a full diff card; bad
   expect(r.missing).toBe(true);
   expect(r.twice).toContain("more than once");
   expect(r.empty).toContain("non-empty");
+});
+
+test("assist: propose_copies makes linked copies (offset, array), updates and deletes them through accepted cards", async ({ page }) => {
+  await page.goto("/");
+  const box = { id: "skid", kind: "box", size: [2, 1, 1], position: [0, 0.5, 0], rotation: [0, 0, 0], color: "#c8d0d9" };
+  const m = { name: "AI copies", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] }, shapes: [box],
+    script: { language: "anim", text: 'label "C"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "AI copies");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  await page.locator("#right [data-t=assist]").click();
+  const run = (changes: any[], summary: string, show = true) => page.evaluate(async ({ changes, summary, show }) => {
+    const s = (window as any).__studio, t = s.tools.find((x: any) => x.name === "propose_copies");
+    let p: any; const g = t.run({ summary, changes }); for (let r = await g.next(); !r.done; r = await g.next()) if (r.value.type === "proposal") { const { type, ...x } = r.value; p = x; }
+    if (show) { s.assist.host.onChat([...s.assist.host.chat(), { role: "user", content: summary }, { role: "assistant", content: "Here.", proposal: p }]); s.assist.mount.refresh(); }
+    return p;
+  }, { changes, summary, show });
+  const bad = await run([{ action: "create", name: "x", of: ["nothing-here"] }, { action: "update", name: "ghost" }, { action: "create", name: "y", of: ["skid"], position: [0, 0, 0], offset: [1, 0, 0] }], "bad", false);
+  expect(bad.check.ok).toBe(false);
+  expect(bad.problems.join(" | ")).toMatch(/unknown nothing-here.*no copy "ghost".*position or offset/);
+  // 3 more skids, 3 m apart along x, starting 3 m from the original
+  await run([{ action: "create", name: "skids", of: ["skid"], offset: [3, 0, 0], array: { type: "linear", count: 3, step: [3, 0, 0] } }], "Three more skids");
+  const card = page.getByTestId("proposal").last();
+  await expect(card).toContainText("create skids of skid: centre [3, 0.5, 0] · ×3 in a row, step [3,0,0]");
+  await card.getByRole("button", { name: "Accept" }).click();
+  await expect.poll(async () => (await model(page, a.id)).copies).toEqual([{ id: "skids", of: ["skid"], position: [3, 0.5, 0], rotation: [0, 0, 0], array: { type: "linear", count: 3, step: [3, 0, 0] } }]);
+  const deselect = () => page.evaluate(() => (window as any).__studio.tree.select(undefined, false));   // the Copy panel opens on the new copy
+  await deselect();
+  const cx = (id: string) => page.evaluate((id) => { const s = (window as any).__studio, T = s.THREE, o = s.built.registry.get(id); o.updateWorldMatrix(true, true); return +new T.Box3().setFromObject(o).getCenter(new T.Vector3()).x.toFixed(3); }, id);
+  expect(await cx("copies/skids-2")).toBe(9);
+  // rename (the script follows) and mirror; then delete
+  await page.evaluate(() => { const p = (window as any).__studio.scriptPanel; p.setText(p.text + "\nmove skids-1 by [0,1,0] 1s"); });
+  await run([{ action: "update", name: "skids", rename: "pumps", mirror: "z" }], "Rename");
+  await page.getByTestId("proposal").last().getByRole("button", { name: "Accept" }).click();
+  await expect.poll(async () => (await model(page, a.id)).copies?.[0]).toMatchObject({ id: "pumps", mirror: "z" });
+  await expect.poll(() => page.evaluate(() => (window as any).__studio.scriptPanel.text)).toContain("move pumps-1 by");
+  await expect(page.locator("#script .status")).toHaveText("✓");
+  await deselect();
+  await run([{ action: "delete", name: "pumps" }], "Remove");
+  await page.getByTestId("proposal").last().getByRole("button", { name: "Accept" }).click();
+  await expect.poll(async () => (await model(page, a.id)).copies).toEqual([]);
 });
 
 test("assist: propose_shapes makes, changes and deletes shapes through an accepted card", async ({ page }) => {

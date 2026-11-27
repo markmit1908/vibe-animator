@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import type { AssistEvent, AssistTool, ToolResult } from './loop';
 import { KINDS, SIZES, validName, type ShapeDef, type ShapeKind } from '../scene/shapes';
+import type { CopyDef } from '../scene/copies';
 
 export interface ToolDeps {
   registry: Map<string, THREE.Object3D>;
@@ -253,6 +254,64 @@ export interface ModelProposeDeps {
   shapes?: () => ShapeDef[];
   /** Work out a placement change at the start pose: the rigid world transform for the targets, before/after boxes. */
   planPlacement?: (c: PlacementInput) => PlacementPlan;
+  /** The studio's linked copies, and the box centre of what a copy would copy (null when nothing matches). */
+  copies?: () => CopyDef[];
+  sourcesCentre?: (of: string[]) => { centre: number[] | null; unknown: string[] };
+}
+
+/** One linked-copy change, checked: the full new definition (create/update) or the name (delete). */
+export interface CopyChange { action: 'create' | 'update' | 'delete'; name: string; rename?: string; def?: CopyDef; centre?: number[] }
+
+function copyChanges(input: any[], d: ModelProposeDeps): { changes: CopyChange[]; problems: string[] } {
+  const problems: string[] = [], changes: CopyChange[] = [];
+  const existing = d.copies!();
+  const names = new Set(existing.map((c) => c.id));
+  for (const c of input) {
+    const name = String(c.name ?? '').trim(), action = c.action;
+    if (!['create', 'update', 'delete'].includes(action)) { problems.push(`unknown action "${action}"`); continue; }
+    if (!validName(name)) { problems.push(`bad copy name "${name}" (letters, digits, - _; not starting with a digit)`); continue; }
+    if (action === 'create' ? names.has(name) : !names.has(name)) { problems.push(action === 'create' ? `a copy "${name}" already exists (use update)` : `no copy "${name}"`); continue; }
+    if (action === 'delete') { names.delete(name); changes.push({ action, name }); continue; }
+    const base = existing.find((x) => x.id === name);
+    const of: string[] = Array.isArray(c.of) ? c.of.map(String) : base?.of ?? [];
+    if (!of.length) { problems.push(`${name}: "of" – what to copy (part ids, names, @groups)`); continue; }
+    const src = d.sourcesCentre!(of);
+    if (src.unknown.length) problems.push(`${name}: unknown ${src.unknown.join(', ')}`);
+    if (!src.centre) { problems.push(`${name}: nothing to copy in ${of.join(', ')}`); continue; }
+    const v3 = (v: unknown, what: string) => {
+      if (v === undefined) return undefined;
+      if (!Array.isArray(v) || v.length !== 3 || v.some((x) => !Number.isFinite(Number(x)))) { problems.push(`${name}: ${what} must be [x, y, z]`); return undefined; }
+      return v.map(Number);
+    };
+    const pos = v3(c.position, 'position'), off = v3(c.offset, 'offset');
+    if (pos && off) problems.push(`${name}: give position or offset, not both`);
+    const position = pos ?? (off ? src.centre.map((x, i) => x + off[i]) : base?.position ?? src.centre);
+    const rotation = v3(c.rotation, 'rotation') ?? base?.rotation ?? [0, 0, 0];
+    let mirror = c.mirror === null ? undefined : (c.mirror ?? base?.mirror);
+    if (mirror !== undefined && !['x', 'y', 'z'].includes(mirror)) { problems.push(`${name}: mirror is x, y or z`); mirror = undefined; }
+    let array = c.array === null ? undefined : base?.array;
+    if (c.array) {
+      const n = Math.round(Number(c.array.count));
+      if (!(n >= 2 && n <= 500)) problems.push(`${name}: array count must be 2..500`);
+      if (c.array.type === 'linear') array = { type: 'linear', count: n, step: v3(c.array.step, 'array step') ?? [1, 0, 0] };
+      else if (c.array.type === 'circular') {
+        const ce = c.array.centre ?? [0, 0];
+        if (!Array.isArray(ce) || ce.length !== 2) problems.push(`${name}: circular array centre is [x, z]`);
+        array = { type: 'circular', count: n, centre: (Array.isArray(ce) ? ce : [0, 0]).map(Number), angle: Number(c.array.angle ?? 360) };
+      } else problems.push(`${name}: array type is linear or circular`);
+    }
+    let rename: string | undefined;
+    if (action === 'update' && c.rename && c.rename !== name) {
+      rename = String(c.rename).trim();
+      if (!validName(rename) || names.has(rename)) problems.push(`can't rename ${name} to "${rename}"`);
+      else { names.delete(name); names.add(rename); }
+    }
+    if (action === 'create') names.add(name);
+    const r4 = (v: number[]) => v.map((x) => +x.toFixed(4));
+    const def: CopyDef = { id: rename ?? name, of, position: r4(position), rotation: r4(rotation), ...(mirror ? { mirror } : {}), ...(array ? { array } : {}) };
+    changes.push({ action, name, rename, def, centre: r4(src.centre) });
+  }
+  return { changes, problems };
 }
 
 export interface PlacementInput {
@@ -402,6 +461,37 @@ export function modelProposeTools(d: ModelProposeDeps): AssistTool[] {
         const label = ok ? `✓ ${changes.length} shape${changes.length > 1 ? 's' : ''}` : `${problems.length} problem${problems.length > 1 ? 's' : ''}`;
         yield { type: 'proposal', kind: 'shapes', summary: i.summary, check: { ok, label }, changes, problems } as AssistEvent;
         return { content: ok ? `Proposed (${label}); waiting for the user. Once accepted, each shape is a part named as given (array copies <name>-0…), unlocked.` : `Problems:\n${problems.join('\n')}\nFix them and propose again.` };
+      },
+    } satisfies AssistTool] : []),
+    ...(d.copies && d.sourcesCentre ? [{
+      name: 'propose_copies',
+      description: 'Propose linked copies: duplicates of parts, assemblies or @groups ("of": ids, names, globs, @groups) that share and follow the source geometry (re-importing the CAD updates them; removing a source part removes it from its copies). A copy is placed by its centre: position [x,y,z] = where the centre of the sources\' bounding box goes, or offset [dx,dy,dz] from where the sources are. rotation: degrees about X, Y, Z about that centre. mirror: x, y or z (through the centre). array: linear {count, step [x,y,z] m} or circular {count, centre [x,z] of a vertical axis, angle (360 = evenly round)} – members are <name>-0, <name>-1… For update give only what changes (rename to change the name – the script follows; array/mirror null removes). Scripts use the copy\'s name (array members by <name>-<i>); parts inside need full ids copies/<name>/<source id>. Exists once accepted.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          summary: { type: 'string' },
+          changes: { type: 'array', items: { type: 'object', properties: {
+            action: { type: 'string', enum: ['create', 'update', 'delete'] },
+            name: { type: 'string', description: 'Copy name (letters, digits, - _), e.g. pump-2' },
+            of: { type: 'array', items: { type: 'string' } },
+            position: { ...vec3, description: 'Where the copy\'s centre goes [x, y, z] m' },
+            offset: { ...vec3, description: 'Or: how far from the sources [dx, dy, dz] m' },
+            rotation: { ...vec3, description: 'Degrees about X, Y, Z' },
+            mirror: { type: ['string', 'null'], enum: ['x', 'y', 'z', null] },
+            array: { type: ['object', 'null'] },
+            rename: { type: 'string' },
+          }, required: ['action', 'name'] } },
+        },
+        required: ['summary', 'changes'],
+      },
+      writing: 'copies',
+      validate: (i: any) => check(i, { summary: 'string' }) ?? (Array.isArray(i.changes) && i.changes.length ? undefined : '"changes" must be a non-empty array'),
+      async *run(i: any) {
+        const { changes, problems } = copyChanges(i.changes, d);
+        const ok = !problems.length;
+        const label = ok ? `✓ ${changes.length} cop${changes.length > 1 ? 'ies' : 'y'}` : `${problems.length} problem${problems.length > 1 ? 's' : ''}`;
+        yield { type: 'proposal', kind: 'copies', summary: i.summary, check: { ok, label }, changes, problems } as AssistEvent;
+        return { content: ok ? `Proposed (${label}); waiting for the user.\n${changes.filter((c) => c.def).map((c) => `${c.def!.id}: sources' centre [${c.centre}] → [${c.def!.position}]`).join('\n')}` : `Problems:\n${problems.join('\n')}\nFix them and propose again.` };
       },
     } satisfies AssistTool] : []),
     {

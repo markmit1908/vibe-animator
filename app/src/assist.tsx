@@ -9,7 +9,7 @@ import { Button } from "@solverkit/ui";
 import { Pause, Play } from "lucide-react";
 import type { AssistHost, AssistMount, Effort } from "../../src/assist/host";
 import type { ChatMessage, Proposal } from "../../src/assist/loop";
-import { sizeKeys, type PlacementPlan, type ShapeChange } from "../../src/assist/tools";
+import { sizeKeys, type CopyChange, type PlacementPlan, type ShapeChange } from "../../src/assist/tools";
 
 interface View { host: AssistHost; script: string; previewing?: string }
 
@@ -93,6 +93,22 @@ function registerKinds() {
           {c.action} <b>{c.rename ? `${c.name} → ${c.rename}` : c.name}</b>: {d.kind} {keys.map((k, i) => `${k.replace(/_/g, " ")} ${d.size[i]}`).join(", ")} m
           {` at [${d.position.join(", ")}]`}{d.rotation.some((r) => r) ? `, rotated [${d.rotation.join(", ")}]°` : ""}{arr}
           {" "}<span className="inline-block size-2.5 rounded-sm border align-middle" style={{ background: d.color }} />
+        </>;
+      })} />
+    ),
+  });
+  proposalKinds.register({
+    id: "copies",
+    queueLabel: () => "Copies",
+    render: (p: SkProposal, _v: View, onDecide?: (a: boolean) => void) => (
+      <ChangeCard p={p} title="Linked copies" onDecide={onDecide} lines={(p.changes as CopyChange[]).map((c) => {
+        if (c.action === "delete") return <>delete <b>{c.name}</b></>;
+        const d = c.def!;
+        const arr = d.array ? (d.array.type === "linear" ? ` · ×${d.array.count} in a row, step [${d.array.step}]` : ` · ×${d.array.count} round [${d.array.centre}], ${d.array.angle}°`) : "";
+        return <>
+          {c.action} <b>{c.rename ? `${c.name} → ${c.rename}` : c.name}</b> of {short(d.of)}: centre [{d.position.join(", ")}]
+          {d.rotation.some((r) => r) ? `, rotated [${d.rotation.join(", ")}]°` : ""}{d.mirror ? `, mirrored ${d.mirror}` : ""}{arr}
+          <span className="text-muted-foreground">{` – sources at [${c.centre?.join(", ")}]`}</span>
         </>;
       })} />
     ),
