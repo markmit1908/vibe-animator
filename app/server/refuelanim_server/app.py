@@ -56,7 +56,9 @@ _vault: list[Path] = []
 
 
 def vault() -> Path:
-    return _vault[0] if _vault else PATHS.vault()
+    # resolved: SolverKit's file listing compares walked paths with the root, which fails through a symlink
+    # (macOS /var -> /private/var). solverkit-candidate: resolve the root in Vault.
+    return (_vault[0] if _vault else PATHS.vault()).resolve()
 
 
 def store() -> Store:

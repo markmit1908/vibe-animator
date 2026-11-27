@@ -2,6 +2,7 @@
 // importing an old project zip (with its 3D model into CAD/), and the generated reactor animation playing.
 import { expect, test, type Page } from "@playwright/test";
 import { deflateRawSync, crc32 } from "node:zlib";
+import { readFileSync } from "node:fs";
 
 const api = (page: Page) => page.request;
 const projects = async (page: Page) => (await (await api(page).get("/api/home")).json()).projects as { id: string; name: string }[];
@@ -43,6 +44,43 @@ test("Home → New opens the Studio with the 3D view and the script", async ({ p
   await expect(page.locator("#app canvas")).toBeVisible({ timeout: 15_000 });
   await expect(page.locator("#script .cm-content")).toContainText('label "Untitled"');
   await expect(page.locator("#tree")).toBeVisible();
+});
+
+test("a new animation loads CAD: upload a .glb from disk, add one from the vault, remove one", async ({ page }) => {
+  await api(page).put("/api/files/CAD/vault-model.glb?overwrite=true", { data: readFileSync(new URL("./fixtures/small.glb", import.meta.url)) });
+  await newAnimation(page);
+  const id = page.url().match(/#\/p\/([0-9a-f-]{36})\//)![1];
+  // the empty state offers the loader
+  const start = page.getByRole("button", { name: /Load a CAD model/ });
+  await expect(start).toBeVisible({ timeout: 15_000 });
+  await start.click();
+  const pop = page.locator("#toolsbar .cadpop");
+  await expect(pop).toBeVisible();
+  await expect(pop).toContainText("None yet.");
+  await expect(pop.getByRole("button", { name: /vault-model\.glb/ })).toBeVisible();
+  // upload from disk
+  const chooser = page.waitForEvent("filechooser");
+  await pop.getByRole("button", { name: /Upload a \.glb/ }).click();
+  await (await chooser).setFiles({ name: "From Disk.glb", mimeType: "model/gltf-binary",
+    buffer: readFileSync(new URL("./fixtures/small.glb", import.meta.url)) });
+  await expect.poll(async () => (await model(page, id)).scene.cad_models, { timeout: 15_000 })
+    .toEqual([{ id: "From-Disk", file: "CAD/From Disk.glb", up: "y", ground: true, position: [0, 0, 0] }]);
+  await expect(page.locator("#tree")).toContainText("From-Disk", { timeout: 15_000 });
+  expect((await api(page).get("/api/files/CAD/From%20Disk.glb")).ok()).toBe(true);
+  // add from the vault: a second model keeps its coordinates
+  await page.locator("#toolsbar [data-t=cad]").click();
+  await expect(pop).toContainText("From-Disk");
+  await pop.getByRole("button", { name: /vault-model\.glb/ }).click();
+  await expect.poll(async () => (await model(page, id)).scene.cad_models.map((m: any) => [m.id, m.ground]), { timeout: 15_000 })
+    .toEqual([["From-Disk", true], ["vault-model", false]]);
+  await expect(page.locator("#tree")).toContainText("vault-model", { timeout: 15_000 });
+  // remove the first (the file stays in the vault)
+  await page.locator("#toolsbar [data-t=cad]").click();
+  page.once("dialog", (d) => d.accept());
+  await pop.locator("[data-c=del]").first().click();
+  await expect.poll(async () => (await model(page, id)).scene.cad_models.map((m: any) => m.id), { timeout: 15_000 }).toEqual(["vault-model"]);
+  await expect(page.locator("#tree")).not.toContainText("From-Disk", { timeout: 15_000 });
+  expect((await api(page).get("/api/files/CAD/From%20Disk.glb")).ok()).toBe(true);
 });
 
 test("a script edit autosaves into the animation file", async ({ page }) => {

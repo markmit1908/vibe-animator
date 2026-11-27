@@ -6,7 +6,7 @@ between animations. Everything you change in an animation saves automatically; t
 
 # Home
 
-New, Duplicate, Rename, Delete (to the trash), folders and versions for your animations.
+New, Duplicate, Rename, Delete (to the trash), folders and versions for your animations. A **New model** starts empty: load its 3D model with the **CAD** tool (📦) in the Studio.
 - **Import** reads an animation file, or an old project's `.json`.
 - **Import old project (.zip)…** reads an old project together with its 3D model.
 
@@ -61,6 +61,7 @@ Right-click a row for its menu; **F2** renames, **Delete** removes, ⌘/Ctrl-cli
 - **Thumbnail**: this moment becomes the card image on Home (a `thumbnail` script step wins).
 - **Views**: save the camera as a named view; use it with `camera <name> 2s`.
 - **Group** (G): a group (`@name`) from the selection.
+- **CAD** (📦): the animation's 3D models. **＋** loads a .glb from the vault's `CAD/` folder; **Upload a .glb from disk…** copies one into the vault and loads it; **✕** removes one from this animation (the file stays). The first model stands centred on the origin; later ones keep their coordinates. A new, empty animation offers **Load a CAD model** in the middle of the view. Part ids start with the model's id (from the file name).
 
 **Undo:** ⌘/Ctrl+Z, redo ⇧⌘Z – colours, moves, lock/hide, groups and folders, keep uncut, shapes, renames, removals. In the script editor, ⌘Z undoes typing.
 

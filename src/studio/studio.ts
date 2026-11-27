@@ -43,6 +43,13 @@ export interface StudioIO {
   putThumb?(svg: string): Promise<unknown> | void;
   /** Mount the assist panel (SolverKit's AssistPanel) into `el`. */
   mountAssist?(el: HTMLElement, host: AssistHost): AssistMount;
+  /** Vault files: list a folder, upload a file (CAD models). */
+  files?: {
+    list(folder: string): Promise<{ path: string; size: number }[]>;
+    upload(path: string, file: File, onProgress?: (fraction: number) => void, overwrite?: boolean): Promise<'ok' | 'exists'>;
+  };
+  /** Mount the studio again from the model as written (after changes the studio can't apply in place: CAD models). */
+  reload?(): void;
 }
 
 /**
@@ -1358,6 +1365,8 @@ toolbar.innerHTML = `<button data-t="blank" title="Blank / unblank the selected 
   <button data-t="thumb" title="Thumbnail: this moment (time, camera, view style) becomes the card image on Home. A thumbnail step in the script takes priority."><span class="i">📌</span><span class="l">Thumbnail</span></button>
   <button data-t="views" title="Camera views: save the current view (position and target), go to one, or put it in the script (camera <name> 2s)"><span class="i">📷</span><span class="l">Views</span></button>
   <div class="vpop" hidden></div>
+  <button data-t="cad" title="CAD models: load a .glb (from the vault's CAD folder or from disk) into this animation, or remove one"><span class="i">📦</span><span class="l">CAD</span></button>
+  <div class="vpop cadpop" hidden></div>
   <button data-t="group" title="Create a group from the selected parts, or add them to one (G)"><span class="i">⊞</span><span class="l">Group</span></button>`;
 host().appendChild(toolbar);
 /** Keep the tool bar clear of the view toolbar, which wraps to more rows in narrow windows. */
@@ -1495,6 +1504,7 @@ function setOrigin(o: THREE.Vector3) {
   const items = clone(store.snapshots);
   for (const sn of Object.values(items) as any[]) if (sn.camera) sn.camera = { pos: shift(sn.camera.pos), look: shift(sn.camera.look) };
   edit({ scene, views: clone(views), snapshots: { active: store.active, items }, view: { ...(model.view ?? {}), camera: { pos: shift(camView().pos), look: shift(camView().look) } } });
+  io.reload?.();
 }
 // ---- thumbnail: a keyframe of the animation is the card image on Home ----
 let keyframe = model.keyframe;
@@ -1818,12 +1828,97 @@ toolbar.querySelector<HTMLElement>('[data-t=views]')!.onclick = () => {
   toolbar.querySelector('[data-t=views]')!.classList.toggle('on', !vpop.hidden);
 };
 toolbar.querySelector<HTMLElement>('[data-t=group]')!.onclick = () => { tree.groupSelected(); updateTools(); };
+// ---- CAD models: load a .glb from the vault's CAD folder (or upload one from disk), remove one ----
+const cadpop = toolbar.querySelector<HTMLElement>('.cadpop')!;
+const cadList = (): any[] => cfg.cad_models ?? [];
+let cadBusy = '';
+/** Write the scene's CAD list; the studio mounts again to load it. */
+function setCad(list: any[]) {
+  edit({ scene: { ...clone(model.scene ?? {}), cad_models: list } });
+  if (io.reload) io.reload(); else location.reload();
+}
+function addCad(file: string) {
+  const list = cadList();
+  if (list.some((m) => m.file === file)) { toast(`${file} is already loaded`); return; }
+  const base = (file.split('/').pop() ?? 'cad').replace(/\.glb$/i, '').replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'cad';
+  let id = base, i = 2;
+  while (list.some((m) => m.id === id)) id = `${base}-${i++}`;
+  // the converter writes Y-up metres; the first model stands centred on the origin, later ones keep their coordinates
+  setCad([...list, { id, file, up: 'y', ground: list.length === 0, position: [0, 0, 0] }]);
+}
+async function renderCad() {
+  const list = cadList();
+  const mb = (n: number) => n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${Math.max(1, Math.round(n / 1e6))} MB`;
+  cadpop.innerHTML = `<b>CAD models in this animation</b>
+    ${list.length ? list.map((m, i) => `<div class="row"><span class="n" title="${escH(m.file)}">${escH(m.id)} <span class="hint">${escH(m.file)}</span></span>
+      <button data-c="del" data-i="${i}" title="Remove from this animation (the file stays in the vault)">✕</button></div>`).join('') : '<div class="hint">None yet.</div>'}
+    <b style="margin-top:6px">Add</b>
+    <div class="vault"><div class="hint">Loading the vault's CAD folder…</div></div>
+    <button data-c="up" ${cadBusy ? 'disabled' : ''}>⤒ Upload a .glb from disk…</button>
+    ${cadBusy ? `<div class="hint busy">${escH(cadBusy)}</div>` : ''}
+    <div class="hint">Convert STEP files with tools/step2gltf.py (--split for very big ones). Part ids start with the model's id.</div>`;
+  cadpop.querySelectorAll<HTMLElement>('[data-c=del]').forEach((b) => (b.onclick = () => {
+    const m = list[+b.dataset.i!];
+    if (!confirm(`Remove ${m.id} (${m.file}) from this animation?\nScript lines and groups that use its parts will show errors. The file stays in the vault.`)) return;
+    setCad(list.filter((_, j) => j !== +b.dataset.i!));
+  }));
+  cadpop.querySelector<HTMLElement>('[data-c=up]')!.onclick = () => {
+    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.glb,model/gltf-binary';
+    inp.onchange = () => { const f = inp.files?.[0]; if (f) void uploadCad(f); };
+    inp.click();
+  };
+  const box = cadpop.querySelector<HTMLElement>('.vault')!;
+  if (!io.files) { box.innerHTML = '<div class="hint">(no vault access)</div>'; return; }
+  try {
+    const files = (await io.files.list('CAD')).filter((f) => /\.glb$/i.test(f.path) && !list.some((m) => m.file === f.path));
+    box.innerHTML = files.length
+      ? files.map((f) => `<div class="row"><button class="n" data-f="${escH(f.path)}" title="Load ${escH(f.path)} into this animation">＋ ${escH(f.path.replace(/^CAD\//, ''))}</button><span class="hint">${mb(f.size)}</span></div>`).join('')
+      : '<div class="hint">No other .glb files in the vault\'s CAD folder.</div>';
+    box.querySelectorAll<HTMLElement>('[data-f]').forEach((b) => (b.onclick = () => addCad(b.dataset.f!)));
+  } catch (e) { box.innerHTML = `<div class="hint">Couldn't list the CAD folder: ${escH(String(e))}</div>`; }
+  placePop(cadpop, 'cad');
+}
+async function uploadCad(f: File) {
+  if (!io.files) return;
+  if (!/\.glb$/i.test(f.name)) { alert('Pick a .glb file (convert STEP with tools/step2gltf.py).'); return; }
+  const path = `CAD/${f.name}`;
+  const go = async (overwrite: boolean) => io.files!.upload(path, f, (x) => { cadBusy = `Uploading ${f.name}: ${Math.round(x * 100)}%`; const h = cadpop.querySelector('.busy'); if (h) h.textContent = cadBusy; }, overwrite);
+  cadBusy = `Uploading ${f.name}…`; void renderCad();
+  try {
+    let r = await go(false);
+    if (r === 'exists') {
+      if (!confirm(`The vault already has ${path}. Replace it? (Other animations that use it will load the new file.)`)) { cadBusy = ''; void renderCad(); return; }
+      r = await go(true);
+    }
+    cadBusy = '';
+    addCad(path);
+  } catch (e) { cadBusy = ''; alert(`Upload failed: ${e}`); void renderCad(); }
+}
+function toggleCad(open = cadpop.hidden) {
+  cadpop.hidden = !open;
+  toolbar.querySelector('[data-t=cad]')!.classList.toggle('on', open);
+  if (open) void renderCad();
+}
+toolbar.querySelector<HTMLElement>('[data-t=cad]')!.onclick = () => toggleCad();
+// an empty animation: say how to start (gone once the scene has parts, however they got there)
+let emptyPrompt: HTMLElement | undefined;
+if (!cadList().length && !(model.shapes ?? []).length) {
+  const empty = emptyPrompt = document.createElement('div');
+  empty.style.cssText = 'position:absolute;left:50%;top:45%;transform:translate(-50%,-50%);z-index:5;text-align:center;color:#d7dde4;font:13px system-ui;background:rgba(14,17,21,.9);border:1px solid #2b3540;border-radius:8px;padding:16px 20px;display:flex;flex-direction:column;gap:10px;align-items:center';
+  empty.innerHTML = `<div>This animation has no 3D model yet.</div>
+    <button data-e="cad" style="padding:6px 14px;background:#1b222a;color:#f2b705;border:1px solid #f2b705;border-radius:5px;cursor:pointer;font:inherit">📦 Load a CAD model (.glb)…</button>
+    <div style="color:#7b8794;font-size:11px">or add shapes with the Shape tool</div>`;
+  empty.querySelector<HTMLElement>('[data-e=cad]')!.onclick = () => { empty.remove(); toggleCad(true); };
+  host().appendChild(empty);
+  toolbar.querySelector<HTMLElement>('[data-t=shape]')!.addEventListener('click', () => empty.remove());
+}
 updateTools();
 
 // ---------- loop ----------
 const clock = new THREE.Clock();
 player.seek(Number(new URLSearchParams(location.search).get('t') ?? 0));
 renderer.setAnimationLoop(() => {
+  if (emptyPrompt && built.root.getObjectByProperty('isMesh', true)) { emptyPrompt.remove(); emptyPrompt = undefined; }
   renderer.info.reset();
   const dt = Math.min(clock.getDelta(), 0.1);
   if (player.playing) player.tick(dt); else player.seek(player.time);

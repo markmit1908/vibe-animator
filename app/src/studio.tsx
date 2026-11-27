@@ -10,6 +10,23 @@ import { store } from "./run";
 import type { Model } from "./run";
 
 const fileUrl = (path: string) => `/api/files/${path.split("/").map(encodeURIComponent).join("/")}`;
+/** The vault's files in a folder (SolverKit files API; models left out). */
+async function listFiles(folder: string): Promise<{ path: string; size: number }[]> {
+  const r = await fetch(`/api/files?folder=${encodeURIComponent(folder)}`);
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
+/** Upload into the vault (PUT /api/files/<path>), with progress; "exists" (409) unless overwrite. */
+function uploadFile(path: string, file: File, onProgress?: (f: number) => void, overwrite = false): Promise<"ok" | "exists"> {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open("PUT", `${fileUrl(path)}${overwrite ? "?overwrite=true" : ""}`);
+    x.upload.onprogress = (e) => { if (e.lengthComputable) onProgress?.(e.loaded / e.total); };
+    x.onload = () => (x.status === 409 ? resolve("exists") : x.status < 300 ? resolve("ok") : reject(new Error(`${x.status} ${x.responseText.slice(0, 200)}`)));
+    x.onerror = () => reject(new Error("network error"));
+    x.send(file);
+  });
+}
 /** Stable JSON: sorted keys, empty objects/arrays and undefined dropped (a save may come back reordered or trimmed). */
 const stable = (v: unknown): unknown => {
   if (Array.isArray(v)) return v.map(stable);
@@ -37,6 +54,7 @@ export function StudioView({ c }: { c: Context }) {
   // asynchronously, so its model can lag behind a burst of edits (which then looked like an outside change)
   const written = useRef<Partial<Model>>(c.model);
   const [generation, setGeneration] = useState(0);
+  const reloading = useRef(false);
 
   // an outside change: remount with the new model
   useEffect(() => {
@@ -50,7 +68,9 @@ export function StudioView({ c }: { c: Context }) {
     let studio: { dispose(): void } | undefined, gone = false;
     chain.current = chain.current.then(async () => {
       if (gone) return;
-      const model = ctx.current.current();
+      // a reload the studio asked for: the model as it wrote it (the frame may not have applied the edit yet)
+      const model = reloading.current ? { ...ctx.current.current(), ...written.current } as Model : ctx.current.current();
+      reloading.current = false;
       mine.current = content(model);
       written.current = model;
       const s = await mountStudio(host.current!, model, {
@@ -63,6 +83,8 @@ export function StudioView({ c }: { c: Context }) {
         assist: { base: "/api/assist/proxy", status: "/api/assist" },
         mountAssist,
         putThumb: (svg: string) => store.putThumb(ctx.current.id, svg),
+        files: { list: listFiles, upload: uploadFile },
+        reload: () => { reloading.current = true; setGeneration((g) => g + 1); },
       });
       if (gone) s.dispose(); else studio = s;
     }).catch((e) => console.error("studio:", e));

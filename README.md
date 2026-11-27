@@ -237,7 +237,7 @@ A progress bar shows each phase (index, bodies, copies, convert, merge) with an 
 the biggest groups of copies. `--include` / `--exclude` / `--min-size` work as above; `--keep-temp` keeps the units.
 On the plant it takes 1 minute (vs 6) and matches the normal conversion.
 
-To use the result, put the `.glb` in the vault's `CAD/` folder and reference it in the animation's `scene.cad_models`:
+To use the result, load it in the Studio with the **CAD** tool (📦): pick a `.glb` from the vault's `CAD/` folder, or upload one from disk (it is copied into `CAD/`). A new, empty animation offers this in the middle of the view. This writes the animation's `scene.cad_models`:
 ```json
 "cad_models": [{ "id": "plant", "file": "CAD/plant.glb", "up": "y", "ground": true, "position": [0, 0, 0] }]
 ```

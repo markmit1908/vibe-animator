@@ -37,6 +37,7 @@
 - [ ] Optional faster model (e.g. Sonnet) for routine edits, chosen in the Assist header
 
 ## SolverKit (propose in the SolverKit repo; see app/docs/SOLVERKIT.md)
+- [ ] Vault.files: resolve the root (and walked paths) – listing a vault reached through a symlink (macOS /var → /private/var) raises ValueError; the app resolves its vault path meanwhile
 - [ ] Home: app importers can't claim a `.zip`
 - [ ] Home: "New model" ignores `manifest.noun`
 - [ ] create-solver template: modules without `runs` still call it
