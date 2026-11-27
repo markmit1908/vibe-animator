@@ -11,8 +11,8 @@
 - [x] Primitives (box, cylinder, tube, sphere, cone, plane, hex prism), edit, duplicate, delete, linear / circular arrays
 - [ ] Extrude a 2D sketch, boolean cut (for markers, tools and stand-ins for missing CAD)
 - [ ] Shapes: array along a path; snapping to CAD faces
-- [ ] Move-copy: Ctrl + drag a part / selection in the view drags out a linked copy (the original stays)
-- [ ] Move-rotate: Alt/Option + drag rotates the selection in the view, snapping to 15° steps
+- [x] Move-copy: Ctrl/⌘ + drag the gizmo drags out a linked copy (the original stays)
+- [x] Move-rotate: hold Alt/Option to rotate with the gizmo in 15° steps; Move / Rotate tool buttons
 
 ## Origin
 - [ ] Set origin: cylinders with a non-vertical axis; also shift absolute script coordinates (offer to)

@@ -628,6 +628,69 @@ test("slim CAD: write a .glb without the removed parts and switch to it – ids 
   expect((await small).length).toBeLessThan((await big).length);
 });
 
+test("gizmo: moves locked CAD and groups at the start, Ctrl-drag drags out a linked copy, Move / Rotate buttons, Alt rotates in 15° steps", async ({ page }) => {
+  await page.goto("/");
+  const { readFileSync } = await import("node:fs");
+  await api(page).put("/api/files/CAD/small.glb?overwrite=true", { data: readFileSync(new URL("./fixtures/small.glb", import.meta.url)) });
+  const m = { name: "Gizmo", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [{ id: "plant", file: "CAD/small.glb", up: "y", position: [0, 0, 0] }] },
+    script: { language: "anim", text: 'label "G"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Gizmo");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const ids = await page.evaluate(() => { const r = (window as any).__studio.built.registry; const f = (s: string) => [...r.keys()].find((id: string) => id.endsWith(s)); return { p1: f("/Pin_1"), p2: f("/Pin_2") }; });
+  const centre = (id: string) => page.evaluate((id) => { const s = (window as any).__studio, T = s.THREE, o = s.built.registry.get(id); o.updateWorldMatrix(true, true);
+    return new T.Box3().setFromObject(o).getCenter(new T.Vector3()).toArray().map((v: number) => +v.toFixed(3)); }, id);
+  /** a gizmo drag as TransformControls reports it: start, the attached object moved by dx along x, end */
+  const drag = (dx: number) => page.evaluate((dx) => {
+    const s = (window as any).__studio, g = s.gizmo;
+    g.dispatchEvent({ type: "dragging-changed", value: true });
+    g.object.position.x += dx; g.object.updateMatrixWorld(true);
+    g.dispatchEvent({ type: "objectChange" });
+    g.dispatchEvent({ type: "dragging-changed", value: false });
+  }, dx);
+  // CAD is locked by default: the gizmo still comes up at t = 0 and the part moves (a placement)
+  expect(await page.evaluate((id) => (window as any).__studio.state.locked[id] ?? null, ids.p1)).toBeNull();
+  await page.evaluate((id) => (window as any).__studio.tree.selectId(id), ids.p1);
+  expect(await page.evaluate(() => !!(window as any).__studio.gizmo.object)).toBe(true);
+  const c1 = await centre(ids.p1);
+  await drag(2);
+  await expect.poll(async () => (await centre(ids.p1))[0]).toBeCloseTo(c1[0] + 2, 3);
+  expect(await page.evaluate((id) => !!(window as any).__studio.state.placements[id], ids.p1)).toBe(true);
+  // a group of both pins moves together (the gizmo on their centre)
+  await page.evaluate((ids) => { const s = (window as any).__studio; s.store.groups.pins = [ids.p1, ids.p2]; s.tree.rebuild(); }, ids);
+  await page.locator("#tree .row", { hasText: "pins" }).first().click();
+  const c2 = await centre(ids.p2), c1b = await centre(ids.p1);
+  await drag(1);
+  await expect.poll(async () => (await centre(ids.p2))[0]).toBeCloseTo(c2[0] + 1, 3);
+  expect((await centre(ids.p1))[0]).toBeCloseTo(c1b[0] + 1, 3);
+  // Ctrl-drag: a linked copy of the group where it was dragged to; the pins stay
+  const box = await page.evaluate(() => { const r = (window as any).__studio.renderer.domElement.getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: r.height }; });
+  // ⌘ / Ctrl held as the view is pressed (synthetic: the test browser drops mouse events while ⌘ is down); a click on empty space deselects
+  await page.evaluate((b) => { const c = (window as any).__studio.renderer.domElement, o = { bubbles: true, clientX: b.x + b.width / 2, clientY: b.y + b.height - 80 };
+    c.dispatchEvent(new PointerEvent("pointerdown", { ...o, metaKey: true })); c.dispatchEvent(new PointerEvent("pointerup", o)); }, box);
+  expect(await page.evaluate(() => (window as any).__studio.downMods.copy)).toBe(true);
+  await page.locator("#tree .row", { hasText: "pins" }).first().click();
+  // (the Ctrl press on the view is remembered; selecting in the tree doesn't touch it)
+  await drag(3);
+  await expect.poll(() => page.evaluate(() => (window as any).__studio.copies.length)).toBe(1);
+  expect((await centre(ids.p2))[0]).toBeCloseTo(c2[0] + 1, 3);                          // originals back
+  const cp = await page.evaluate(() => (window as any).__studio.copies[0]);
+  expect(cp.of).toEqual(["@pins"]);
+  expect((await centre(`copies/${cp.id}`))[0]).toBeCloseTo((c1b[0] + c2[0]) / 2 + 1 + 3, 1);
+  await expect.poll(async () => (await model(page, a.id)).copies?.length ?? 0).toBe(1);
+  // Move / Rotate buttons and Alt
+  await page.locator("#toolsbar [data-t=grot]").click();
+  expect(await page.evaluate(() => (window as any).__studio.gizmo.mode)).toBe("rotate");
+  await expect(page.locator("#toolsbar [data-t=grot]")).toHaveClass(/on/);
+  await page.locator("#toolsbar [data-t=gmove]").click();
+  expect(await page.evaluate(() => (window as any).__studio.gizmo.mode)).toBe("translate");
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.keyboard.down("Alt");
+  expect(await page.evaluate(() => { const g = (window as any).__studio.gizmo; return [g.mode, +g.rotationSnap.toFixed(6)]; })).toEqual(["rotate", +(Math.PI / 12).toFixed(6)]);
+  await page.keyboard.up("Alt");
+  expect(await page.evaluate(() => (window as any).__studio.gizmo.mode)).toBe("translate");
+});
+
 test("the tree keeps its open rows, selection and scroll when it rebuilds (making a group)", async ({ page }) => {
   await page.goto("/");
   const { readFileSync } = await import("node:fs");

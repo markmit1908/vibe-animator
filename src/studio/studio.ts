@@ -407,7 +407,9 @@ const frameAll = () => {
 const defaultCam = script.camera ?? frameAll();
 // gizmo selection / drag state (declared early: buildTimeline → onTimeline reads them)
 let gSel: { spec?: string; objs: THREE.Object3D[] } = { objs: [] };
-let drag: { members: { o: THREE.Object3D; world: THREE.Matrix4; p: THREE.Vector3; q: THREE.Quaternion }[]; pivot: THREE.Matrix4 } | undefined;
+let drag: { members: { o: THREE.Object3D; world: THREE.Matrix4; p: THREE.Vector3; q: THREE.Quaternion }[]; pivot: THREE.Matrix4; copy?: boolean } | undefined;
+/** modifier keys at the last pointer press on the view (Ctrl/⌘-drag on the gizmo drags out a copy) */
+let downMods = { copy: false };
 let gizmoReady = false; // set once the gizmo exists (timeline refreshes before that skip it)
 let previewUnlocked = new Set<string>(); // parts a previewed assist proposal would unlock
 /** Every locked part a script animates (compiled with locks ignored, recording what it touches). */
@@ -1254,7 +1256,8 @@ const probe: Probe = {
 
 function gizmoFor(o?: THREE.Object3D, spec?: string, objs?: THREE.Object3D[]) {
   gSel = { spec, objs: objs ?? (o ? [o] : []) };
-  const ok = gSel.objs.length > 0 && gSel.objs.every((x) => !isLocked(x)) && (player.time === 0 || isAnim);
+  // the start pose (t = 0) may place locked parts too (locking only stops animation); later times edit the script: unlocked only
+  const ok = gSel.objs.length > 0 && (player.time === 0 || (isAnim && gSel.objs.every((x) => !isLocked(x))));
   if (!ok) { gizmo.detach(); return; }
   if (gSel.objs.length === 1 && o && !spec?.startsWith('@')) { gizmo.attach(o); return; }
   // groups / multi-selection: gizmo on a pivot at the bounding-box centre
@@ -1281,7 +1284,10 @@ gizmo.addEventListener('dragging-changed', (e: any) => {
     drag = {
       members: gSel.objs.map((o) => ({ o, world: o.matrixWorld.clone(), p: o.position.clone(), q: o.quaternion.clone() })),
       pivot: (gizmo.object === proxy ? proxy : gSel.objs[0]).matrixWorld.clone(),
+      copy: downMods.copy && player.time <= 1e-4,
     };
+    // locked parts skip matrix updates: let them follow the drag (reconcile locks them again after)
+    for (const o of gSel.objs) if (isLocked(o)) o.traverse((x) => { x.matrixAutoUpdate = true; x.matrixWorldAutoUpdate = true; });
     return;
   }
   if (!drag) return;
@@ -1312,6 +1318,33 @@ gizmo.addEventListener('dragging-changed', (e: any) => {
     gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs);
     return;
   }
+  // Ctrl/⌘-drag: a linked copy where the parts were dragged to; the originals go back
+  if (d.copy) {
+    const m0 = d.members[0];
+    m0.o.updateMatrixWorld(true);
+    const D = m0.o.matrixWorld.clone().multiply(m0.world.clone().invert());       // the drag, world
+    for (const m of d.members) { m.o.position.copy(m.p); m.o.quaternion.copy(m.q); m.o.updateMatrixWorld(true); }
+    void (async () => {
+      for (const m of d.members) if (isLocked(m.o)) await reconcile(m.o);
+      const specs = tree.selectedSpecs().filter((s) => s !== COPIES_ROOT && s !== SHAPES_ROOT);
+      const objs = gSel.objs;
+      const c = sourcesBox(objs).getCenter(new THREE.Vector3());
+      const q = new THREE.Quaternion(); D.decompose(new THREE.Vector3(), q, new THREE.Vector3());
+      const cur = selectedCopy();
+      const base = cur ? cur.id.replace(/-\d+$/, '') : specs[0]?.startsWith('@') ? specs[0].slice(1) : String(objs[0].userData.label ?? idOfObj(objs[0]).split('/').pop());
+      // a copy of a copy copies its sources (and composes its pose)
+      const of = cur ? cur.of : specs;
+      let pos = c.clone().applyMatrix4(D), rot = q;
+      if (cur) { rot = q.clone().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(...(cur.rotation.map(THREE.MathUtils.degToRad) as [number, number, number]), 'XYZ'))); pos = new THREE.Vector3(...cur.position).applyMatrix4(D); }
+      const def: CopyDef = { id: freeCopyName(base, copies.map((x) => x.id)), of, position: pos.toArray().map((v) => +v.toFixed(4)),
+        rotation: new THREE.Euler().setFromQuaternion(rot, 'XYZ').toArray().slice(0, 3).map((a) => +THREE.MathUtils.radToDeg(a as number).toFixed(3)),
+        ...(cur?.mirror ? { mirror: cur.mirror } : {}) };
+      copies.push(def);
+      await syncCopies(true, copyPartId(def.id));
+      toast(`Copied to ${def.id}`);
+    })();
+    return;
+  }
   // start pose: a shape's own numbers (position, rotation); other parts record placements
   let shapeMoved = false, copyMoved = false;
   for (const m of d.members) {
@@ -1336,17 +1369,39 @@ gizmo.addEventListener('dragging-changed', (e: any) => {
   if (copyMoved) { edit({ copies: clone(copies) }); refreshCopyPanel(true); }
   persistWorking();
   buildTimeline();
+  void (async () => { for (const m of d.members) if (isLocked(m.o)) await reconcile(m.o); })();   // lock their matrices again
 });
+renderer.domElement.addEventListener('pointerdown', (e) => (downMods = { copy: e.ctrlKey || e.metaKey }), true);
+// gizmo mode: W move, E rotate (also the tool buttons); hold Alt/Option to rotate in 15° steps
+const toolGizmo = () => {
+  toolbar.querySelector('[data-t=gmove]')?.classList.toggle('on', gizmo.mode === 'translate');
+  toolbar.querySelector('[data-t=grot]')?.classList.toggle('on', gizmo.mode === 'rotate');
+};
+function setGizmoMode(m: 'translate' | 'rotate') { gizmo.setMode(m); toolGizmo(); }
+let altPrev: { mode: 'translate' | 'rotate' | 'scale'; snap: number | null } | null = null;
+const altUp = () => {
+  if (!altPrev) return;
+  // mid-drag: after it (dragging-changed – the drag handler, registered earlier, reads the mode first)
+  if (gizmo.dragging) { const f = (e: any) => { if (e.value) return; gizmo.removeEventListener('dragging-changed', f); altUp(); }; gizmo.addEventListener('dragging-changed', f); return; }
+  gizmo.setRotationSnap(altPrev.snap); gizmo.setMode(altPrev.mode); altPrev = null; toolGizmo();
+};
+on('keydown', (e: any) => {
+  if (e.key !== 'Alt' || altPrev || !gizmo.object) return;
+  altPrev = { mode: gizmo.mode, snap: gizmo.rotationSnap };
+  gizmo.setMode('rotate'); gizmo.setRotationSnap(THREE.MathUtils.degToRad(15)); toolGizmo();
+});
+on('keyup', (e: any) => { if (e.key === 'Alt') altUp(); });
+on('blur', () => altUp());
 on('keydown', (e: any) => {
   if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).closest?.('.cm-editor')) return;
-  if (e.key === 'w') gizmo.setMode('translate');
+  if (e.key === 'w') setGizmoMode('translate');
   if (e.key === 'H' && !e.metaKey && !e.ctrlKey) void blankOthers();
   if (e.key === 'f' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); toggleFind(true); }
   if (e.key === 'h' && !e.metaKey && !e.ctrlKey) { tree.toggleHiddenSelected(); updateTools(); }
   if (e.key === 'd' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void duplicateSelection(); }
   if (e.key === 'g' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); tree.groupSelected(); updateTools(); }
   if (e.key === 'k' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); toggleKeep(); }
-  if (e.key === 'e') gizmo.setMode('rotate');
+  if (e.key === 'e') setGizmoMode('rotate');
   if (e.key === 'Escape' && originPick) { endOrigin(); return; }
   if (e.key === 'Escape') { gizmo.detach(); tree.select(undefined, false); }
   if (e.key === 'r' && gizmo.object && player.time === 0) { // reset selection to its original placement
@@ -1933,6 +1988,8 @@ toolbar.innerHTML = `<button data-t="blank" title="Blank / unblank the selected 
   <button data-t="origin" title="Set the model origin: click a cylindrical face (its axis), then a flat face (its height); the model moves so that point is (0,0,0)"><span class="i">⊕</span><span class="l">Set origin</span></button>
   <button data-t="shape" title="Shapes: add a box, cylinder, tube, sphere, cone, plane or hex prism – sizes, position, colour, linear / circular arrays. Select a shape to edit it."><span class="i">◇</span><span class="l">Shape</span></button>
   <div class="shpop" hidden></div>
+  <button data-t="gmove" class="on" title="Move: the gizmo's arrows move the selection (W). Ctrl/⌘-drag drags out a linked copy instead"><span class="i">✥</span><span class="l">Move</span></button>
+  <button data-t="grot" title="Rotate: the gizmo's rings turn the selection about its centre (E); hold Alt/Option to rotate in 15° steps"><span class="i">⟳</span><span class="l">Rotate</span></button>
   <button data-t="dup" title="Duplicate the selection (parts, assemblies or a group) as a linked copy: it follows the CAD, has its own position and rotation, and scripts can animate it (⌘D)"><span class="i">⧉</span><span class="l">Duplicate</span></button>
   <div class="cppop" hidden></div>
   <button data-t="align" title="Align the selection to another part's box: sit on top, centre on, line up faces (sets the start pose)"><span class="i">⊟</span><span class="l">Align</span></button>
@@ -2586,6 +2643,8 @@ toolbar.querySelector<HTMLElement>('[data-t=align]')!.onclick = () => {
   toolbar.querySelector('[data-t=align]')!.classList.toggle('on', !alpop.hidden);
   refreshAlignPanel();
 };
+toolbar.querySelector<HTMLElement>('[data-t=gmove]')!.onclick = () => setGizmoMode('translate');
+toolbar.querySelector<HTMLElement>('[data-t=grot]')!.onclick = () => setGizmoMode('rotate');
 toolbar.querySelector<HTMLElement>('[data-t=remove]')!.onclick = () => void removeSelection();
 toolbar.querySelector<HTMLElement>('[data-t=keeponly]')!.onclick = () => void keepOnly();
 toolbar.querySelector<HTMLElement>('[data-t=dup]')!.onclick = () => void duplicateSelection();
@@ -2922,7 +2981,7 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 }
 
 // read-only handle for tests and debugging
-(window as any).__studio = { slimCad, gizmo, boxSelect, get copies() { return copies; }, duplicateSelection, renderSheetPng, svgToPdf, vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
+(window as any).__studio = { get downMods() { return downMods; }, slimCad, gizmo, boxSelect, get copies() { return copies; }, duplicateSelection, renderSheetPng, svgToPdf, vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
   /** tests: a block with many small parts buried behind the cut plane (x < 0), like dowels without holes */
   addTestBuried: (count = 60) => {
     const mk = (col: number) => withCaps(new THREE.MeshToonMaterial({ color: col, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));
