@@ -29,7 +29,7 @@ const ramp = (() => {
 const seg = (name: string) => (name || 'node').replace(/\//g, '_').trim();
 
 /** Child ids follow names; duplicate sibling names get "#2", "#3"… */
-function childIds(o: THREE.Object3D, id: string): [THREE.Object3D, string][] {
+export function childIds(o: THREE.Object3D, id: string): [THREE.Object3D, string][] {
   const used = new Map<string, number>();
   return o.children.map((c) => {
     const base = seg(c.name);

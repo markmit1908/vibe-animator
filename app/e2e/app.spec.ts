@@ -589,6 +589,45 @@ test("clean-up: Remove and Keep only the selection (undoable); move and turn a C
   expect(await page.evaluate(() => (window as any).__studio.built.registry.has("plant"))).toBe(true);
 });
 
+test("slim CAD: write a .glb without the removed parts and switch to it – ids and positions stay", async ({ page }) => {
+  await page.goto("/");
+  const { readFileSync } = await import("node:fs");
+  await api(page).put("/api/files/CAD/small.glb?overwrite=true", { data: readFileSync(new URL("./fixtures/small.glb", import.meta.url)) });
+  const m = { name: "Slim", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [{ id: "plant", file: "CAD/small.glb", up: "y", ground: true, position: [0, 0, 0] }] },
+    script: { language: "anim", text: 'label "S"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Slim");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const state = () => page.evaluate(() => {
+    const s = (window as any).__studio, T = s.THREE, r = s.built.registry;
+    const out: Record<string, { c: number[] | null; meshes: number }> = {};
+    for (const [id, o] of r) {
+      if (!/\/(Pin_1|Pin_2)$/.test(id)) continue;
+      let meshes = 0; o.traverse((x: any) => { if (x.isMesh && x.geometry?.attributes?.position?.count) meshes++; });
+      o.updateWorldMatrix(true, true); const b = new T.Box3().setFromObject(o);
+      out[id.split("/").pop()!] = { c: b.isEmpty() ? null : b.getCenter(new T.Vector3()).toArray().map((v: number) => +v.toFixed(4)), meshes };
+    }
+    return { out, ids: [...r.keys()].filter((id: string) => id.startsWith("plant/")).sort() };
+  });
+  const before = await state();
+  const p2 = before.ids.find((id: string) => id.endsWith("/Pin_2"))!;
+  await page.evaluate((id) => { const s = (window as any).__studio; s.tree.selectId(id); }, p2);
+  await page.locator("#toolsbar [data-t=remove]").click();
+  await expect.poll(async () => (await model(page, a.id)).removed).toEqual([p2]);
+  await page.evaluate(() => (window as any).__studio.slimCad(0, false));
+  // the studio remounts on the slim file
+  await expect.poll(async () => (await model(page, a.id)).scene.cad_models[0].file, { timeout: 15_000 }).toBe("CAD/small-slim.glb");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const after = await state();
+  expect(after.ids).toEqual(before.ids);                                       // same ids (Pin_2 is an empty placeholder)
+  expect(after.out.Pin_2.meshes).toBe(0);
+  expect(after.out.Pin_1.c).toEqual(before.out.Pin_1.c);                      // nothing moved (grounding baked into the position)
+  const mm = (await model(page, a.id)).scene.cad_models[0];
+  expect(mm.ground).toBe(false);
+  const big = (await api(page).get("/api/files/CAD/small.glb")).body(), small = (await api(page).get("/api/files/CAD/small-slim.glb")).body();
+  expect((await small).length).toBeLessThan((await big).length);
+});
+
 test("the tree keeps its open rows, selection and scroll when it rebuilds (making a group)", async ({ page }) => {
   await page.goto("/");
   const { readFileSync } = await import("node:fs");

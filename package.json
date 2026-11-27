@@ -11,6 +11,9 @@
     "drawings": "node app/scripts/drawings.mjs"
   },
   "dependencies": {
+    "@gltf-transform/core": "4.5.1",
+    "@gltf-transform/extensions": "4.5.1",
+    "@gltf-transform/functions": "4.5.1",
     "@anthropic-ai/sdk": "^1.14.0",
     "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.11.1",

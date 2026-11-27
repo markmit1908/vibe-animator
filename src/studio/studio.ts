@@ -8,6 +8,7 @@ import { compile } from '../timeline/compile';
 import { Player } from '../timeline/player';
 import { fitVerticalCylinder, planeHeight } from '../scene/origin';
 import { poseModel } from '../scene/cad';
+import { slimGlb } from '../scene/slim';
 import { buildCopy, COPIES_ROOT, copyPartId, freeCopyName, sourcesBox, type CopyDef } from '../scene/copies';
 import { buildShape, freeName, KINDS, SHAPES_ROOT, shapePartId, SIZES, validName, type ShapeDef, type ShapeKind } from '../scene/shapes';
 import { capUniforms, SectionCaps, withCaps } from '../view/caps';
@@ -2685,6 +2686,7 @@ async function renderCad() {
   const mb = (n: number) => n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${Math.max(1, Math.round(n / 1e6))} MB`;
   cadpop.innerHTML = `<b>CAD models in this animation</b>
     ${list.length ? list.map((m, i) => `<div class="row"><span class="n" title="${escH(m.file)}">${escH(m.id)} <span class="hint">${escH(m.file)}</span></span>
+      ${[...removed].some((id) => id.startsWith(`${m.id}/`)) ? `<button data-c="slim" data-i="${i}" title="Write a slimmed copy of this file without the parts removed in this animation (CAD/<name>-slim.glb), then switch to it – smaller and faster to load; ids stay the same">✂ Slim</button>` : ''}
       <button data-c="del" data-i="${i}" title="Remove from this animation (the file stays in the vault)">✕</button></div>
       <div class="pose" data-i="${i}" title="Where this model sits: position x, y, z (m) and a turn about the vertical axis (°)">${[0, 1, 2].map((k) => `<input type="number" step="0.1" data-k="p${k}" value="${+(m.position?.[k] ?? 0).toFixed(4)}">`).join('')}<input type="number" step="15" data-k="ry" value="${+(m.rotation_deg?.[1] ?? 0).toFixed(3)}" title="Turn about Y (°)"></div>`).join('') : '<div class="hint">None yet.</div>'}
     <b style="margin-top:6px">Add</b>
@@ -2697,6 +2699,7 @@ async function renderCad() {
     if (!confirm(`Remove ${m.id} (${m.file}) from this animation?\nScript lines and groups that use its parts will show errors. The file stays in the vault.`)) return;
     setCad(list.filter((_, j) => j !== +b.dataset.i!));
   }));
+  cadpop.querySelectorAll<HTMLElement>('[data-c=slim]').forEach((b) => (b.onclick = () => void slimCad(+b.dataset.i!)));
   cadpop.querySelectorAll<HTMLElement>('.pose').forEach((row) => {
     let timer: number | undefined;
     row.querySelectorAll<HTMLInputElement>('input').forEach((inp) => (inp.oninput = () => {
@@ -2751,6 +2754,39 @@ async function setCadPose(i: number, position: number[], turnY: number) {
   if (copies.length) await syncCopies(false);
   buildTimeline({ atStart: true });
   player.seek(Math.min(t, player.duration)); player.playing = playing;
+}
+/** Write CAD/<name>-slim.glb without the parts removed here, and (asked) switch the animation to it. */
+async function slimCad(i: number, ask = true) {
+  const list = clone(cadList()), m = list[i];
+  if (!m || !io.files) return;
+  const n = [...removed].filter((id) => id.startsWith(`${m.id}/`)).length;
+  const out = m.file.replace(/(-slim)?\.glb$/i, '') + '-slim.glb';
+  if (ask && !confirm(`Write ${out} without the ${n} part${n === 1 ? '' : 's'} removed from ${m.id}?\nThe original file stays in the vault.`)) return;
+  let r: Awaited<ReturnType<typeof slimGlb>>;
+  await progress.start(`Slimming ${m.id}`, `Reading ${m.file}…`);
+  try {
+    const bytes = await (await fetch(io.fileUrl(m.file))).arrayBuffer();
+    await progress.step(`Leaving out ${n} removed part${n === 1 ? '' : 's'}…`, 0.3);
+    r = await slimGlb(bytes, m.id, [...removed]);
+    await progress.step(`Saving ${out}…`, 0.8);
+    const file = new File([r.glb as BlobPart], out.split('/').pop()!, { type: 'model/gltf-binary' });
+    let up = await io.files.upload(out, file, undefined, false);
+    if (up === 'exists') {
+      progress.done();
+      if (ask && !confirm(`${out} already exists. Replace it?`)) return;
+      await progress.start(`Slimming ${m.id}`, `Saving ${out}…`);
+      up = await io.files.upload(out, file, undefined, true);
+    }
+  } catch (e) { progress.done(); alert(`Slimming failed: ${e}`); return; } finally { progress.done(); }
+  const mb = (x: number) => `${(x / 1e6).toFixed(1)} MB`;
+  const msg = `${out}: ${mb(r.before)} → ${mb(r.after)} (${r.emptied} part${r.emptied === 1 ? '' : 's'} left out${r.skipped.length ? `; ${r.skipped.length} couldn't be: ${r.skipped.slice(0, 3).join(', ')}${r.skipped.length > 3 ? '…' : ''}` : ''}).`;
+  console.info(msg);
+  if (ask && !confirm(`${msg}\n\nSwitch this animation to the slimmed file now? (Part ids stay the same.)`)) { toast(msg, 5000); return; }
+  // keep the model exactly where it is: a grounded model's offset came from its (now smaller) box
+  const wrapper = built.registry.get(m.id), inner = wrapper?.children.find((c) => c.name === 'model');
+  if (m.ground && inner) { m.position = (m.position ?? [0, 0, 0]).map((v: number, k: number) => +(v + inner.position.getComponent(k)).toFixed(6)); m.ground = false; }
+  list[i] = { ...m, file: out };
+  setCad(list);
 }
 async function uploadCad(f: File) {
   if (!io.files) return;
@@ -2886,7 +2922,7 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 }
 
 // read-only handle for tests and debugging
-(window as any).__studio = { gizmo, boxSelect, get copies() { return copies; }, duplicateSelection, renderSheetPng, svgToPdf, vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
+(window as any).__studio = { slimCad, gizmo, boxSelect, get copies() { return copies; }, duplicateSelection, renderSheetPng, svgToPdf, vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
   /** tests: a block with many small parts buried behind the cut plane (x < 0), like dowels without holes */
   addTestBuried: (count = 60) => {
     const mk = (col: number) => withCaps(new THREE.MeshToonMaterial({ color: col, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));
