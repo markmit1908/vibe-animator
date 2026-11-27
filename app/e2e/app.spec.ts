@@ -398,6 +398,103 @@ test("linked copies: duplicate a part (⌘D), place it by numbers or the gizmo, 
   expect((await info()).copy).not.toBeNull();
 });
 
+test("copies: linear and circular arrays (members by name), mirrored copies keep outward faces in drawings", async ({ page }) => {
+  await page.goto("/");
+  const { readFileSync } = await import("node:fs");
+  await api(page).put("/api/files/CAD/small.glb?overwrite=true", { data: readFileSync(new URL("./fixtures/small.glb", import.meta.url)) });
+  const m = { name: "Arrays", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [{ id: "plant", file: "CAD/small.glb", clip: false }] },
+    script: { language: "anim", text: 'label "A"' }, snapshots: { active: "default", items: { default: { locked: { plant: false }, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Arrays");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const pin = await page.evaluate(() => { for (const id of (window as any).__studio.built.registry.keys()) if (id.endsWith("/Pin_1")) return id; });
+  await page.evaluate((pin) => (window as any).__studio.tree.selectId(pin), pin);
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.keyboard.press("Meta+d");
+  await expect(page.locator("#toolsbar .cppop")).toBeVisible();
+  const centre = (id: string) => page.evaluate((id) => { const s = (window as any).__studio, T = s.THREE, o = s.built.registry.get(id); if (!o) return null;
+    o.updateWorldMatrix(true, true); return new T.Box3().setFromObject(o).getCenter(new T.Vector3()).toArray().map((v: number) => +v.toFixed(3)); }, id);
+  const c0 = (await centre("copies/Pin_1-1"))!;
+  // linear: 3 members, 0.5 m apart along z
+  await page.locator("#toolsbar .cppop [data-f=atype]").selectOption("linear");
+  await expect(page.locator("#toolsbar .cppop [data-f=count]")).toBeVisible();
+  const set = async (f: string, v: string) => { const i = page.locator(`#toolsbar .cppop [data-f=${f}]`); await i.fill(v); await i.dispatchEvent("input"); };
+  await set("count", "3"); await set("step0", "0"); await set("step2", "0.5");
+  await expect.poll(async () => (await centre("copies/Pin_1-1-2"))?.[2]).toBeCloseTo(c0[2] + 1, 2);
+  expect((await centre("copies/Pin_1-1-0"))![2]).toBeCloseTo(c0[2], 2);
+  expect((await centre("copies/Pin_1-1-2"))![0]).toBeCloseTo(c0[0], 2);
+  await expect.poll(() => page.evaluate((pin) => (window as any).__studio.built.registry.has(`copies/Pin_1-1-1/${pin}`), pin)).toBe(true);
+  // members by name in scripts
+  await page.evaluate(() => { const p = (window as any).__studio.scriptPanel; p.setText(p.text + "\nmove Pin_1-1-1, Pin_1-1-2 by [0,1,0] 1s"); });
+  await expect(page.locator("#script .status")).toHaveText("✓");
+  // circular: 4 round a vertical axis through the origin – member 2 is opposite member 0
+  await page.evaluate(() => (window as any).__studio.tree.selectId("copies/Pin_1-1"));
+  await page.locator("#toolsbar .cppop [data-f=atype]").selectOption("circular");
+  await set("count", "4");
+  await expect.poll(() => centre("copies/Pin_1-1-3")).not.toBeNull();
+  await expect.poll(() => centre("copies/Pin_1-1-4")).toBeNull();
+  const a = (await centre("copies/Pin_1-1-0"))!, b = (await centre("copies/Pin_1-1-2"))!;
+  expect(b[0]).toBeCloseTo(-a[0], 2); expect(b[2]).toBeCloseTo(-a[2], 2); expect(b[1]).toBeCloseTo(a[1], 2);
+  // mirror: the copy's transform is mirrored, its drawing the same as the unmirrored copy (faces still outward)
+  await page.locator("#toolsbar .cppop [data-f=atype]").selectOption("");
+  await expect.poll(() => centre("copies/Pin_1-1-0")).toBeNull();
+  const draw = () => page.evaluate(() => { const s = (window as any).__studio; return s.vectorDrawing({ only: [s.built.registry.get("copies/Pin_1-1")], titleBlock: false }).stats; });
+  const plain = await draw();
+  await page.locator("#toolsbar .cppop [data-f=mirror]").selectOption("x");
+  await expect.poll(() => page.evaluate(() => { const s = (window as any).__studio, o = s.built.registry.get("copies/Pin_1-1"); let neg = false; o.updateWorldMatrix(true, true);
+    o.traverse((x: any) => { if (x.isMesh && x.matrixWorld.determinant() < 0) neg = true; }); return neg; })).toBe(true);
+  const mir = await draw();
+  expect(mir["lines.outline"]).toBeGreaterThan(0);
+  expect(Math.abs(mir["lines.outline"] - plain["lines.outline"])).toBeLessThanOrEqual(2);
+  // saved in the model
+  await expect.poll(async () => { const p = (await (await api(page).get("/api/home")).json()).projects.find((x: any) => x.name === "Arrays");
+    return (await (await api(page).get(`/api/projects/${p.id}`)).json()).problem.copies?.[0]?.mirror; }, { timeout: 5_000 }).toBe("x");
+});
+
+test("window / crossing select: Shift-drag left→right picks parts wholly inside, right→left also crossing; ⌘ adds", async ({ page }) => {
+  await page.goto("/");
+  const box = (id: string, x: number) => ({ id, kind: "box", size: [1, 1, 1], position: [x, 0.5, 0], rotation: [0, 0, 0], color: "#c8d0d9" });
+  const m = { name: "Box select", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] }, shapes: [box("a", -2), box("b", 0), box("c", 2)],
+    script: { language: "anim", text: 'label "B"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Box select");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  // three 1 m boxes at x = -2, 0, 2, seen from the front
+  // a fixed front view (after the studio's own first framing, which can land late on a busy machine)
+  const place = () => page.evaluate(() => {
+    const s = (window as any).__studio;
+    s.ui.followCamera = false; s.controls.enabled = true; s.camera.position.set(0, 0.5, 30); s.controls.target.set(0, 0.5, 0);   // small: the boxes fit between the tools bar and the right panel s.controls.update();
+  });
+  await place(); await page.waitForTimeout(500); await place();
+  const scr = (x: number) => page.evaluate((x) => { const s = (window as any).__studio, T = s.THREE, c = s.renderer.domElement.getBoundingClientRect();
+    const p = new T.Vector3(x, 0.5, 0).project(s.camera); return { x: c.left + (p.x + 1) / 2 * c.width, y: c.top + (1 - p.y) / 2 * c.height }; }, x);
+  const sel = () => page.evaluate(() => (window as any).__studio.tree.selectedSpecs().sort());
+  const cam0 = await page.evaluate(() => (window as any).__studio.camera.position.toArray());
+  const drag = async (from: { x: number; y: number }, to: { x: number; y: number }, mods: string[] = ["Shift"]) => {
+    for (const k of mods) await page.keyboard.down(k);
+    await page.mouse.move(from.x, from.y); await page.mouse.down(); await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2); await page.mouse.move(to.x, to.y); await page.mouse.up();
+    for (const k of mods) await page.keyboard.up(k);
+  };
+  const [ax, bx, cx] = [await scr(-2), await scr(0), await scr(2)];
+  const dy = 40, mx = 25;
+  // window: from left of a to the middle of b → a only
+  await drag({ x: ax.x - mx, y: ax.y - dy }, { x: bx.x, y: bx.y + dy });
+  await expect.poll(sel).toEqual(["shapes/a"]);
+  // crossing (right → left), same box → a and b
+  await drag({ x: bx.x, y: bx.y + dy }, { x: ax.x - mx, y: ax.y - dy });
+  await expect.poll(sel).toEqual(["shapes/a", "shapes/b"]);
+  // ⌘ + Shift adds c
+  await drag({ x: cx.x - mx, y: cx.y - dy }, { x: cx.x + mx, y: cx.y + dy }, ["Meta", "Shift"]);
+  await expect.poll(sel).toEqual(["shapes/a", "shapes/b", "shapes/c"]);
+  // the camera didn't move (no orbit / pan)
+  const cam1: number[] = await page.evaluate(() => (window as any).__studio.camera.position.toArray());
+  cam1.forEach((v, i) => expect(v).toBeCloseTo(cam0[i], 6));
+  // blanked parts aren't picked
+  await page.evaluate(() => { const s = (window as any).__studio; s.tree.selectId("shapes/b"); s.tree.toggleHiddenSelected(); s.tree.select(undefined, false); });
+  await drag({ x: cx.x + mx, y: cx.y + dy }, { x: ax.x - mx, y: ax.y - dy });
+  await expect.poll(sel).toEqual(["shapes/a", "shapes/c"]);
+});
+
 test("the tree keeps its open rows, selection and scroll when it rebuilds (making a group)", async ({ page }) => {
   await page.goto("/");
   const { readFileSync } = await import("node:fs");
@@ -1505,11 +1602,11 @@ test("fast sheet PNG: one GPU frame per sheet in its style, on the paper with th
   await page.goto("/");
   const draw = ['paper A4', 'scale 1:10', 'dpi 100', '', 'sheet o "Outline"', '  view front', '  scale 1:20', '', 'sheet s "Shaded"', '  view front', '  style shaded', '',
     'sheet h', '  view front', '  style hidden', '  only red'].join("\n");
-  const m = { name: "Png", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] },
+  const m = { name: "Sheet PNGs", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] },
     script: { language: "anim", text: 'label "P"' }, drawings: { language: "draw", text: draw },
     snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
   await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
-  await open(page, "Png");
+  await open(page, "Sheet PNGs");
   await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
   await page.locator("#right [data-t=illustration]").click();
   await expect(page.locator("#illustration .draw-script .st")).toHaveText("✓ 3 sheets");

@@ -36,6 +36,7 @@ import { PAPER, layout, fitScale, titleBox } from '../drawing/svg';
 import { DrawPanel } from '../view/drawPanel';
 import { svgToPdf } from '../drawing/pdf';
 import { ProgressSplash } from '../view/progress';
+import { partsInRect } from '../view/boxSelect';
 
 /** What the studio needs from its host app (SolverKit's editor). */
 export interface StudioIO {
@@ -252,7 +253,12 @@ async function buildCopies() {
     const supp: THREE.Mesh[] = [];
     for (const o of objs) o.traverse((x) => { if (x.userData.suppressed) supp.push(x as THREE.Mesh); });
     if (supp.length) await cad.restore(supp);
-    const { root } = buildCopy(d, { objs, skip: (o) => !!o.userData.removed }, (o, id) => { o.userData.id = id; built.registry.set(id, o); });
+    let clash = '';
+    const { root } = buildCopy(d, { objs, skip: (o) => !!o.userData.removed }, (o, id) => {
+      if (built.registry.has(id) && !clash) clash = id;
+      o.userData.id = id; built.registry.set(id, o);
+    });
+    if (clash) copyErrors.set(d.id, `Name clash: ${clash} is used twice – rename this copy`);
     if (supp.length) cad.suppress(supp);
     copiesRoot.add(root);
     root.updateMatrixWorld(true);
@@ -1061,6 +1067,61 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   tree.pick(hits[0]?.object, e.metaKey || e.ctrlKey || e.shiftKey);
 });
 const isShown = (o: THREE.Object3D | null): boolean => !o || (o.visible && isShown(o.parent));
+// ---------- window / crossing select: Shift-drag a box (left → right: wholly inside; right → left: inside or crossing) ----------
+{
+  const band = document.createElement('div');
+  band.id = 'selbox';
+  band.style.cssText = 'position:fixed;z-index:20;pointer-events:none;display:none;border:1px solid #4da3ff;background:rgba(77,163,255,.08)';
+  document.body.appendChild(band);
+  let start: { x: number; y: number; add: boolean } | null = null;
+  const rectOf = (e: PointerEvent) => ({ l: Math.min(start!.x, e.clientX), t: Math.min(start!.y, e.clientY), r: Math.max(start!.x, e.clientX), b: Math.max(start!.y, e.clientY), crossing: e.clientX < start!.x });
+  const move = (e: PointerEvent) => {
+    if (!start) return;
+    const r = rectOf(e);
+    Object.assign(band.style, { display: '', left: `${r.l}px`, top: `${r.t}px`, width: `${r.r - r.l}px`, height: `${r.b - r.t}px`,
+      borderStyle: r.crossing ? 'dashed' : 'solid', borderColor: r.crossing ? '#3ecf8e' : '#4da3ff', background: r.crossing ? 'rgba(62,207,142,.08)' : 'rgba(77,163,255,.08)' });
+  };
+  const up = (e: PointerEvent) => {
+    removeEventListener('pointermove', move, true); removeEventListener('pointerup', up, true);
+    band.style.display = 'none';
+    controls.enabled = true;
+    if (!start) return;
+    e.stopPropagation();                           // not a click-to-pick on the canvas
+    const r = rectOf(e), add = start.add;
+    start = null;
+    if (r.r - r.l < 3 && r.b - r.t < 3) return;    // a click, not a box
+    boxSelect(r, add);
+  };
+  // capture on the parent: before OrbitControls (Shift-drag would pan) and the click-to-pick handler see it
+  renderer.domElement.parentElement!.addEventListener('pointerdown', (e) => {
+    if (e.target !== renderer.domElement || !e.shiftKey || e.button !== 0 || originPick) return;
+    e.stopPropagation(); e.preventDefault();
+    start = { x: e.clientX, y: e.clientY, add: e.metaKey || e.ctrlKey };
+    controls.enabled = false;
+    addEventListener('pointermove', move, true); addEventListener('pointerup', up, true);
+  }, true);
+}
+/** Select the shown parts (meshes) in a screen rectangle (client px). */
+function boxSelect(r: { l: number; t: number; r: number; b: number; crossing: boolean }, add = false) {
+  const c = renderer.domElement.getBoundingClientRect();
+  const X = (x: number) => ((x - c.left) / c.width) * 2 - 1, Y = (y: number) => -((y - c.top) / c.height) * 2 + 1;
+  const rect = { x0: X(r.l), x1: X(r.r), y0: Y(r.b), y1: Y(r.t) };
+  const helper = gizmo.getHelper();
+  const cands: THREE.Mesh[] = [];
+  const walk = (o: THREE.Object3D) => {
+    if (!o.visible || o === helper) return;
+    const m = o as THREE.Mesh;
+    if (m.isMesh && o.userData.id && built.registry.get(o.userData.id) === o && !Array.isArray(m.material) && (m.material as THREE.Material).side !== THREE.BackSide && !isRemoved(o)) cands.push(m);
+    o.children.forEach(walk);
+  };
+  walk(built.root);
+  built.root.updateMatrixWorld(true);
+  const t0 = performance.now();
+  const hits: THREE.Object3D[] = partsInRect(cands, camera, rect, r.crossing);
+  console.info(`box select (${r.crossing ? 'crossing' : 'window'}): ${hits.length} of ${cands.length} parts, ${(performance.now() - t0).toFixed(0)} ms`);
+  tree.selectObjects(add ? [...new Set([...gSel.objs, ...hits])] : hits);
+  updateTools();
+}
 const clipped = (p: THREE.Vector3) => {
   const [a, b] = built.clipPlanes;
   return a.distanceToPoint(p) < 0 && b.distanceToPoint(p) < 0;
@@ -2215,7 +2276,7 @@ async function syncCopies(save = true, select?: string) {
   const still = keep.map((id) => built.registry.get(id)).filter(Boolean) as THREE.Object3D[];
   if (still.length) tree.selectObjects(still); else if (keep.some((id) => id.startsWith(COPIES_ROOT + '/'))) tree.select(undefined, false);
   if (save) edit({ copies: clone(copies) });
-  refreshCopyPanel(true);
+  refreshCopyPanel();   // not under the cursor while typing in it
 }
 /** The copy the selection is (its root), if any. */
 function selectedCopy(): CopyDef | undefined {
@@ -2270,17 +2331,36 @@ function refreshCopyPanel(force = false) {
   if (!force && def.id === shownCopy && cppop.contains(document.activeElement)) return;
   shownCopy = def.id;
   const v3 = (k: string, v: number[]) => `<div class="v3">${[0, 1, 2].map((i) => `<input type="number" step="0.05" data-f="${k}${i}" value="${num(v[i] ?? 0)}">`).join('')}</div>`;
-  const err = copyErrors.get(def.id);
+  const err = copyErrors.get(def.id), a = def.array;
   cppop.innerHTML = `<b>Copy <code>${def.id}</code></b>
     <div class="r">Name <input data-f="id" value="${def.id}" spellcheck="false"></div>
     <div class="r">Of <input data-f="of" value="${def.of.join(', ')}" spellcheck="false" title="Part ids, @groups – as in scripts"></div>
     <div class="r">Position ${v3('pos', def.position)}</div>
     <div class="r">Rotation° ${v3('rot', def.rotation)}</div>
+    <div class="r">Mirror <select data-f="mirror"><option value="">none</option>${(['x', 'y', 'z'] as const).map((k) => `<option ${def.mirror === k ? 'selected' : ''}>${k}</option>`).join('')}</select></div>
+    <div class="r">Array <select data-f="atype"><option value="">none</option><option value="linear" ${a?.type === 'linear' ? 'selected' : ''}>linear</option><option value="circular" ${a?.type === 'circular' ? 'selected' : ''}>circular</option></select></div>
+    ${a ? `<div class="r">Count <input type="number" min="1" max="500" step="1" data-f="count" value="${a.count}"></div>` : ''}
+    ${a?.type === 'linear' ? `<div class="r">Step (m) ${v3('step', a.step)}</div>` : ''}
+    ${a?.type === 'circular' ? `<div class="r">Axis x, z <div class="v3"><input type="number" step="0.05" data-f="cx" value="${num(a.centre[0])}"><input type="number" step="0.05" data-f="cz" value="${num(a.centre[1])}"></div></div>
+      <div class="r">Angle° <input type="number" step="15" data-f="angle" value="${num(a.angle)}"></div>` : ''}
     <div class="err">${err ?? ''}</div>
     <div class="acts"><button data-s="dup">Duplicate</button><button data-s="src">Select source</button><button data-s="del">Delete</button></div>
-    <div class="hint">Linked: follows its source. Position is the copy's centre (m). In scripts: <code>${def.id}</code>, its parts <code>${copyPartId(def.id)}/…</code></div>`;
+    <div class="hint">Linked: follows its source. Position is the copy's centre (m); a circular array turns about a vertical axis. In scripts: <code>${def.id}</code>${a ? `, members <code>${def.id}-0</code>… (<code>${def.id}-*</code>)` : ''}; parts inside by full id <code>${copyPartId(a ? def.id + '-0' : def.id)}/…</code></div>`;
   const q = <T extends HTMLElement>(f: string) => cppop.querySelector<T>(`[data-f="${f}"]`)!;
   const errEl = cppop.querySelector<HTMLElement>('.err')!;
+  q<HTMLSelectElement>('mirror').onchange = () => {
+    const v = q<HTMLSelectElement>('mirror').value as CopyDef['mirror'] | '';
+    if (v) def.mirror = v; else delete def.mirror;
+    void syncCopies(true, copyPartId(def.id)).then(() => refreshCopyPanel(true));
+  };
+  q<HTMLSelectElement>('atype').onchange = () => {
+    const t = q<HTMLSelectElement>('atype').value;
+    const w = +(sourcesBox(copySources(def).objs).getSize(new THREE.Vector3()).x * 1.1).toFixed(3) || 1;
+    if (t === 'linear') def.array = { type: 'linear', count: 4, step: [w, 0, 0] };
+    else if (t === 'circular') def.array = { type: 'circular', count: 6, centre: [0, 0], angle: 360 };
+    else delete def.array;
+    void syncCopies(true, copyPartId(def.id)).then(() => refreshCopyPanel(true));
+  };
   let timer: number | undefined;
   cppop.querySelectorAll<HTMLInputElement>('input').forEach((i) => (i.oninput = () => {
     clearTimeout(timer);
@@ -2293,7 +2373,13 @@ function refreshCopyPanel(force = false) {
       if (!of.length) { errEl.textContent = 'Of: what to copy (part ids, @groups)'; return; }
       errEl.textContent = '';
       const old = def.id;
-      const rebuild = id !== old || of.join(',') !== def.of.join(',');
+      let rebuild = id !== old || of.join(',') !== def.of.join(',');
+      if (def.array) {
+        const count = Math.max(1, Math.min(500, Math.round(n('count') || 1)));
+        const arr: CopyDef['array'] = def.array.type === 'linear' ? { type: 'linear', count, step: [0, 1, 2].map((k) => n(`step${k}`)) }
+          : { type: 'circular', count, centre: [n('cx'), n('cz')], angle: n('angle') || 360 };
+        if (JSON.stringify(arr) !== JSON.stringify(def.array)) { def.array = arr; rebuild = true; }
+      }
       def.position = [0, 1, 2].map((k) => n(`pos${k}`)); def.rotation = [0, 1, 2].map((k) => n(`rot${k}`));
       def.of = of;
       if (id !== old) { renameCopyRefs(old, id); def.id = id; shownCopy = id; }
@@ -2604,7 +2690,7 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 }
 
 // read-only handle for tests and debugging
-(window as any).__studio = { get copies() { return copies; }, duplicateSelection, renderSheetPng, svgToPdf, vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
+(window as any).__studio = { boxSelect, get copies() { return copies; }, duplicateSelection, renderSheetPng, svgToPdf, vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
   /** tests: a block with many small parts buried behind the cut plane (x < 0), like dowels without holes */
   addTestBuried: (count = 60) => {
     const mk = (col: number) => withCaps(new THREE.MeshToonMaterial({ color: col, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));

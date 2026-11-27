@@ -110,13 +110,15 @@ export function collectMeshes(root: THREE.Object3D, opt: CollectOptions | THREE.
       const color = m0?.color ? '#' + m0.color.getHexString() : undefined;
       const g = mesh.geometry, src = g.attributes.position as THREE.BufferAttribute;
       const n = src.count;
-      const idx = g.index ? new Uint32Array(g.index.array) : Uint32Array.from({ length: n - (n % 3) }, (_, i) => i);
+      const idx0 = g.index ? new Uint32Array(g.index.array) : Uint32Array.from({ length: n - (n % 3) }, (_, i) => i);
       const inst = (o as THREE.InstancedMesh).isInstancedMesh ? (o as THREE.InstancedMesh) : null;
       const count = inst ? inst.count : 1;
       for (let k = 0; k < count; k++) {
         if (inst) { inst.getMatrixAt(k, m); m.premultiply(o.matrixWorld); } else m.copy(o.matrixWorld);
         const pos = new Float32Array(n * 3);
         for (let i = 0; i < n; i++) { v.fromBufferAttribute(src, i).applyMatrix4(m); pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z; }
+        // a mirrored transform (mirrored copies) turns the faces inside out: keep them outward (sections, caps need it)
+        const idx = m.determinant() < 0 ? flipWinding(idx0) : idx0;
         if (cut) {
           const c = clipSoup(pos, idx, cut.planes, cut.intersection);
           if (!c.idx.length) continue;
@@ -129,5 +131,12 @@ export function collectMeshes(root: THREE.Object3D, opt: CollectOptions | THREE.
     for (const c of o.children) walk(c);
   };
   walk(root);
+  return out;
+}
+
+/** Triangles with the opposite winding (b and c swapped). */
+function flipWinding(idx: Uint32Array): Uint32Array {
+  const out = new Uint32Array(idx.length);
+  for (let t = 0; t + 2 < idx.length; t += 3) { out[t] = idx[t]; out[t + 1] = idx[t + 2]; out[t + 2] = idx[t + 1]; }
   return out;
 }

@@ -15,11 +15,26 @@ export interface CopyDef {
   position: number[];
   /** degrees about X, Y, Z (about the centre) */
   rotation: number[];
+  /** mirror across the plane through the centre, normal along this axis of the copy */
+  mirror?: 'x' | 'y' | 'z';
+  /** more of it: linear (step in world m) or circular (about a vertical axis through centre [x, z]; angle = total sweep, 360 = evenly round) */
+  array?: CopyArray;
 }
+export type CopyArray = { type: 'linear'; count: number; step: number[] } | { type: 'circular'; count: number; centre: number[]; angle: number };
 
 export const COPIES_ROOT = 'copies';
 export const copyPartId = (id: string) => `${COPIES_ROOT}/${id}`;
 export const copyChildId = (copy: string, srcId: string) => `${COPIES_ROOT}/${copy}/${srcId}`;
+/** an array member's name: <copy>-<i> (part ids copies/<copy>-<i>/<source id>) */
+export const memberName = (copy: string, i: number) => `${copy}-${i}`;
+
+/** Member i's world transform relative to the copy's own (world) pose: linear steps or turns about a vertical axis. */
+export function memberOffset(a: CopyArray, i: number): THREE.Matrix4 {
+  if (a.type === 'linear') return new THREE.Matrix4().makeTranslation(a.step[0] * i, a.step[1] * i, a.step[2] * i);
+  const per = Math.abs(a.angle) >= 360 ? a.angle / a.count : a.count > 1 ? a.angle / (a.count - 1) : 0;
+  const [cx, cz] = a.centre;
+  return new THREE.Matrix4().makeTranslation(cx, 0, cz).multiply(new THREE.Matrix4().makeRotationY(THREE.MathUtils.degToRad(per * i))).multiply(new THREE.Matrix4().makeTranslation(-cx, 0, -cz));
+}
 
 /** The source objects' world box (visible geometry). */
 export function sourcesBox(objs: THREE.Object3D[]): THREE.Box3 {
@@ -48,13 +63,36 @@ export function buildCopy(def: CopyDef, src: CopySource, register: (o: THREE.Obj
   const box = sourcesBox(src.objs);
   const centre = box.isEmpty() ? new THREE.Vector3() : box.getCenter(new THREE.Vector3());
   const toCentre = new THREE.Matrix4().makeTranslation(-centre.x, -centre.y, -centre.z);
-  for (const o of src.objs) {
-    if (src.skip(o)) continue;
-    const c = cloneTree(o, def.id, src.skip, register);
-    if (!c) continue;
-    // local = (sources' centre)⁻¹ × source world
-    new THREE.Matrix4().multiplyMatrices(toCentre, o.matrixWorld).decompose(c.position, c.quaternion, c.scale);
-    root.add(c);
+  /** one set of clones (named `name` for their ids) under `parent`, mirrored if asked */
+  const fill = (parent: THREE.Object3D, name: string) => {
+    let into = parent;
+    if (def.mirror) {
+      into = new THREE.Group(); into.name = 'mirror'; into.userData.mirror = def.mirror;
+      into.scale.set(def.mirror === 'x' ? -1 : 1, def.mirror === 'y' ? -1 : 1, def.mirror === 'z' ? -1 : 1);
+      parent.add(into);
+    }
+    for (const o of src.objs) {
+      if (src.skip(o)) continue;
+      const c = cloneTree(o, name, src.skip, register);
+      if (!c) continue;
+      // local = (sources' centre)⁻¹ × source world
+      new THREE.Matrix4().multiplyMatrices(toCentre, o.matrixWorld).decompose(c.position, c.quaternion, c.scale);
+      into.add(c);
+    }
+  };
+  const a = def.array;
+  if (!a || a.count <= 1) { fill(root, def.id); return { root, centre }; }
+  // an array: members <id>-0 … at their offsets (world), expressed in the copy's frame
+  root.updateMatrix();
+  const rootInv = root.matrix.clone().invert();
+  for (let i = 0; i < a.count; i++) {
+    const g = new THREE.Group();
+    const name = memberName(def.id, i);
+    g.name = name; g.userData.copyMember = i;
+    new THREE.Matrix4().multiplyMatrices(rootInv, memberOffset(a, i)).multiply(root.matrix).decompose(g.position, g.quaternion, g.scale);
+    register(g, `${COPIES_ROOT}/${name}`);
+    fill(g, name);
+    root.add(g);
   }
   return { root, centre };
 }

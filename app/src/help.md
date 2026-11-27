@@ -43,6 +43,8 @@ A glow around parts to point them out, from the script:
 
 Right-click a row for its menu; **F2** renames, **Delete** removes, ⌘/Ctrl-click adds or removes a row, **Shift**-click selects every row from the last one clicked.
 
+In the 3D view, **Shift-drag** a box to select parts: dragged left → right (blue, solid) it picks the parts wholly inside; right → left (green, dashed) also the ones it crosses. Parts behind others count; blanked, removed and cut-away parts don't. ⌘/Ctrl + Shift-drag adds to the selection. Then Blank, Remove (Delete), Group…
+
 - **●** show/hide.
 - **🔒** lock/unlock. Locked parts can't be animated; CAD starts locked.
 - **Rename:** a display name for a part (scripts keep its id). Renaming a group updates the script.
@@ -58,7 +60,7 @@ Right-click a row for its menu; **F2** renames, **Delete** removes, ⌘/Ctrl-cli
 - **Select by name** (F): every part whose name contains the text.
 - **Set origin**: click a cylindrical face (the axis), then a flat face (the height); the model moves so that point is 0,0,0.
 - **Shape**: add a box, cylinder, tube, sphere, cone, plane or hex prism, with sizes, position, colour and a linear or circular array. Select a shape to edit it. In scripts use its name (`pipe`); array copies are `bolt-0`, `bolt-1`… (`bolt-*`).
-- **Duplicate** (⧉, ⌘D, or right-click in the tree): a *linked copy* of the selected parts, assemblies or group, one width along x. It shares the source's geometry and follows it (remove a source part and it leaves the copy too). The Copy panel (shown while a copy is selected) sets its name, what it copies, position (its centre, m) and rotation (°); the gizmo moves it too. Copies are listed under **Copies** in the tree. In scripts use the copy's name (`pump-1`); parts inside it need their full id (`copies/pump-1/…`).
+- **Duplicate** (⧉, ⌘D, or right-click in the tree): a *linked copy* of the selected parts, assemblies or group, one width along x. It shares the source's geometry and follows it (remove a source part and it leaves the copy too). The Copy panel (shown while a copy is selected) sets its name, what it copies, position (its centre, m), rotation (°), a mirror (x, y or z through its centre) and an array – linear (count, step in m) or circular (count, about a vertical axis through x, z; angle 360 = evenly round). Array members are `pump-1-0`, `pump-1-1`… (`pump-1-*`) in scripts. The gizmo moves it too. Copies are listed under **Copies** in the tree. In scripts use the copy's name (`pump-1`); parts inside it need their full id (`copies/pump-1/…`).
 - **Thumbnail**: this moment becomes the card image on Home (a `thumbnail` script step wins).
 - **Views**: save the camera as a named view; use it with `camera <name> 2s`.
 - **Group** (G): a group (`@name`) from the selection.
