@@ -1450,7 +1450,23 @@ function exportPng() {
 }
 
 /** One frame of the main view in the current style (+ gizmo on top in drawing mode). */
+// near/far follow the scene so large models are never cut at the back (log depth copes with the range)
+let sceneSphere: THREE.Sphere | null = null, sphereAt = 0;
+function fitClipRange() {
+  const now = performance.now();
+  if (!sceneSphere || now - sphereAt > 1000) {
+    const b = new THREE.Box3();
+    built.root.traverse((o) => { if ((o as THREE.Mesh).isMesh && o.visible && (o as THREE.Mesh).geometry) b.expandByObject(o); });
+    sceneSphere = b.isEmpty() ? null : b.getBoundingSphere(new THREE.Sphere());
+    sphereAt = now;
+    if (!sceneSphere) return;
+  }
+  const d = camera.position.distanceTo(sceneSphere.center), r = sceneSphere.radius;
+  const far = (d + r) * 1.1 + 1, near = Math.max(0.005, Math.min(far / 1e6 * 10, Math.max(d - r, 0) * 0.5) || 0.005);
+  if (Math.abs(camera.far - far) > far * 0.01 || camera.near !== near) { camera.far = far; camera.near = near; camera.updateProjectionMatrix(); }
+}
 function drawFrame() {
+  fitClipRange();
   // outlines: the parts the script outlines now (only animated parts can carry one)
   glow.update(player.tl.touched.map((id) => built.registry.get(id)).filter((o) => o?.userData.outline) as THREE.Object3D[]);
   if (!drawing.enabled) { renderer.render(scene3, camera); caps.render(renderer, scene3, camera, null); glow.render(renderer, scene3, camera); return; }
