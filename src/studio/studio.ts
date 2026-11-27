@@ -31,8 +31,10 @@ import { parseAnim, toActions, type ParseError } from '../script/anim';
 import { ScriptError } from '../timeline/compile';
 import { applyEdit, cameraLine, type Edit, type Probe } from '../script/edit';
 import { makeDrawing, withDefaults, DEFAULT_DRAW, type DrawingOptions, type SheetSpec } from '../drawing';
+import { PAPER, layout, fitScale, titleBox } from '../drawing/svg';
 import { DrawPanel } from '../view/drawPanel';
 import { svgToPdf } from '../drawing/pdf';
+import { ProgressSplash } from '../view/progress';
 
 /** What the studio needs from its host app (SolverKit's editor). */
 export interface StudioIO {
@@ -569,6 +571,7 @@ tabCss.textContent = `#right { position: absolute; top: 0; right: 0; bottom: 0; 
 #illustration .draw-script .busy { padding: 6px 10px; font: 12px system-ui; color: #f2b705; border-top: 1px solid #222a33; }
 #sheet-preview { position: absolute; inset: 0 420px 0 0; z-index: 6; background: #e9ecef; display: flex; flex-direction: column; }
 .studio-root.right-collapsed #sheet-preview { right: 0; }
+.studio-root:has(#sheet-preview) #viewbar { display: none; }   /* the view bar's buttons don't apply to a sheet */
 #sheet-preview header { display: flex; gap: 8px; align-items: center; padding: 6px 10px; background: rgba(14,17,21,.95); color: #d7dde4; font: 12px system-ui; }
 #sheet-preview header .info { color: #7b8794; flex: 1; }
 #sheet-preview header button { background: #1b222a; color: #d7dde4; border: 1px solid #2b3540; border-radius: 4px; padding: 3px 8px; cursor: pointer; font: 12px system-ui; }
@@ -1221,7 +1224,7 @@ function viewFrom(dir: [number, number, number]) {
 let lastView = 'view';
 /** Vector line drawing of the current view (src/drawing). */
 function vectorDrawing(opt: DrawingOptions = {}) {
-  const r = makeDrawing(scene3, camera, { exclude: [gizmo.getHelper()], title: scriptName, titleBlock: { title: model.name, sheet: lastView, project: model.name, date: new Date().toISOString().slice(0, 10) }, ...opt });
+  const r = makeDrawing(scene3, camera, { exclude: [gizmo.getHelper()], title: scriptName, titleBlock: { title: model.name }, ...opt });
   console.info('drawing', r.stats);
   return r;
 }
@@ -1229,7 +1232,9 @@ function vectorDrawing(opt: DrawingOptions = {}) {
 const SHEET_VIEWS: Record<string, [number, number, number]> = { iso: [1, 0.8, 1.1], front: [0, 0, 1], back: [0, 0, -1], top: [0, 1, 0], bottom: [0, -1, 0], side: [1, 0, 0], right: [1, 0, 0], left: [-1, 0, 0] };
 const drawingsFolder = () => `Drawings/${(model.name ?? 'animation').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'animation'}`;
 /** Draw one sheet: set its view and pose, draw, then put the studio back as it was. */
-async function runSheet(name: string): Promise<{ svg: string; stats: Record<string, number>; errors: { line: number; message: string }[]; spec: SheetSpec } | null> {
+interface SheetCtx { spec: SheetSpec; cam: THREE.PerspectiveCamera; hide: THREE.Object3D[]; only?: THREE.Object3D[]; err(message: string): void }
+/** Pose the studio for a sheet (snapshot, time, cut, hide/only), run `body` synchronously, then restore the studio. */
+async function withSheet<T>(name: string, body: (c: SheetCtx) => T): Promise<{ out: T; errors: { line: number; message: string }[]; spec: SheetSpec } | null> {
   const parsed = drawPanel!.parsed;
   const s0 = parsed.sheets.find((x) => x.name === name);
   if (!s0) return null;
@@ -1276,27 +1281,118 @@ async function runSheet(name: string): Promise<{ svg: string; stats: Record<stri
       return [...r.ids.map((id) => built.registry.get(id)!).filter(Boolean), ...named];
     };
     const hide = objs(spec.hide, 'hide'), only = spec.only.length ? objs(spec.only, 'only') : undefined;
-    const r = makeDrawing(scene3, cam, {
-      exclude: [gizmo.getHelper(), ...hide], only, title: spec.title ?? spec.name,
-      paper: (spec.paper ?? 'A3') as DrawingOptions['paper'], portrait: spec.portrait, scale: spec.scale || undefined, hidden: spec.hidden, creaseDeg: spec.crease, hatch: spec.hatch, fill: spec.fill,
-      titleBlock: spec.titleblock === false ? false : { title: spec.title ?? spec.name, sheet: spec.name, number: spec.number, rev: spec.rev, drawn: spec.drawn, project: spec.project ?? model.name, date: new Date().toISOString().slice(0, 10) },
-    });
-    if (spec.scale && !r.scale) err('scale: only orthographic views have a scale');
-    return { svg: r.svg, stats: r.stats, errors, spec };
+    return { out: body({ spec, cam, hide, only, err }), errors, spec };
   } finally {
     if (saved) await pose(saved);
     markDirty(dirty);
     player.seek(Math.min(t0, player.duration)); player.playing = playing;
   }
 }
+/** The exact drawing of a sheet (SVG). */
+async function runSheet(name: string): Promise<{ svg: string; stats: Record<string, number>; errors: { line: number; message: string }[]; spec: SheetSpec } | null> {
+  const r = await withSheet(name, ({ spec, cam, hide, only, err }) => {
+    const d = makeDrawing(scene3, cam, {
+      exclude: [gizmo.getHelper(), ...hide], only, title: spec.title ?? spec.name,
+      paper: (spec.paper ?? 'A3') as DrawingOptions['paper'], portrait: spec.portrait, scale: spec.scale || undefined, hidden: spec.hidden, creaseDeg: spec.crease, hatch: spec.hatch, fill: spec.fill,
+      titleBlock: spec.titleblock === false ? false : { title: spec.title ?? spec.name },
+    });
+    if (spec.scale && !d.scale) err('scale: only orthographic views have a scale');
+    return d;
+  });
+  return r && { svg: r.out.svg, stats: r.out.stats, errors: r.errors, spec: r.spec };
+}
+/** The fast raster sheet (PNG): one GPU frame in the sheet's style, on the paper with border and title box. */
+async function renderSheetPng(name: string): Promise<{ png: Blob; canvas: HTMLCanvasElement; ms: number; errors: { line: number; message: string }[]; spec: SheetSpec } | null> {
+  const t0 = performance.now();
+  const r = await withSheet(name, ({ spec, cam, hide, only, err }) => {
+    const style = spec.style ?? 'outline';
+    // the parts drawn: visible meshes under `only` (or everything), minus `hide` and the gizmo
+    const skip = new Set<THREE.Object3D>([gizmo.getHelper(), ...hide]);
+    const drawn: THREE.Mesh[] = [];
+    const walk = (o: THREE.Object3D) => {
+      if (!o.visible || skip.has(o)) return;
+      if ((o as THREE.Mesh).isMesh && (o as THREE.Mesh).geometry?.attributes?.position && !Array.isArray((o as THREE.Mesh).material) && ((o as THREE.Mesh).material as THREE.Material).side !== THREE.BackSide) drawn.push(o as THREE.Mesh);
+      o.children.forEach(walk);
+    };
+    (only ?? [built.root]).forEach(walk);
+    // frame: the parts' bounds in view space (each mesh's box corners; the pose was just set, so update the matrices)
+    scene3.updateMatrixWorld();
+    const inv = cam.matrixWorld.clone().invert(), b = new THREE.Box3(), v = new THREE.Vector3(), m = new THREE.Matrix4();
+    for (const o of drawn) {
+      const g = o.geometry; if (!g.boundingBox) g.computeBoundingBox();
+      const bb = g.boundingBox!; m.multiplyMatrices(inv, o.matrixWorld);
+      for (let i = 0; i < 8; i++) b.expandByPoint(v.set(i & 1 ? bb.max.x : bb.min.x, i & 2 ? bb.max.y : bb.min.y, i & 4 ? bb.max.z : bb.min.z).applyMatrix4(m));
+    }
+    if (b.isEmpty()) b.set(new THREE.Vector3(-1, -1, -1), new THREE.Vector3(1, 1, 1));
+    const opt = { paper: (spec.paper ?? 'A3') as keyof typeof PAPER, portrait: spec.portrait, titleBlock: spec.titleblock === false ? false as const : {} };
+    const { W, H, m: margin, area } = layout(opt);
+    const sz = b.getSize(new THREE.Vector3()), c = b.getCenter(new THREE.Vector3());
+    const k = spec.scale ? 1000 / spec.scale : fitScale(opt, sz.x * 1.02, sz.y * 1.02);   // mm per metre (exact: 2 % margin around the frame)
+    // pixels: the paper at `dpi`, lowered to what the GPU can hold
+    let dpi = spec.dpi ?? 150;
+    const maxPx = Math.min(renderer.capabilities.maxTextureSize, 8192);
+    const aw = area.x1 - area.x0, ah = area.y1 - area.y0;
+    if (Math.max(aw, ah) * dpi / 25.4 > maxPx) { const d2 = Math.floor(maxPx * 25.4 / Math.max(aw, ah)); err(`dpi: ${dpi} is more than the GPU can draw at ${spec.paper ?? 'A3'} – used ${d2}`); dpi = d2; }
+    const px = dpi / 25.4, rw = Math.round(aw * px), rh = Math.round(ah * px);
+    // an orthographic camera over the drawing area, far enough back that depth (and the line pass's thresholds) behave
+    const hw = aw / 2 / k, hh = ah / 2 / k, depth = Math.max(sz.z, 1e-3), back = depth + Math.max(hw, hh);
+    const o = new THREE.OrthographicCamera(-hw, hw, hh, -hh, back - depth - 0.01 * depth, back + 0.01 * depth + 1e-3);
+    o.quaternion.copy(cam.quaternion);
+    o.position.set(c.x, c.y, b.max.z + (back - depth)).applyMatrix4(cam.matrixWorld);
+    o.updateMatrixWorld(); o.updateProjectionMatrix();
+    // render: the canvas resized, transparent background (no grids), the sheet's style; everything put back after
+    const save = { enabled: drawing.enabled, overlay: drawing.overlay, pr: renderer.getPixelRatio(), size: renderer.getSize(new THREE.Vector2()), bg: scene3.background,
+      sil: drawing.silThickness, th: drawing.thickness, gizmo: gizmo.getHelper().visible };
+    const hidden: THREE.Object3D[] = [];
+    scene3.traverse((x) => { if (((x as THREE.GridHelper).type === 'GridHelper' || skip.has(x) || (only && (x as THREE.Mesh).isMesh && !only.some((y) => y === x || isAncestor(y, x)))) && x.visible) { hidden.push(x); x.visible = false; } });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(W * px); canvas.height = Math.round(H * px);
+    try {
+      drawing.enabled = style !== 'shaded'; drawing.overlay = style === 'outline';
+      drawing.silThickness = Math.min(7, 0.5 * px); drawing.thickness = Math.min(7, 0.25 * px);   // ISO weights in mm
+      if (drawing.enabled) drawing.collectDecor(scene3, [gizmo.getHelper()]);
+      gizmo.getHelper().visible = false;
+      renderer.setPixelRatio(1); renderer.setSize(rw, rh, false);
+      scene3.background = null; renderer.setClearColor(0x000000, 0); drawing.transparentBg = true;
+      drawFrame(o);
+      const g = canvas.getContext('2d')!;
+      g.fillStyle = '#fff'; g.fillRect(0, 0, canvas.width, canvas.height);
+      g.drawImage(renderer.domElement, Math.round(area.x0 * px), Math.round(area.y0 * px));
+      // border and title box, as in the SVG
+      g.strokeStyle = '#000'; g.lineWidth = 0.7 * px; g.strokeRect(margin / 2 * px, margin / 2 * px, (W - margin) * px, (H - margin) * px);
+      if (spec.titleblock !== false) {
+        const scale = spec.scale ? `1:${spec.scale}` : 'NTS', tb = titleBox(W, H, margin, spec.title ?? spec.name, scale);
+        g.fillStyle = '#fff'; g.fillRect(tb.x * px, tb.y * px, tb.w * px, tb.h * px);
+        g.lineWidth = 0.5 * px; g.strokeRect(tb.x * px, tb.y * px, tb.w * px, tb.h * px);
+        g.fillStyle = '#000'; g.textBaseline = 'alphabetic';
+        g.font = `bold ${4 * px}px Helvetica, Arial, sans-serif`; g.textAlign = 'left'; g.fillText(spec.title ?? spec.name, (tb.x + 3) * px, (tb.y + 7.4) * px);
+        g.font = `${2.5 * px}px Helvetica, Arial, sans-serif`; g.textAlign = 'right'; g.fillText(scale, (tb.x + tb.w - 3) * px, (tb.y + 7.4) * px);
+      }
+    } finally {
+      hidden.forEach((x) => (x.visible = true));
+      scene3.background = save.bg; drawing.transparentBg = false;
+      gizmo.getHelper().visible = save.gizmo;
+      drawing.enabled = save.enabled; drawing.overlay = save.overlay; drawing.silThickness = save.sil; drawing.thickness = save.th;
+      if (drawing.enabled) drawing.collectDecor(scene3, [gizmo.getHelper()]);
+      renderer.setPixelRatio(save.pr); renderer.setSize(save.size.x, save.size.y, false);
+    }
+    return canvas;
+  });
+  if (!r) return null;
+  const png = await new Promise<Blob>((res, rej) => r.out.toBlob((b) => (b ? res(b) : rej(new Error('PNG encoding failed'))), 'image/png'));
+  return { png, canvas: r.out, ms: performance.now() - t0, errors: r.errors, spec: r.spec };
+}
+const isAncestor = (a: THREE.Object3D, b: THREE.Object3D) => { for (let p = b.parent; p; p = p.parent) if (p === a) return true; return false; };
+const progress = new ProgressSplash(() => host());
 let previewEl: HTMLElement | undefined, previewUrl: string | undefined;
 function closePreview() { previewEl?.remove(); previewEl = undefined; if (previewUrl) URL.revokeObjectURL(previewUrl); previewUrl = undefined; }
 async function previewSheet(name: string) {
   drawPanel!.busy(`Drawing ${name}…`);
-  await new Promise((r) => setTimeout(r, 30)); // let the message paint
+  await progress.start(`Preview sheet “${name}”`, 'Posing the model and drawing hidden lines…');
   try {
     const r = await runSheet(name);
     if (!r) return;
+    await progress.step('Showing the sheet…', 0.95);
     drawPanel!.setRunErrors(r.errors);
     closePreview();
     previewUrl = URL.createObjectURL(new Blob([r.svg], { type: 'image/svg+xml' }));
@@ -1307,13 +1403,16 @@ async function previewSheet(name: string) {
     previewEl.querySelector('.info')!.textContent = `${paper} · ${Math.round(r.stats.msTotal)} ms · ${r.stats.segments} pieces${r.errors.length ? ` · ${r.errors.length} problem(s), see the script` : ''}`;
     previewEl.querySelector<HTMLImageElement>('img')!.src = previewUrl;
     previewEl.querySelector<HTMLElement>('[data-a=close]')!.onclick = closePreview;
-    previewEl.querySelector<HTMLElement>('[data-a=dl]')!.onclick = () => { const a = document.createElement('a'); a.href = previewUrl!; a.download = `${name}.svg`; a.click(); };
+    previewEl.querySelector<HTMLElement>('[data-a=dl]')!.onclick = () => { const a = document.createElement('a'); a.href = previewUrl!; a.download = `${r.spec.file ?? name}.svg`; a.click(); };
     previewEl.querySelector<HTMLElement>('[data-a=pdf]')!.onclick = async () => {
-      const u = URL.createObjectURL(await svgToPdf(r.svg, r.spec.title ?? name));
-      const a = document.createElement('a'); a.href = u; a.download = `${name}.pdf`; a.click(); setTimeout(() => URL.revokeObjectURL(u), 1000);
+      await progress.start(`Export PDF “${name}”`, 'Converting the SVG to a vector PDF…');
+      let pdf: Blob;
+      try { pdf = await svgToPdf(r.svg, r.spec.title ?? name); } finally { progress.done(); }
+      const u = URL.createObjectURL(pdf);
+      const a = document.createElement('a'); a.href = u; a.download = `${r.spec.file ?? name}.pdf`; a.click(); setTimeout(() => URL.revokeObjectURL(u), 1000);
     };
     host().appendChild(previewEl);
-  } finally { drawPanel!.busy(null); }
+  } finally { drawPanel!.busy(null); progress.done(); }
 }
 /** Draw every sheet (or the named ones) and save <sheet>.svg and .pdf into the vault's Drawings/<animation>/. */
 async function saveAllSheets(only?: string[]): Promise<{ saved: string[]; errors: { line: number; message: string }[] }> {
@@ -1323,27 +1422,37 @@ async function saveAllSheets(only?: string[]): Promise<{ saved: string[]; errors
   if (drawPanel!.parsed.errors.length) errors.push(...drawPanel!.parsed.errors);
   if (!sheets.length) { drawPanel!.setStatus('No sheets to save', true); return { saved, errors }; }
   if (!io.files) { drawPanel!.setStatus('No vault access', true); return { saved, errors: [...errors, { line: 0, message: 'no vault access' }] }; }
+  const N = sheets.length, at = (i: number, f: number) => (i + f) / N;
+  await progress.start(`Saving ${N} sheet${N === 1 ? '' : 's'}`, '');
   try {
     for (const [i, sh] of sheets.entries()) {
       drawPanel!.busy(`Drawing ${sh.name} (${i + 1} of ${sheets.length})…`);
-      await new Promise((r) => setTimeout(r, 30));
+      await progress.step(`Drawing ${sh.name} (${i + 1} of ${N})…`, at(i, 0));
       const r = await runSheet(sh.name);
       if (!r) continue;
       errors.push(...r.errors);
-      const base = `${drawingsFolder()}/${sh.name}`;
-      await io.files.upload(`${base}.svg`, new File([r.svg], `${sh.name}.svg`, { type: 'image/svg+xml' }), undefined, true);
+      const fn = r.spec.file ?? sh.name, base = `${drawingsFolder()}/${fn}`;
+      await progress.step(`Saving ${fn}.svg (${i + 1} of ${N})…`, at(i, 0.7));
+      await io.files.upload(`${base}.svg`, new File([r.svg], `${fn}.svg`, { type: 'image/svg+xml' }), undefined, true);
       drawPanel!.busy(`Writing ${sh.name}.pdf (${i + 1} of ${sheets.length})…`);
+      await progress.step(`Writing ${fn}.pdf (${i + 1} of ${N})…`, at(i, 0.8));
       const pdf = await svgToPdf(r.svg, r.spec.title ?? sh.name);
-      await io.files.upload(`${base}.pdf`, new File([pdf], `${sh.name}.pdf`, { type: 'application/pdf' }), undefined, true);
+      await io.files.upload(`${base}.pdf`, new File([pdf], `${fn}.pdf`, { type: 'application/pdf' }), undefined, true);
+      await progress.step(`Rendering ${fn}.png (${i + 1} of ${N})…`, at(i, 0.9));
+      const img = await renderSheetPng(sh.name);
+      if (img) await io.files.upload(`${base}.png`, new File([img.png], `${fn}.png`, { type: 'image/png' }), undefined, true);
       saved.push(`${base}.svg`, `${base}.pdf`);
+      await progress.step(`Saved ${sh.name} (${i + 1} of ${N})`, at(i, 1));
     }
-  } finally { drawPanel!.busy(null); }
+  } finally { drawPanel!.busy(null); progress.done(); }
   drawPanel!.setRunErrors(errors.filter((e) => e.line > 0));
   if (!errors.length) drawPanel!.setStatus(`Saved ${saved.length / 2} sheet${saved.length === 2 ? '' : 's'} (SVG + PDF) to ${drawingsFolder()}/`);
   return { saved, errors };
 }
-function exportSvg(opt: DrawingOptions = {}) {
-  const { svg } = vectorDrawing(opt);
+async function exportSvg(opt: DrawingOptions = {}) {
+  await progress.start('Export SVG', 'Drawing hidden lines for the current view…');
+  let svg: string;
+  try { svg = vectorDrawing(opt).svg; await progress.step('Writing the file…', 1); } finally { progress.done(); }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
   a.download = `${scriptName.replace(/\.\w+$/, '')}-${lastView}-t${player.time.toFixed(1)}s.svg`;
@@ -1465,16 +1574,18 @@ function fitClipRange() {
   const far = (d + r) * 1.1 + 1, near = Math.max(0.005, Math.min(far / 1e6 * 10, Math.max(d - r, 0) * 0.5) || 0.005);
   if (Math.abs(camera.far - far) > far * 0.01 || camera.near !== near) { camera.far = far; camera.near = near; camera.updateProjectionMatrix(); }
 }
-function drawFrame() {
-  fitClipRange();
+function drawFrame(cam: THREE.PerspectiveCamera | THREE.OrthographicCamera = camera) {
+  const main = cam === camera;
+  if (main) fitClipRange();
+  const camera3 = cam;
   // outlines: the parts the script outlines now (only animated parts can carry one)
-  glow.update(player.tl.touched.map((id) => built.registry.get(id)).filter((o) => o?.userData.outline) as THREE.Object3D[]);
-  if (!drawing.enabled) { renderer.render(scene3, camera); caps.render(renderer, scene3, camera, null); glow.render(renderer, scene3, camera); return; }
-  if (drawing.overlay) { renderer.render(scene3, camera); caps.render(renderer, scene3, camera, null); }   // shaded + outline: the cel-shaded frame, lines on top
-  drawing.render(scene3, camera);
-  glow.render(renderer, scene3, camera, drawing.depth ?? undefined);
+  if (main) glow.update(player.tl.touched.map((id) => built.registry.get(id)).filter((o) => o?.userData.outline) as THREE.Object3D[]);
+  if (!drawing.enabled) { renderer.render(scene3, camera3); caps.render(renderer, scene3, camera3, null); main && glow.render(renderer, scene3, camera); return; }
+  if (drawing.overlay) { renderer.render(scene3, camera3); caps.render(renderer, scene3, camera3, null); }   // shaded + outline: the cel-shaded frame, lines on top
+  drawing.render(scene3, camera3);
+  main && glow.render(renderer, scene3, camera, drawing.depth ?? undefined);
   const h = gizmo.getHelper();
-  if (gizmo.object) { renderer.autoClear = false; renderer.clearDepth(); renderer.render(h, camera); renderer.autoClear = true; }
+  if (main && gizmo.object) { renderer.autoClear = false; renderer.clearDepth(); renderer.render(h, camera3); renderer.autoClear = true; }
 }
 
 // ---------- undo / redo: restore a recorded state in place ----------
@@ -2208,7 +2319,7 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 }
 
 // read-only handle for tests and debugging
-(window as any).__studio = { svgToPdf, vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
+(window as any).__studio = { renderSheetPng, svgToPdf, vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
   /** tests: a block with many small parts buried behind the cut plane (x < 0), like dowels without holes */
   addTestBuried: (count = 60) => {
     const mk = (col: number) => withCaps(new THREE.MeshToonMaterial({ color: col, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));

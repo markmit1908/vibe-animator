@@ -53,8 +53,8 @@ export class DrawingMode {
         uniform float near; uniform float far; uniform float logDepth; uniform float wSil; uniform float wEdge;
         uniform float nThr; uniform float dThr;
         uniform vec3 lineColor; uniform vec3 paper; uniform float clearBg; uniform float overlay; varying vec2 vUv;
-        // view distance from a depth value: three's logarithmic depth is log2(1 + w) / log2(far + 1)
-        float lin(float d){ return logDepth > 0.5 ? exp2(d * log2(far + 1.0)) - 1.0 : (near * far) / (far - d * (far - near)); }
+        // view distance from a depth value: three's logarithmic depth is log2(1 + w) / log2(far + 1); orthographic cameras keep linear depth (logDepth = 2)
+        float lin(float d){ return logDepth > 1.5 ? near + d * (far - near) : logDepth > 0.5 ? exp2(d * log2(far + 1.0)) - 1.0 : (near * far) / (far - d * (far - near)); }
         const int MAXR = 4;
         void main(){
           float d0 = texture2D(tDepth, vUv).r;
@@ -115,7 +115,7 @@ export class DrawingMode {
   /** The last normal pass's depth (log depth) – the outlines compare against it. */
   get depth() { return this.rt.depthTexture; }
 
-  render(scene: THREE.Scene, camera: THREE.PerspectiveCamera) {
+  render(scene: THREE.Scene, camera: THREE.PerspectiveCamera | THREE.OrthographicCamera) {
     const r = this.renderer;
     const size = r.getDrawingBufferSize(new THREE.Vector2());
     if (this.rt.width !== size.x || this.rt.height !== size.y) this.rt.setSize(size.x, size.y);
@@ -137,7 +137,7 @@ export class DrawingMode {
     const u = this.mat.uniforms;
     u.texel.value.set(1 / size.x, 1 / size.y);
     u.near.value = camera.near; u.far.value = camera.far;
-    u.logDepth.value = r.capabilities.logarithmicDepthBuffer ? 1 : 0;
+    u.logDepth.value = (camera as THREE.OrthographicCamera).isOrthographicCamera ? 2 : r.capabilities.logarithmicDepthBuffer ? 1 : 0;
     u.wSil.value = this.silThickness * r.getPixelRatio();
     u.wEdge.value = this.thickness * r.getPixelRatio();
     u.nThr.value = this.normalThreshold; u.dThr.value = this.depthThreshold;

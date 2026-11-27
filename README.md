@@ -201,7 +201,8 @@ hidden off                # dashed hidden lines (busy on big assemblies: use wit
 crease 30                 # crease angle, degrees
 hatch 2.5                 # section hatch spacing in mm, or: hatch off
 fill tint                 # part fills under the lines: off | tint (lightened) | colour
-drawn "MM"                # title block: title, number, rev, drawn, project (default: the animation's name)
+style outline             # the fast PNG: shaded | outline | hidden (the SVG is always lines)
+dpi 150                   # the PNG's resolution
 
 sheet core-section "Core – half section"
   view front              # iso front back top bottom side left right, a saved view, or [dx, dy, dz]
@@ -210,15 +211,15 @@ sheet core-section "Core – half section"
   cut half x at [0,0,0]   # none | half [side] | quarter [side side]; default: the animation's cut at that time
   hide @building, ~bolt   # parts left out (ids, globs, @groups, names, ~text)
   only @core              # draw just these
-  number D-001            # title block fields per sheet; titleblock off leaves it out
-  rev A
+  title "Core – half section A-A"   # the drawing name, in the title box (or quoted after `sheet`)
+  file core-section-AA    # export file name: core-section-AA.svg / .pdf (default: the sheet name)
 ```
 
 **Batch** (the app must be running – `npm run dev`): `npm run drawings -- "<animation>" [sheet …]` saves the sheets
 (SVG + PDF) the same way, headless; `npm run drawings -- --all` does every animation with sheets; `--url` points at
 another server. It exits 1 if a sheet has an error.
 
-Cut faces are capped (what's inside a cut part stays hidden), outlined and hatched at 45° on the paper (135° for every other part). Fills (layer `fill`, under the lines) use the parts' base colours; their edges are traced at 0.25 mm on the paper and sit under the exact lines. The title block (bottom right) fills in the scale (NTS when fitted), paper size and date. A big assembly takes a few seconds per sheet
+Cut faces are capped (what's inside a cut part stays hidden), outlined and hatched at 45° on the paper (135° for every other part). Fills (layer `fill`, under the lines) use the parts' base colours; their edges are traced at 0.25 mm on the paper and sit under the exact lines. The title box (lower right) is a plain rectangle with the drawing name and the scale (NTS when fitted); `titleblock off` leaves it out. A big assembly takes a few seconds per sheet
 (the plant model: 8M triangles, 6–8 s).
 
 ## AI assist (AI Assist tab)

@@ -21,7 +21,7 @@ const drawLang = StreamLanguage.define({
     const w = stream.match(/^[^\s[\]{}",]+/) as RegExpMatchArray | null;
     if (!w) { stream.next(); return null; }
     if (stream.string.slice(0, stream.start).trim() === '' && DRAW_KEYWORDS.includes(w[0])) return 'keyword';
-    if ([...PAPERS, 'landscape', 'portrait', 'fit', 'on', 'off', 'none', 'half', 'quarter', 'at', 'iso', 'front', 'back', 'top', 'bottom', 'side', 'left', 'right'].includes(w[0])) return 'atom';
+    if ([...PAPERS, 'landscape', 'portrait', 'fit', 'on', 'off', 'shaded', 'outline', 'hidden', 'none', 'half', 'quarter', 'at', 'iso', 'front', 'back', 'top', 'bottom', 'side', 'left', 'right'].includes(w[0])) return 'atom';
     return 'variableName';
   },
   languageData: { commentTokens: { line: '#' } },
@@ -61,7 +61,7 @@ export class DrawPanel {
     this.el = document.createElement('div'); this.el.className = 'draw-script';
     this.el.innerHTML = `<header><span>Drawing script</span><span class="st"></span><span style="flex:1"></span>
       <button data-a="preview" title="Draw the sheet the cursor is in and show it over the view">▶ Preview sheet</button>
-      <button data-a="save" title="Draw every sheet and save SVG + PDF to the vault (Drawings/<animation>/<sheet>.svg, .pdf)">⤓ Save all</button></header>
+      <button data-a="save" title="Draw every sheet and save SVG + PDF to the vault (Drawings/<animation>/<file or sheet>.svg, .pdf)">⤓ Save all</button></header>
       <div class="ed"></div><div class="busy" hidden></div>`;
     parent.appendChild(this.el);
     this.status = this.el.querySelector('.st')!;
@@ -77,7 +77,7 @@ export class DrawPanel {
       const opts: string[] = kw === 'view' ? ['iso', 'front', 'back', 'top', 'bottom', 'side', 'left', 'right', ...hooks.views().map((v) => `"${v}"`)]
         : kw === 'snapshot' ? hooks.snapshots().map((s) => `"${s}"`)
         : kw === 'paper' ? [...PAPERS, 'landscape', 'portrait'] : kw === 'cut' ? ['none', 'half', 'quarter', 'x', '-x', 'y', '-y', 'z', '-z', 'at']
-        : kw === 'hidden' || kw === 'titleblock' ? ['on', 'off'] : kw === 'hatch' ? ['2.5', 'off'] : kw === 'fill' ? ['off', 'tint', 'colour'] : kw === 'scale' ? ['fit', '1:10', '1:20', '1:50', '1:100', '1:200'] : [];
+        : kw === 'hidden' || kw === 'titleblock' ? ['on', 'off'] : kw === 'hatch' ? ['2.5', 'off'] : kw === 'fill' ? ['off', 'tint', 'colour'] : kw === 'style' ? ['outline', 'shaded', 'hidden'] : kw === 'dpi' ? ['96', '150', '300'] : kw === 'scale' ? ['fit', '1:10', '1:20', '1:50', '1:100', '1:200'] : [];
       return opts.length ? { from: w.from, options: opts.map((label) => ({ label, type: 'constant' })) } : null;
     };
     this.view = new EditorView({

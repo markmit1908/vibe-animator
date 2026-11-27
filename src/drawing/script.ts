@@ -16,8 +16,11 @@
  *     hide @building, ~bolt   parts left out (ids, globs, @groups, names – as in animation scripts)
  *     only @core              draw just these
  *
- *   Section hatching: `hatch 2.5` (spacing in paper mm) or `hatch off`. Title block: `title`, `number`, `rev`, `drawn`,
- *   `project` (default: the animation's name); `titleblock off` leaves it out. Scale and date are filled in.
+ *   title "Core – half section"   the drawing name, shown in the title box (lower right; scale filled in)
+ *   file core-section-A          export file name (no extension): <file>.svg / .pdf; default: the sheet name
+ *   style outline            fast preview PNG: shaded | outline | hidden (the SVG is always lines)
+ *   dpi 150                   preview PNG resolution
+ *   Section hatching: `hatch 2.5` (spacing in paper mm) or `hatch off`. `titleblock off` leaves the title box out.
  */
 import type { Cut, CutMode, CutSide } from '../view/cutaway';
 
@@ -35,10 +38,12 @@ export interface SheetSpec {
   /** section hatch spacing, paper mm; 0 = off */
   hatch?: number;
   fill?: 'off' | 'tint' | 'colour';
-  number?: string;
-  rev?: string;
-  drawn?: string;
-  project?: string;
+  /** the preview PNG's look */
+  style?: 'shaded' | 'outline' | 'hidden';
+  /** the preview PNG's resolution */
+  dpi?: number;
+  /** export file name without extension (default: the sheet name) */
+  file?: string;
   titleblock?: boolean;
   view?: string | [number, number, number];
   snapshot?: string;
@@ -50,14 +55,14 @@ export interface SheetSpec {
 export interface DrawError { line: number; message: string }
 export interface DrawScript { defaults: SheetSpec; sheets: SheetSpec[]; errors: DrawError[] }
 
-export const DRAW_KEYWORDS = ['sheet', 'paper', 'scale', 'hidden', 'crease', 'hatch', 'fill', 'title', 'number', 'rev', 'drawn', 'project', 'titleblock', 'view', 'snapshot', 'at', 'cut', 'hide', 'only'];
+export const DRAW_KEYWORDS = ['sheet', 'paper', 'scale', 'hidden', 'crease', 'hatch', 'fill', 'style', 'dpi', 'title', 'file', 'titleblock', 'view', 'snapshot', 'at', 'cut', 'hide', 'only'];
 export const PAPERS = ['A0', 'A1', 'A2', 'A3', 'A4'];
 const SIDES = ['x', '-x', 'y', '-y', 'z', '-z'];
 
 /** Settings a sheet takes from the defaults when it doesn't set them. */
 export function withDefaults(s: SheetSpec, d: SheetSpec): SheetSpec {
   const out = { ...s };
-  for (const k of ['paper', 'portrait', 'scale', 'hidden', 'crease', 'hatch', 'fill', 'number', 'rev', 'drawn', 'project', 'titleblock', 'view', 'snapshot', 'at', 'cut'] as const) if (out[k] === undefined) (out as any)[k] = d[k];
+  for (const k of ['paper', 'portrait', 'scale', 'hidden', 'crease', 'hatch', 'fill', 'style', 'dpi', 'titleblock', 'view', 'snapshot', 'at', 'cut'] as const) if (out[k] === undefined) (out as any)[k] = d[k];
   out.hide = [...d.hide, ...s.hide];
   out.only = s.only.length ? s.only : d.only;
   return out;
@@ -92,15 +97,25 @@ export function parseDraw(text: string): DrawScript {
         return;
       }
       case 'title': cur.title = unq(rest); return;
-      case 'number': case 'rev': case 'drawn': case 'project':
-        if (!rest) { err(`${kw}: a value (quoted if it has spaces)`); return; }
-        cur[kw] = unq(rest); return;
+      case 'file': {
+        const v = unq(rest).replace(/\.(svg|pdf)$/i, '');
+        if (!v || /[\\/:*?"<>|]/.test(v)) { err('file: a file name without / \\ : * ? " < > | (the .svg / .pdf is added)'); return; }
+        cur.file = v; return;
+      }
       case 'titleblock':
         if (rest !== 'on' && rest !== 'off') { err('titleblock: on or off'); return; }
         cur.titleblock = rest === 'on'; return;
       case 'fill':
         if (rest !== 'off' && rest !== 'tint' && rest !== 'colour' && rest !== 'color') { err('fill: off, tint (part colours, lightened) or colour'); return; }
         cur.fill = rest === 'color' ? 'colour' : rest as 'off' | 'tint' | 'colour'; return;
+      case 'style':
+        if (rest !== 'shaded' && rest !== 'outline' && rest !== 'hidden') { err('style: shaded, outline or hidden (the preview PNG)'); return; }
+        cur.style = rest; return;
+      case 'dpi': {
+        const n = Number(rest);
+        if (!(n >= 30 && n <= 1200)) { err('dpi: the preview PNG resolution, 30–1200 (e.g. 150)'); return; }
+        cur.dpi = n; return;
+      }
       case 'hatch': {
         if (rest === 'off') { cur.hatch = 0; return; }
         const n = Number(rest.replace(/mm$/, ''));
@@ -173,6 +188,7 @@ hidden off
 
 sheet overview "Overview"
   view iso
+  file overview
 
 sheet front "Front elevation"
   view front

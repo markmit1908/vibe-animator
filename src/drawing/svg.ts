@@ -24,10 +24,11 @@ export interface SheetOptions {
   /** the title block (bottom right); false = none */
   titleBlock?: TitleBlock | false;
 }
-export interface TitleBlock { title?: string; sheet?: string; number?: string; rev?: string; drawn?: string; project?: string; date?: string }
+/** The title box: a plain rectangle, lower right, with a short description (and the scale, small). */
+export interface TitleBlock { title?: string }
 
-const TB_W = 180, TB_H = 32;
-/** Paper size (mm) and the area left for the drawing: inside the margin, above the title block. */
+const TB_H = 12;
+/** Paper size (mm) and the area left for the drawing: inside the margin, above the title box. */
 export function layout(opt: SheetOptions) {
   let [W, H] = typeof opt.paper === 'object' ? opt.paper : PAPER[opt.paper ?? 'A3'];
   if (opt.portrait ? W > H : H > W) [W, H] = [H, W];
@@ -43,21 +44,20 @@ export function fitScale(opt: SheetOptions, w: number, h: number) {
 }
 const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-function titleBlockSvg(W: number, H: number, m: number, tb: TitleBlock, scale: string, paper: string): string {
-  const x = W - m / 2 - TB_W, y = H - m / 2 - TB_H;
-  const cols = [70, 30, 40, 40];
-  const cx = cols.map((_, i) => x + cols.slice(0, i).reduce((a, b) => a + b, 0));
-  const cell = (i: number, row: number, label: string, value: string) => {
-    const yy = y + 14 + row * 9;
-    return `<text x="${f(cx[i] + 1.5)}" y="${f(yy + 2.6)}" font-size="2">${esc(label)}</text><text x="${f(cx[i] + 1.5)}" y="${f(yy + 7.2)}" font-size="3.5">${esc(value)}</text>`;
-  };
-  const lines = [`M${f(x)} ${f(y + 14)}H${f(x + TB_W)}`, `M${f(x)} ${f(y + 23)}H${f(x + TB_W)}`, ...cx.slice(1).map((c) => `M${f(c)} ${f(y + 14)}V${f(y + TB_H)}`)].join('');
+/** The title box's rectangle (mm): lower right, inside the border, wide enough for the title and scale. */
+export function titleBox(W: number, H: number, m: number, title: string, scale: string) {
+  // Helvetica averages ≈ 0.55 em per character
+  const w = Math.max(40, title.length * 4 * 0.55 + scale.length * 2.5 * 0.55 + 12);
+  return { x: W - m / 2 - w, y: H - m / 2 - TB_H, w, h: TB_H };
+}
+
+function titleBlockSvg(W: number, H: number, m: number, tb: TitleBlock, scale: string): string {
+  const title = tb.title ?? '';
+  const { x, y, w: tw } = titleBox(W, H, m, title, scale);
   return `<g id="titleblock" inkscape:groupmode="layer" inkscape:label="titleblock" font-family="Helvetica, Arial, sans-serif" fill="#000">
-<rect x="${f(x)}" y="${f(y)}" width="${TB_W}" height="${TB_H}" fill="#fff" stroke="#000" stroke-width="0.5"/>
-<path d="${lines}" fill="none" stroke="#000" stroke-width="0.25"/>
-<text x="${f(x + 2)}" y="${f(y + 4.2)}" font-size="2">TITLE</text><text x="${f(x + 2)}" y="${f(y + 11)}" font-size="6" font-weight="bold">${esc(tb.title ?? '')}</text>
-${cell(0, 0, 'DRAWING NO.', tb.number ?? '')}${cell(1, 0, 'REV', tb.rev ?? '')}${cell(2, 0, 'SCALE', scale)}${cell(3, 0, 'SHEET', tb.sheet ?? '')}
-${cell(0, 1, 'PROJECT', tb.project ?? '')}${cell(1, 1, 'DRAWN', tb.drawn ?? '')}${cell(2, 1, 'DATE', tb.date ?? '')}${cell(3, 1, 'SIZE', paper)}
+<rect x="${f(x)}" y="${f(y)}" width="${f(tw)}" height="${TB_H}" fill="#fff" stroke="#000" stroke-width="0.5"/>
+<text x="${f(x + 3)}" y="${f(y + 7.4)}" font-size="4" font-weight="bold">${esc(title)}</text>
+<text x="${f(x + tw - 3)}" y="${f(y + 7.4)}" font-size="2.5" text-anchor="end">${esc(scale)}</text>
 </g>`;
 }
 
@@ -144,7 +144,7 @@ export function toSvg(r: HlrResult, opt: SheetOptions = {}): { svg: string; scal
 ${fillSvg}
 ${groups.join('\n')}
 ${border}
-${tb ? titleBlockSvg(W, H, m, opt.titleBlock || {}, scale ? `1:${scale}` : 'NTS', typeof opt.paper === 'object' ? `${W}×${H}` : opt.paper ?? 'A3') : ''}
+${tb ? titleBlockSvg(W, H, m, opt.titleBlock || {}, scale ? `1:${scale}` : 'NTS') : ''}
 </svg>
 `;
   return { svg, scale, stats };

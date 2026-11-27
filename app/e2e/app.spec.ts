@@ -1345,7 +1345,7 @@ test("drawing sheets: the .draw script in the Illustration tab – view, hide, c
   expect(c.errors).toEqual([]);
   expect(xs(c.svg)).toBeCloseTo(100, 0);                                     // the front box cut in half at x = 0
   // looking at the cut face: the section is capped (the inside of the box doesn't show) and hatched
-  await page.evaluate(() => { const p = (window as any).__studio.drawPanel; p.setText(p.text + '\nsheet e "Section A-A"\n  view side\n  only front\n  cut half x\n  number D-042\n  rev B\n'); });
+  await page.evaluate(() => { const p = (window as any).__studio.drawPanel; p.setText(p.text + '\nsheet e "Section A-A"\n  view side\n  only front\n  cut half x\n  file section-AA\n'); });
   const e = await run("e");
   expect(e.errors).toEqual([]);
   expect(e.stats["lines.outline"]).toBe(1);                                  // the cut outline: one square
@@ -1353,7 +1353,8 @@ test("drawing sheets: the .draw script in the Illustration tab – view, hide, c
   expect(e.stats["lines.hatch"]).toBeGreaterThan(100);                       // 200 mm square at 2.5 mm, 45°
   expect(e.stats["lines.hatch"]).toBeLessThan(125);
   expect(e.svg).toContain('id="titleblock"');
-  for (const t of ["Section A-A", "D-042", ">B<", "1:10", "A4"]) expect(e.svg).toContain(t);
+  for (const t of ["Section A-A", "1:10"]) expect(e.svg).toContain(t);
+  expect(e.svg).not.toContain("DRAWING NO.");
   // fills: the part colour (or tinted) under the lines, traced at 0.25 mm
   await page.evaluate(() => { const s = (window as any).__studio; s.built.registry.get("front").material.color.set("#ff0000");
     s.drawPanel.setText(s.drawPanel.text + '\nsheet f\n  view front\n  scale 1:20\n  fill colour\nsheet g\n  view front\n  fill tint\n'); });
@@ -1379,7 +1380,7 @@ test("drawing sheets: the .draw script in the Illustration tab – view, hide, c
   // save all → the vault
   await panel.locator("[data-a=save]").click();
   await expect(panel.locator(".st")).toContainText(/1 error|Saved/, { timeout: 30_000 });   // sheet d's unknown part
-  for (const n of ["a", "b", "c", "d", "e"]) {
+  for (const n of ["a", "b", "c", "d", "section-AA"]) {
     const r = await api(page).get(`/api/files/Drawings/Sheets/${n}.svg`);
     expect(r.status()).toBe(200);
     expect(await r.text()).toContain("<svg");
@@ -1392,6 +1393,53 @@ test("drawing sheets: the .draw script in the Illustration tab – view, hide, c
   // the edited script is saved in the model
   await expect.poll(async () => { const p = (await (await api(page).get("/api/home")).json()).projects.find((x: any) => x.name === "Sheets");
     const mm = (await (await api(page).get(`/api/projects/${p.id}`)).json()).problem; const t = mm.drawings?.text; return Array.isArray(t) ? t.join("\n") : t; }, { timeout: 5_000 }).toContain("hide nothing-here");
+});
+
+test("fast sheet PNG: one GPU frame per sheet in its style, on the paper with the title box", async ({ page }) => {
+  await page.goto("/");
+  const draw = ['paper A4', 'scale 1:10', 'dpi 100', '', 'sheet o "Outline"', '  view front', '  scale 1:20', '', 'sheet s "Shaded"', '  view front', '  style shaded', '',
+    'sheet h', '  view front', '  style hidden', '  only red', '', 'sheet big', '  dpi 1200', '  paper A0'].join("\n");
+  const m = { name: "Png", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] },
+    script: { language: "anim", text: 'label "P"' }, drawings: { language: "draw", text: draw },
+    snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Png");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  await page.locator("#right [data-t=illustration]").click();
+  await expect(page.locator("#illustration .draw-script .st")).toHaveText("✓ 4 sheets");
+  await page.evaluate(() => {
+    const s = (window as any).__studio, T = s.THREE;
+    const b = new T.Mesh(new T.BoxGeometry(2, 2, 2), new T.MeshToonMaterial({ color: "#ff0000", clippingPlanes: s.built.clipPlanes, clipIntersection: true }));
+    b.position.set(0, 1, 0); b.userData.id = "red"; s.built.root.add(b); s.built.registry.set("red", b);
+  });
+  const before = await page.evaluate(() => { const s = (window as any).__studio; return { w: s.renderer.domElement.width, t: s.player.time }; });
+  const run = (n: string) => page.evaluate(async (n) => {
+    const r = await (window as any).__studio.renderSheetPng(n);
+    const g = r.canvas.getContext("2d"), W = r.canvas.width, H = r.canvas.height;
+    const px = (x: number, y: number) => Array.from(g.getImageData(x, y, 1, 1).data);
+    // count red-ish and black pixels on the centre row
+    let red = 0, dark = 0;
+    const row = g.getImageData(0, Math.round(H * 0.45), W, 1).data;
+    for (let i = 0; i < row.length; i += 4) { if (row[i] > 150 && row[i + 1] < 120) red++; if (row[i] + row[i + 1] + row[i + 2] < 150) dark++; }
+    return { W, H, ms: r.ms, errors: r.errors, corner: px(2, 2), red, dark, bytes: r.png.size };
+  }, n);
+  const o = await run("o");
+  expect(o.errors).toEqual([]);
+  expect(o.W).toBe(Math.round(297 * 100 / 25.4)); expect(o.H).toBe(Math.round(210 * 100 / 25.4));   // A4 at 100 dpi
+  expect(o.corner).toEqual([255, 255, 255, 255]);                                  // white paper
+  expect(o.ms).toBeLessThan(1500);
+  const red2m = 200 * 100 / 25.4;                                                  // the 2 m box at 1:10 → 200 mm (sheet o: 1:20 → half)
+  expect(Math.abs(o.red - red2m / 2)).toBeLessThan(red2m * 0.05);
+  expect(o.dark).toBeGreaterThanOrEqual(2);                                       // its outline
+  const sh = await run("s");
+  expect(Math.abs(sh.red - red2m)).toBeLessThan(red2m * 0.1);
+  const h = await run("h");
+  expect(h.red).toBe(0); expect(h.dark).toBeGreaterThan(1);                        // lines only
+  const big = await run("big");
+  expect(big.errors[0].message).toContain("dpi");                                   // lowered to what the GPU holds
+  expect(Math.max(big.W, big.H)).toBeLessThanOrEqual(9000);
+  // the studio is as it was
+  expect(await page.evaluate(() => { const s = (window as any).__studio; return { w: s.renderer.domElement.width, t: s.player.time }; })).toEqual(before);
 });
 
 test("batch drawings from the command line: npm run drawings -- <animation> [sheets]", async ({ page, baseURL }) => {

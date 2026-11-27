@@ -147,7 +147,7 @@ sheet core "Core – half section"
   hide @building
 ```
 
-Sheet commands: `view` (iso, front, back, top, bottom, side, left, right, a saved view or `[dx, dy, dz]`), `snapshot "name"`, `at 12s` or `at "Chapter"`, `cut none|half|quarter [sides] [at [x,y,z]]`, `hide …`, `only …`, `title "…"`, and the defaults `paper`, `scale`, `hidden on|off`, `crease 30`, `hatch 2.5|off` (section hatching, mm), `fill off|tint|colour` (part colours under the lines). Title block: `title`, `number`, `rev`, `drawn`, `project`, or `titleblock off`. Cut faces are capped and hatched. Drawing a sheet leaves the studio's view and pose as they were.
+Sheet commands: `view` (iso, front, back, top, bottom, side, left, right, a saved view or `[dx, dy, dz]`), `snapshot "name"`, `at 12s` or `at "Chapter"`, `cut none|half|quarter [sides] [at [x,y,z]]`, `hide …`, `only …`, `title "…"` (the drawing name, in the title box), `file name` (export file name; default: the sheet name), and the defaults `paper`, `scale`, `hidden on|off`, `crease 30`, `hatch 2.5|off` (section hatching, mm), `fill off|tint|colour` (part colours under the lines), `style shaded|outline|hidden` and `dpi 150` (the fast PNG of the sheet, rendered like the view). The title box (lower right) shows the title and scale; `titleblock off` leaves it out. Cut faces are capped and hatched. Drawing a sheet leaves the studio's view and pose as they were.
 
 # AI assist
 
