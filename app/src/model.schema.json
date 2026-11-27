@@ -45,6 +45,7 @@
     "cutKeep": { "type": "array", "description": "Parts every cut leaves whole (ids, @groups, ~names); a script cut's keep adds to them.", "items": { "type": "string" } },
     "removed": { "type": "array", "description": "Parts removed from this animation's assembly (CAD untouched).", "items": { "type": "string" } },
     "shapes": { "type": "array", "description": "Shapes made in the studio: { id, kind, size, position, rotation, color, array? }." },
+    "copies": { "type": "array", "description": "Linked copies of parts / assemblies / @groups: { id, of: [targets], position (m, the copy's centre), rotation (deg) }; parts copies/<id>/<source id>." },
     "keyframe": { "type": "object", "description": "The moment shown as the card image on Home: time, camera, view style." },
     "views": { "type": "object", "description": "Named camera views (script: camera <name> 2s).", "additionalProperties": { "type": "object", "properties": { "pos": { "type": "array", "items": { "type": "number" } }, "look": { "type": "array", "items": { "type": "number" } } } } },
     "labels": { "type": "object", "description": "Display names for parts (script ids unchanged).", "additionalProperties": { "type": "string" } },

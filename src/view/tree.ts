@@ -67,6 +67,9 @@ const CSS = `
 .studio-root.tree-collapsed #chapter, .studio-root.tree-collapsed #sub { left: 52px !important; }
 `;
 
+/** Inside a linked copy (src/scene/copies.ts): its parts are listed like CAD's. */
+const inCopy = (o: THREE.Object3D) => { for (let p: THREE.Object3D | null = o; p; p = p.parent) if (p.userData.copy !== undefined) return true; return false; };
+
 export interface TreeHooks {
   /** Called after visibility/lock changes on these objects (suppression, recompile…). */
   onChange?: (objs: THREE.Object3D[], what: 'hidden' | 'locked') => void;
@@ -96,6 +99,8 @@ export interface TreeHooks {
   keptOf?: (obj: THREE.Object3D | undefined, group?: string) => 'own' | 'inh' | undefined;
   /** Keep parts uncut / cut them again. */
   onKeep?: (specs: string[], objs: THREE.Object3D[], on: boolean) => void;
+  /** Duplicate the selection as a linked copy */
+  onDuplicate?: () => void;
   /** User groups were created/changed (recompile the script). */
   onGroups?: () => void;
 }
@@ -228,6 +233,14 @@ export class TreePanel {
       this.roots.push(sn);
       this.open.add(sn);
     }
+    // linked copies (each with its cloned parts under it)
+    const copiesRoot = this.scene.root.children.find((o) => o.userData.copiesRoot);
+    if (copiesRoot?.children.length) {
+      const cn = mk('Copies', 0, { badge: String(copiesRoot.children.length) });
+      cn.virtualKids = copiesRoot.children.filter((o) => !o.userData.removed).map((o) => this.objNode(o, 1, cn));
+      this.roots.push(cn);
+      this.open.add(cn);
+    }
     // parts removed from this animation's assembly: listed here, with Restore
     const removed = (this.hooks.removedIds?.() ?? []).filter((id) => reg.has(id));
     if (removed.length) {
@@ -243,7 +256,7 @@ export class TreePanel {
   private objNode(o: THREE.Object3D, depth: number, parent?: Node): Node {
     const names: string[] = [];
     const nameOf = (x: THREE.Object3D) => x.name || (x.userData.id as string).split('/').pop()!;
-    if (isCad(o)) {
+    if ((isCad(o) || inCopy(o)) && o.userData.copy === undefined) {
       while (o.children.length === 1 && o.children[0].userData.id && !(o as THREE.Mesh).isMesh) {
         if (!['model', 'root'].includes(o.name) || !names.length) names.push(nameOf(o));
         o = o.children[0];
@@ -261,7 +274,7 @@ export class TreePanel {
     if (!n.obj || n.obj.userData.kind === 'block') return [];
     if (!n.kids) {
       // generated groups (vessel, head…) have unnamed internals – don't list them
-      n.kids = isCad(n.obj) ? n.obj.children.filter((c) => c.userData.id && !c.userData.removed).map((c) => this.objNode(c, n.depth + 1, n)) : [];
+      n.kids = isCad(n.obj) || inCopy(n.obj) ? n.obj.children.filter((c) => c.userData.id && !c.userData.removed).map((c) => this.objNode(c, n.depth + 1, n)) : [];
     }
     return n.kids;
   }
@@ -734,6 +747,7 @@ export class TreePanel {
       const all = objs.length > 0 && this.sel.every((s) => s.group ? this.hooks.keptOf?.(undefined, s.group) : s.obj ? this.hooks.keptOf?.(s.obj) : false);
       if (objs.length) items.push([all ? 'Cut again' : 'Keep uncut  K', () => this.hooks.onKeep!(this.selSpecs(), objs, !all)]);
     }
+    if (!n.removedRow && n.folder === undefined && this.hooks.onDuplicate) items.push(['Duplicate (linked copy)  ⌘D', () => this.hooks.onDuplicate!()]);
     if (!many && n.id) items.push(['Copy id', () => navigator.clipboard?.writeText(n.id!)]);
     const m = document.createElement('div');
     m.className = 'treemenu';

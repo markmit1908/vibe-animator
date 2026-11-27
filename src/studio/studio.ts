@@ -7,6 +7,7 @@ import { buildScene } from '../scene/build';
 import { compile } from '../timeline/compile';
 import { Player } from '../timeline/player';
 import { fitVerticalCylinder, planeHeight } from '../scene/origin';
+import { buildCopy, COPIES_ROOT, copyPartId, freeCopyName, sourcesBox, type CopyDef } from '../scene/copies';
 import { buildShape, freeName, KINDS, SHAPES_ROOT, shapePartId, SIZES, validName, type ShapeDef, type ShapeKind } from '../scene/shapes';
 import { capUniforms, SectionCaps, withCaps } from '../view/caps';
 import { OutlineGlow } from '../view/glow';
@@ -72,7 +73,7 @@ const edit = (patch: Partial<AnimModel>) => {
   if (THUMB_KEYS.some((k) => k in patch)) scheduleThumb();
 };
 /** Edits that change what the card image shows. */
-const THUMB_KEYS = ['script', 'colors', 'snapshots', 'groups', 'folders', 'labels', 'removed', 'views', 'scene', 'keyframe', 'shapes', 'cutKeep'];
+const THUMB_KEYS = ['script', 'colors', 'snapshots', 'groups', 'folders', 'labels', 'removed', 'views', 'scene', 'keyframe', 'shapes', 'cutKeep', 'copies'];
 let thumbTimer: number | undefined;
 /** Re-render the card image once things have been quiet for a moment. */
 function scheduleThumb(delay = 2000) {
@@ -83,13 +84,13 @@ function scheduleThumb(delay = 2000) {
 // ---------- undo / redo (⌘/Ctrl+Z, ⇧⌘Z / Ctrl+Y) of the animation's state ----------
 // Every change goes through edit(): before the first change of a burst (400 ms), the state as it was is pushed.
 // Script typing has the editor's own undo; script changes made by code (gizmo write-back, an accepted proposal) undo here.
-type UndoKey = 'colors' | 'snapshots' | 'groups' | 'folders' | 'cutKeep' | 'labels' | 'removed' | 'script' | 'drawings' | 'views' | 'keyframe' | 'shapes';
-const UNDO_KEYS: UndoKey[] = ['colors', 'snapshots', 'groups', 'folders', 'cutKeep', 'labels', 'removed', 'script', 'drawings', 'views', 'keyframe', 'shapes'];
+type UndoKey = 'colors' | 'snapshots' | 'groups' | 'folders' | 'cutKeep' | 'labels' | 'removed' | 'script' | 'drawings' | 'views' | 'keyframe' | 'shapes' | 'copies';
+const UNDO_KEYS: UndoKey[] = ['colors', 'snapshots', 'groups', 'folders', 'cutKeep', 'labels', 'removed', 'script', 'drawings', 'views', 'keyframe', 'shapes', 'copies'];
 type DocState = Partial<Record<UndoKey, any>>;
 const clone = <T,>(x: T): T => (x === undefined ? x : JSON.parse(JSON.stringify(x)));
 const docNow: DocState = {
   colors: model.colors ?? {}, snapshots: model.snapshots ?? { active: 'default', items: {} }, groups: model.groups ?? {}, folders: model.folders ?? {},
-  labels: model.labels ?? {}, removed: model.removed ?? [], cutKeep: model.cutKeep ?? [], views: model.views ?? {}, keyframe: model.keyframe, shapes: model.shapes ?? [], script: model.script ? { language: 'anim', text: joinLines(model.script.text) } : undefined,
+  labels: model.labels ?? {}, removed: model.removed ?? [], cutKeep: model.cutKeep ?? [], views: model.views ?? {}, keyframe: model.keyframe, shapes: model.shapes ?? [], copies: model.copies ?? [], script: model.script ? { language: 'anim', text: joinLines(model.script.text) } : undefined,
   drawings: model.drawings ? { language: 'draw', text: joinLines(model.drawings.text) } : undefined,
 };
 const undoStack: DocState[] = [], redoStack: DocState[] = [];
@@ -222,6 +223,46 @@ function buildShapes() {
 }
 buildShapes();
 
+// ---------- copies: linked duplicates of parts / assemblies / groups (model `copies`) ----------
+let copies: CopyDef[] = clone(model.copies ?? []);
+const copiesRoot = new THREE.Group();
+copiesRoot.name = 'copies'; copiesRoot.userData.copiesRoot = true; copiesRoot.userData.id = COPIES_ROOT;
+built.root.add(copiesRoot); built.registry.set(COPIES_ROOT, copiesRoot);
+/** per copy: why it's empty or incomplete */
+const copyErrors = new Map<string, string>();
+/** The objects a copy clones: its targets, minus removed ones and ones under another target. */
+function copySources(d: CopyDef) {
+  const r = resolveIds(d.of);
+  const objs = r.ids.map((x) => built.registry.get(x)).filter((o): o is THREE.Object3D => !!o && !isRemoved(o) && o !== built.root && o !== copiesRoot);
+  const covered = (o: THREE.Object3D) => { for (let p = o.parent; p; p = p.parent) if (objs.includes(p)) return true; return false; };
+  return { objs: objs.filter((o) => !covered(o)), unknown: r.unknown };
+}
+/** (Re)build every copy from its sources (in order: a copy can copy an earlier copy). Sources are read at their current pose. */
+async function buildCopies() {
+  regVersion++;
+  for (const id of [...built.registry.keys()]) if (id.startsWith(COPIES_ROOT + '/')) built.registry.delete(id);
+  for (const c of [...copiesRoot.children]) copiesRoot.remove(c);   // geometry and materials are the sources'
+  copyErrors.clear();
+  built.root.updateMatrixWorld(true);
+  for (const d of copies) {
+    const { objs, unknown } = copySources(d);
+    if (unknown.length) copyErrors.set(d.id, `Not found: ${unknown.join(', ')}`);
+    else if (!objs.length) copyErrors.set(d.id, 'Nothing to copy (its parts were removed)');
+    // locked + hidden CAD has freed its geometry: bring it back for the clone, then free it again
+    const supp: THREE.Mesh[] = [];
+    for (const o of objs) o.traverse((x) => { if (x.userData.suppressed) supp.push(x as THREE.Mesh); });
+    if (supp.length) await cad.restore(supp);
+    const { root } = buildCopy(d, { objs, skip: (o) => !!o.userData.removed }, (o, id) => { o.userData.id = id; built.registry.set(id, o); });
+    if (supp.length) cad.suppress(supp);
+    copiesRoot.add(root);
+    root.updateMatrixWorld(true);
+  }
+  copiesRoot.traverse((o) => { o.userData.homeP = o.position.toArray(); o.userData.homeQ = o.quaternion.toArray(); });
+  for (const id of removed) { const o = built.registry.get(id); if (o) o.userData.removed = true; }
+  for (const [id, l] of Object.entries(labels)) { const o = built.registry.get(id); if (o) o.userData.label = l; }
+}
+await buildCopies();
+
 // ---------- placements (parts moved with the gizmo; saved in snapshots) ----------
 for (const o of built.registry.values()) { o.userData.homeP = o.position.toArray(); o.userData.homeQ = o.quaternion.toArray(); }
 const idOfObj = (o: THREE.Object3D) => (o.userData.id ?? o.name) as string;
@@ -324,6 +365,7 @@ async function setRemoved(ids: string[], rem: boolean) {
   }
   for (const id of ids) { const o = built.registry.get(id); if (o) await reconcile(o); }
   edit({ removed: [...removed] });
+  if (copies.length && ids.some((id) => !id.startsWith(COPIES_ROOT + '/'))) { await syncCopies(false); return; }   // copies follow their sources
   tree.rebuild();
   buildTimeline();
 }
@@ -675,7 +717,7 @@ function resolveIds(specs: string[]) {
     }
     if (built.registry.has(s0)) { ids.add(s0); continue; }
     // a unique short name (last id segment) or display name, as scripts allow
-    const named = [...built.registry.keys()].filter((id) => id.slice(id.lastIndexOf('/') + 1) === s0 || labels[id] === s0);
+    const named = [...built.registry.keys()].filter((id) => !id.startsWith(COPIES_ROOT + '/' ) || id.split('/').length === 2).filter((id) => id.slice(id.lastIndexOf('/') + 1) === s0 || labels[id] === s0);
     if (named.length === 1) ids.add(named[0]); else unknown.push(named.length ? `${s0} (ambiguous: ${named.length} parts – use the id)` : s0);
   }
   return { ids: [...ids], unknown };
@@ -692,7 +734,7 @@ function placeTargets(targets: string[]) {
   const r = resolveIds(targets);
   const objs = r.ids.map((x) => built.registry.get(x)).filter(Boolean) as THREE.Object3D[];
   const covered = (o: THREE.Object3D) => { for (let p = o.parent; p; p = p.parent) if (objs.includes(p)) return true; return false; };
-  return { objs: objs.filter((o) => !covered(o) && o !== built.root && o !== shapesRoot), unknown: r.unknown };
+  return { objs: objs.filter((o) => !covered(o) && o !== built.root && o !== shapesRoot && o !== copiesRoot), unknown: r.unknown };
 }
 /** Run f with the scene at the start pose (t = 0), matrices current; the time is put back. */
 function atStart<T>(f: () => T): T {
@@ -969,6 +1011,7 @@ const tree = new TreePanel(built, scene3, {
     gizmoFor(o, spec, objs);
     updateTools();
     refreshShapePanel();
+    refreshCopyPanel();
     if (clicked && scriptPanel?.picking) scriptPanel.insertTarget(shortSpec(clicked.spec), clicked.add); // pick mode: into the script
   },
   colorOf: (spec) => colors[spec],
@@ -996,6 +1039,7 @@ const tree = new TreePanel(built, scene3, {
   onColor: (specs, hex) => setColors(specs, hex),
   keptOf: (o, group) => keptState(o, group),
   onKeep: (specs, objs, on) => setKeep(specs, objs, on),
+  onDuplicate: () => void duplicateSelection(),
   onGroups: () => { buildTimeline(); edit({ groups: JSON.parse(JSON.stringify(store.groups)), folders: JSON.parse(JSON.stringify(store.folders)) }); }, // groups are part of the animation: saved at once
   stats: () => {
     const c = cad.stats(), r = renderer.info;
@@ -1167,8 +1211,17 @@ gizmo.addEventListener('dragging-changed', (e: any) => {
     return;
   }
   // start pose: a shape's own numbers (position, rotation); other parts record placements
-  let shapeMoved = false;
+  let shapeMoved = false, copyMoved = false;
   for (const m of d.members) {
+    const cdef = m.o.parent === copiesRoot ? copies.find((x) => x.id === m.o.userData.copy) : undefined;
+    if (cdef) {
+      cdef.position = m.o.position.toArray().map((v) => +v.toFixed(4));
+      cdef.rotation = new THREE.Euler().setFromQuaternion(m.o.quaternion, 'XYZ').toArray().slice(0, 3).map((a) => +THREE.MathUtils.radToDeg(a as number).toFixed(3));
+      m.o.userData.homeP = m.o.position.toArray(); m.o.userData.homeQ = m.o.quaternion.toArray();
+      delete state.placements[idOfObj(m.o)];
+      copyMoved = true;
+      continue;
+    }
     const def = m.o.userData.shape !== undefined && !m.o.userData.array ? shapes.find((x) => x.id === m.o.userData.shape) : undefined;
     if (def && m.o.parent === shapesRoot) {
       def.position = m.o.position.toArray().map((v) => +v.toFixed(4));
@@ -1178,6 +1231,7 @@ gizmo.addEventListener('dragging-changed', (e: any) => {
     } else state.placements[idOfObj(m.o)] = { p: m.o.position.toArray(), q: m.o.quaternion.toArray() };
   }
   if (shapeMoved) { void syncShapes(); refreshShapePanel(); }
+  if (copyMoved) { edit({ copies: clone(copies) }); refreshCopyPanel(true); }
   persistWorking();
   buildTimeline();
 });
@@ -1187,6 +1241,7 @@ on('keydown', (e: any) => {
   if (e.key === 'H' && !e.metaKey && !e.ctrlKey) void blankOthers();
   if (e.key === 'f' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); toggleFind(true); }
   if (e.key === 'h' && !e.metaKey && !e.ctrlKey) { tree.toggleHiddenSelected(); updateTools(); }
+  if (e.key === 'd' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void duplicateSelection(); }
   if (e.key === 'g' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); tree.groupSelected(); updateTools(); }
   if (e.key === 'k' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); toggleKeep(); }
   if (e.key === 'e') gizmo.setMode('rotate');
@@ -1696,7 +1751,7 @@ const undoToast = document.createElement('div');
 undoToast.style.cssText = 'position:absolute;left:50%;bottom:16px;transform:translateX(-50%);z-index:8;background:rgba(14,17,21,.95);color:#d7dde4;border:1px solid #2b3540;border-radius:6px;padding:5px 12px;font:12px system-ui;display:none;pointer-events:none';
 host().appendChild(undoToast);
 let toastTimer: number | undefined;
-const WHAT: Record<UndoKey, string> = { colors: 'colour', snapshots: 'move / lock / hide', groups: 'groups', folders: 'folders', cutKeep: 'keep uncut', labels: 'rename', removed: 'remove / restore', script: 'script edit', drawings: 'drawing script edit', views: 'views', keyframe: 'thumbnail', shapes: 'shapes' };
+const WHAT: Record<UndoKey, string> = { colors: 'colour', snapshots: 'move / lock / hide', groups: 'groups', folders: 'folders', cutKeep: 'keep uncut', labels: 'rename', removed: 'remove / restore', script: 'script edit', drawings: 'drawing script edit', views: 'views', keyframe: 'thumbnail', shapes: 'shapes', copies: 'copies' };
 async function restoreDoc(d: DocState, verb: string) {
   const what = UNDO_KEYS.filter((k) => d[k] !== undefined && JSON.stringify(d[k]) !== JSON.stringify(docNow[k])).map((k) => WHAT[k]);
   undoing = true;
@@ -1723,6 +1778,8 @@ async function restoreDoc(d: DocState, verb: string) {
     if (d.views) { views = clone(d.views); renderViews(); }
     if ('keyframe' in d) keyframe = clone(d.keyframe);
     if (d.shapes) { shapes = clone(d.shapes); buildShapes(); applyPlacements(); applyColors(); tree.rebuild(); }
+    // copies follow their sources: rebuild when they or what they copy (removed parts, groups) changed
+    if (d.copies || (copies.length && (d.removed || d.groups))) { if (d.copies) copies = clone(d.copies); await buildCopies(); applyPlacements(); applyColors(); await reconcile(copiesRoot); tree.rebuild(); }
     for (const o of built.root.children) await reconcile(o);
     if (d.script && scriptPanel && d.script.text !== scriptPanel.text) {
       docNow.script = clone(d.script);
@@ -1731,7 +1788,7 @@ async function restoreDoc(d: DocState, verb: string) {
     if (d.drawings && drawPanel && d.drawings.text !== drawPanel.text) { docNow.drawings = clone(d.drawings); drawPanel.setText(d.drawings.text); }
     buildTimeline({ atStart: true });
     player.seek(Math.min(t, player.duration));
-    edit({ colors: { ...colors }, snapshots: { active: store.active, items: clone(store.snapshots) }, groups: clone(store.groups), folders: clone(store.folders), cutKeep: [...cutKeep], labels: { ...labels }, removed: [...removed], views: clone(views), shapes: clone(shapes) });
+    edit({ colors: { ...colors }, snapshots: { active: store.active, items: clone(store.snapshots) }, groups: clone(store.groups), folders: clone(store.folders), cutKeep: [...cutKeep], labels: { ...labels }, removed: [...removed], views: clone(views), shapes: clone(shapes), copies: clone(copies) });
     tree.rebuild();
     gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs);
     updateTools(); renderSnapBar(); markDirty(false);
@@ -1772,6 +1829,8 @@ toolbar.innerHTML = `<button data-t="blank" title="Blank / unblank the selected 
   <button data-t="origin" title="Set the model origin: click a cylindrical face (its axis), then a flat face (its height); the model moves so that point is (0,0,0)"><span class="i">⊕</span><span class="l">Set origin</span></button>
   <button data-t="shape" title="Shapes: add a box, cylinder, tube, sphere, cone, plane or hex prism – sizes, position, colour, linear / circular arrays. Select a shape to edit it."><span class="i">◇</span><span class="l">Shape</span></button>
   <div class="shpop" hidden></div>
+  <button data-t="dup" title="Duplicate the selection (parts, assemblies or a group) as a linked copy: it follows the CAD, has its own position and rotation, and scripts can animate it (⌘D)"><span class="i">⧉</span><span class="l">Duplicate</span></button>
+  <div class="cppop" hidden></div>
   <button data-t="thumb" title="Thumbnail: this moment (time, camera, view style) becomes the card image on Home. A thumbnail step in the script takes priority."><span class="i">📌</span><span class="l">Thumbnail</span></button>
   <button data-t="views" title="Camera views: save the current view (position and target), go to one, or put it in the script (camera <name> 2s)"><span class="i">📷</span><span class="l">Views</span></button>
   <div class="vpop" hidden></div>
@@ -1798,17 +1857,17 @@ layoutToolbar();
     #toolsbar button:hover:not(:disabled) { background: #26303a; } #toolsbar button:disabled { opacity: .4; cursor: default; }
     #toolsbar button.on { border-color: #f2b705; color: #f2b705; }
     #toolsbar .vpop { position: absolute; left: calc(100% + 6px); top: 0; width: 250px; background: rgba(14,17,21,.97); border: 1px solid #2b3540; border-radius: 6px; padding: 8px; color: #d7dde4; display: flex; flex-direction: column; gap: 4px; }
-    #toolsbar .vpop[hidden], #toolsbar .fpop[hidden], #toolsbar .shpop[hidden] { display: none; }
-    #toolsbar .shpop { position: absolute; left: calc(100% + 6px); top: 0; width: 290px; max-height: 80vh; overflow: auto; background: rgba(14,17,21,.97); border: 1px solid #2b3540; border-radius: 6px; padding: 8px 10px; color: #d7dde4; display: flex; flex-direction: column; gap: 5px; font: 12px system-ui; }
-    #toolsbar .shpop b { font-size: 12px; }
-    #toolsbar .shpop .r { display: grid; grid-template-columns: 82px 1fr; align-items: center; gap: 6px; }
-    #toolsbar .shpop .v3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
-    #toolsbar .shpop input, #toolsbar .shpop select { width: 100%; box-sizing: border-box; background: #0a0c0f; color: inherit; border: 1px solid #2b3540; border-radius: 4px; padding: 2px 4px; font: 11.5px ui-monospace, monospace; }
-    #toolsbar .shpop input[type=color] { height: 20px; padding: 0; }
-    #toolsbar .shpop .acts { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
-    #toolsbar .shpop button { width: auto; flex-direction: row; padding: 3px 8px; }
-    #toolsbar .shpop .hint { color: #7b8794; font-size: 10.5px; }
-    #toolsbar .shpop .err { color: #e5484d; font-size: 11px; }
+    #toolsbar .vpop[hidden], #toolsbar .fpop[hidden], #toolsbar :is(.shpop, .cppop)[hidden] { display: none; }
+    #toolsbar :is(.shpop, .cppop) { position: absolute; left: calc(100% + 6px); top: 0; width: 290px; max-height: 80vh; overflow: auto; background: rgba(14,17,21,.97); border: 1px solid #2b3540; border-radius: 6px; padding: 8px 10px; color: #d7dde4; display: flex; flex-direction: column; gap: 5px; font: 12px system-ui; }
+    #toolsbar :is(.shpop, .cppop) b { font-size: 12px; }
+    #toolsbar :is(.shpop, .cppop) .r { display: grid; grid-template-columns: 82px 1fr; align-items: center; gap: 6px; }
+    #toolsbar :is(.shpop, .cppop) .v3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+    #toolsbar :is(.shpop, .cppop) input, #toolsbar :is(.shpop, .cppop) select { width: 100%; box-sizing: border-box; background: #0a0c0f; color: inherit; border: 1px solid #2b3540; border-radius: 4px; padding: 2px 4px; font: 11.5px ui-monospace, monospace; }
+    #toolsbar :is(.shpop, .cppop) input[type=color] { height: 20px; padding: 0; }
+    #toolsbar :is(.shpop, .cppop) .acts { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+    #toolsbar :is(.shpop, .cppop) button { width: auto; flex-direction: row; padding: 3px 8px; }
+    #toolsbar :is(.shpop, .cppop) .hint { color: #7b8794; font-size: 10.5px; }
+    #toolsbar :is(.shpop, .cppop) .err { color: #e5484d; font-size: 11px; }
     #toolsbar .fpop { position: absolute; left: calc(100% + 6px); top: 0; width: 260px; background: rgba(14,17,21,.97); border: 1px solid #2b3540; border-radius: 6px; padding: 8px; color: #d7dde4; display: flex; flex-direction: column; gap: 6px; }
     #toolsbar .fpop input { background: #0a0c0f; color: inherit; border: 1px solid #2b3540; border-radius: 4px; padding: 4px 6px; font: 12px ui-monospace, monospace; }
     #toolsbar .fpop button { width: auto; flex-direction: row; justify-content: center; padding: 4px; }
@@ -2139,6 +2198,127 @@ function renameShapeRefs(oldId: string, newId: string) {
   edit({ colors: { ...colors }, labels: { ...labels } });
 }
 
+// ---- copies: Duplicate, rebuild after a change, the Copy panel ----
+/** Rebuild the copies in place (placements, colours, state, tree, timeline) and save them. */
+async function syncCopies(save = true, select?: string) {
+  const t = player.time, playing = player.playing;
+  player.playing = false;
+  player.seek(0);
+  const keep = select ? [select] : gSel.objs.map(idOfObj);
+  await buildCopies();
+  applyPlacements();
+  applyColors();
+  await reconcile(copiesRoot);
+  tree.rebuild();
+  buildTimeline({ atStart: true });
+  player.seek(Math.min(t, player.duration)); player.playing = playing;
+  const still = keep.map((id) => built.registry.get(id)).filter(Boolean) as THREE.Object3D[];
+  if (still.length) tree.selectObjects(still); else if (keep.some((id) => id.startsWith(COPIES_ROOT + '/'))) tree.select(undefined, false);
+  if (save) edit({ copies: clone(copies) });
+  refreshCopyPanel(true);
+}
+/** The copy the selection is (its root), if any. */
+function selectedCopy(): CopyDef | undefined {
+  if (gSel.objs.length !== 1) return;
+  const o = gSel.objs[0];
+  return o.parent === copiesRoot ? copies.find((c) => c.id === o.userData.copy) : undefined;
+}
+/** Duplicate: the selected copy again (same sources), or the selection as a new copy – one box width along x. */
+async function duplicateSelection() {
+  if (!gSel.objs.length) return;
+  const cur = selectedCopy();
+  const taken = copies.map((c) => c.id);
+  let def: CopyDef;
+  if (cur) {
+    const o = gSel.objs[0], w = sourcesBox([o]).getSize(new THREE.Vector3()).x;
+    def = { ...clone(cur), id: freeCopyName(cur.id.replace(/-\d+$/, ''), taken), position: [cur.position[0] + w * 1.1, cur.position[1], cur.position[2]] };
+  } else {
+    const specs = tree.selectedSpecs().filter((s) => s !== COPIES_ROOT && s !== SHAPES_ROOT);
+    if (!specs.length) return;
+    const b = sourcesBox(gSel.objs);
+    if (b.isEmpty()) return;
+    const c = b.getCenter(new THREE.Vector3()), w = b.getSize(new THREE.Vector3()).x;
+    const base = specs[0].startsWith('@') ? specs[0].slice(1) : (gSel.objs[0].userData.label ?? specs[0].split('/').pop()!);
+    def = { id: freeCopyName(String(base), taken), of: specs, position: [+(c.x + w * 1.1).toFixed(4), +c.y.toFixed(4), +c.z.toFixed(4)], rotation: [0, 0, 0] };
+  }
+  copies.push(def);
+  cppop.hidden = false;
+  await syncCopies(true, copyPartId(def.id));
+}
+function renameCopyRefs(oldId: string, newId: string) {
+  const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (scriptPanel) {
+    const re = new RegExp(`(^|[\\s,=]|${esc(COPIES_ROOT)}/)${esc(oldId)}(?![\\w-])`, 'gm');
+    const next = scriptPanel.text.replace(re, `$1${newId}`);
+    if (next !== scriptPanel.text) scriptPanel.setText(next);
+  }
+  const from = copyPartId(oldId), to = copyPartId(newId);
+  const mv = (k: string) => (k === from || k.startsWith(from + '/') ? to + k.slice(from.length) : k);
+  colors = Object.fromEntries(Object.entries(colors).map(([k, v]) => [mv(k), v]));
+  labels = Object.fromEntries(Object.entries(labels).map(([k, v]) => [mv(k), v]));
+  for (const g of Object.keys(store.groups)) store.groups[g] = store.groups[g].map(mv);
+  const rm = [...removed].map(mv); removed.clear(); rm.forEach((x) => removed.add(x));
+  edit({ colors: { ...colors }, labels: { ...labels }, groups: clone(store.groups), removed: [...removed] });
+}
+const cppop = toolbar.querySelector<HTMLElement>('.cppop')!;
+let shownCopy: string | undefined;
+/** The Copy panel: shown while a copy is selected – name, sources, position, rotation; Select source, Delete. */
+function refreshCopyPanel(force = false) {
+  const def = selectedCopy();
+  if (!def) { cppop.hidden = true; shownCopy = undefined; return; }
+  cppop.hidden = false;
+  if (!force && def.id === shownCopy && cppop.contains(document.activeElement)) return;
+  shownCopy = def.id;
+  const v3 = (k: string, v: number[]) => `<div class="v3">${[0, 1, 2].map((i) => `<input type="number" step="0.05" data-f="${k}${i}" value="${num(v[i] ?? 0)}">`).join('')}</div>`;
+  const err = copyErrors.get(def.id);
+  cppop.innerHTML = `<b>Copy <code>${def.id}</code></b>
+    <div class="r">Name <input data-f="id" value="${def.id}" spellcheck="false"></div>
+    <div class="r">Of <input data-f="of" value="${def.of.join(', ')}" spellcheck="false" title="Part ids, @groups – as in scripts"></div>
+    <div class="r">Position ${v3('pos', def.position)}</div>
+    <div class="r">Rotation° ${v3('rot', def.rotation)}</div>
+    <div class="err">${err ?? ''}</div>
+    <div class="acts"><button data-s="dup">Duplicate</button><button data-s="src">Select source</button><button data-s="del">Delete</button></div>
+    <div class="hint">Linked: follows its source. Position is the copy's centre (m). In scripts: <code>${def.id}</code>, its parts <code>${copyPartId(def.id)}/…</code></div>`;
+  const q = <T extends HTMLElement>(f: string) => cppop.querySelector<T>(`[data-f="${f}"]`)!;
+  const errEl = cppop.querySelector<HTMLElement>('.err')!;
+  let timer: number | undefined;
+  cppop.querySelectorAll<HTMLInputElement>('input').forEach((i) => (i.oninput = () => {
+    clearTimeout(timer);
+    timer = window.setTimeout(() => {
+      const n = (f: string) => { const x = parseFloat(q<HTMLInputElement>(f).value); return Number.isFinite(x) ? x : 0; };
+      const id = q<HTMLInputElement>('id').value.trim();
+      if (!validName(id)) { errEl.textContent = 'Name: letters, digits, - and _, not starting with a digit'; return; }
+      if (id !== def.id && copies.some((c) => c.id === id)) { errEl.textContent = `There's already a copy called ${id}`; return; }
+      const of = q<HTMLInputElement>('of').value.split(',').map((x) => x.trim()).filter(Boolean);
+      if (!of.length) { errEl.textContent = 'Of: what to copy (part ids, @groups)'; return; }
+      errEl.textContent = '';
+      const old = def.id;
+      const rebuild = id !== old || of.join(',') !== def.of.join(',');
+      def.position = [0, 1, 2].map((k) => n(`pos${k}`)); def.rotation = [0, 1, 2].map((k) => n(`rot${k}`));
+      def.of = of;
+      if (id !== old) { renameCopyRefs(old, id); def.id = id; shownCopy = id; }
+      if (rebuild) { void syncCopies(true, copyPartId(id)); return; }
+      // just the pose: move the copy in place
+      const o = built.registry.get(copyPartId(id));
+      if (o) {
+        o.position.fromArray(def.position);
+        o.quaternion.setFromEuler(new THREE.Euler(...(def.rotation.map(THREE.MathUtils.degToRad) as [number, number, number]), 'XYZ'));
+        o.userData.homeP = o.position.toArray(); o.userData.homeQ = o.quaternion.toArray();
+        delete state.placements[idOfObj(o)];
+        buildTimeline({ atStart: true });
+        gizmoFor(o, gSel.spec, gSel.objs);
+      }
+      edit({ copies: clone(copies) });
+    }, 250);
+  }));
+  const act = (k: string, f: () => void) => cppop.querySelector<HTMLElement>(`[data-s="${k}"]`)?.addEventListener('click', f);
+  act('dup', () => void duplicateSelection());
+  act('src', () => { const objs = copySources(def).objs; if (objs.length) tree.selectObjects(objs); });
+  act('del', () => { copies = copies.filter((c) => c !== def); tree.select(undefined, false); void syncCopies(); });
+  cppop.onkeydown = (e) => e.stopPropagation();
+  placePop(cppop, 'dup');
+}
+
 /** Show all: clear every hide flag. */
 async function showAll() {
   if (!Object.values(state.hidden).some(Boolean)) return;
@@ -2148,6 +2328,7 @@ async function showAll() {
 }
 function updateTools() {
   const { count, allHidden } = tree.selectionInfo();
+  toolbar.querySelector<HTMLButtonElement>('[data-t=dup]')!.disabled = !count;
   const blank = toolbar.querySelector<HTMLButtonElement>('[data-t=blank]')!, group = toolbar.querySelector<HTMLButtonElement>('[data-t=group]')!;
   blank.disabled = group.disabled = toolbar.querySelector<HTMLButtonElement>('[data-t=others]')!.disabled = !count;
   blank.querySelector('.l')!.textContent = allHidden ? 'Unblank' : 'Blank';
@@ -2164,6 +2345,7 @@ toolbar.querySelector<HTMLElement>('[data-t=blank]')!.onclick = () => { tree.tog
 toolbar.querySelector<HTMLElement>('[data-t=others]')!.onclick = () => void blankOthers();
 toolbar.querySelector<HTMLElement>('[data-t=showall]')!.onclick = () => void showAll();
 toolbar.querySelector<HTMLElement>('[data-t=thumb]')!.onclick = setKeyframe;
+toolbar.querySelector<HTMLElement>('[data-t=dup]')!.onclick = () => void duplicateSelection();
 toolbar.querySelector<HTMLElement>('[data-t=shape]')!.onclick = () => {
   shpop.hidden = !shpop.hidden;
   toolbar.querySelector('[data-t=shape]')!.classList.toggle('on', !shpop.hidden);
@@ -2422,7 +2604,7 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 }
 
 // read-only handle for tests and debugging
-(window as any).__studio = { renderSheetPng, svgToPdf, vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
+(window as any).__studio = { get copies() { return copies; }, duplicateSelection, renderSheetPng, svgToPdf, vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
   /** tests: a block with many small parts buried behind the cut plane (x < 0), like dowels without holes */
   addTestBuried: (count = 60) => {
     const mk = (col: number) => withCaps(new THREE.MeshToonMaterial({ color: col, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));

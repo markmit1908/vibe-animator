@@ -105,6 +105,7 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
       const add = (k: string, id: string) => { const l = names!.get(k); if (l) { if (!l.includes(id)) l.push(id); } else names!.set(k, [id]); };
       for (const [id, o] of scene.registry) {
         if (isRemoved(o)) continue;
+        if (/^copies\/[^/]+\//.test(id)) continue;   // parts inside a linked copy share their sources' names: full ids only
         add(id.slice(id.lastIndexOf('/') + 1), id);
         if (o.userData.label) add(o.userData.label as string, id);
       }

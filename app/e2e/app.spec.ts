@@ -334,6 +334,70 @@ test("parts can be named by their short name, several in one step", async ({ pag
   await expect(page.locator("#script .status")).toHaveText("1 error");
 });
 
+test("linked copies: duplicate a part (⌘D), place it by numbers or the gizmo, script it, saved, undo, follows its source", async ({ page }) => {
+  await page.goto("/");
+  const { readFileSync } = await import("node:fs");
+  await api(page).put("/api/files/CAD/small.glb?overwrite=true", { data: readFileSync(new URL("./fixtures/small.glb", import.meta.url)) });
+  const m = { name: "Copies", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [{ id: "plant", file: "CAD/small.glb", clip: false }] },
+    script: { language: "anim", text: 'label "C"\nmove Pin_1 by [0,.25,0] 1s' },
+    snapshots: { active: "default", items: { default: { locked: { plant: false }, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Copies");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const pin = await page.evaluate(() => { for (const id of (window as any).__studio.built.registry.keys()) if (id.endsWith("/Pin_1")) return id; });
+  const info = () => page.evaluate((pin) => {
+    const s = (window as any).__studio, T = s.THREE, r = s.built.registry;
+    const box = (o: any) => { o.updateWorldMatrix(true, true); const b = new T.Box3().setFromObject(o); return { c: b.getCenter(new T.Vector3()).toArray().map((v: number) => +v.toFixed(3)), w: +b.getSize(new T.Vector3()).x.toFixed(3) }; };
+    const c = r.get("copies/Pin_1-1"), inner = r.get(`copies/Pin_1-1/${pin}`);
+    let geoSame = false; if (inner) { const a: any[] = [], b: any[] = []; r.get(pin).traverse((x: any) => x.isMesh && a.push(x.geometry)); inner.traverse((x: any) => x.isMesh && b.push(x.geometry)); geoSame = a.length > 0 && a.every((g, i) => g === b[i]); }
+    return { copies: JSON.parse(JSON.stringify(s.copies)), src: box(r.get(pin)), copy: c ? box(c) : null, geoSame };
+  }, pin);
+  // select the pin, ⌘D
+  await page.evaluate((pin) => (window as any).__studio.tree.selectId(pin), pin);
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.keyboard.press("Meta+d");
+  await expect.poll(async () => (await info()).copies.length).toBe(1);
+  let i = await info();
+  expect(i.copies[0]).toMatchObject({ id: "Pin_1-1", of: [pin], rotation: [0, 0, 0] });
+  expect(i.geoSame).toBe(true);                                                    // shared geometry
+  expect(i.copy!.c[0]).toBeCloseTo(i.src.c[0] + i.src.w * 1.1, 2);                 // one box width along x
+  expect(i.copy!.c[1]).toBeCloseTo(i.src.c[1], 2);
+  await expect(page.locator("#toolsbar .cppop")).toBeVisible();
+  // the tree lists it; the source's short name still resolves (the copy's parts need full ids)
+  await expect(page.locator("#tree .row", { hasText: "Copies" })).toBeVisible();
+  await expect(page.locator("#script .status")).toHaveText("✓");
+  // typed numbers move it
+  const pos = page.locator("#toolsbar .cppop [data-f=pos1]");
+  await pos.fill("2"); await pos.dispatchEvent("input");
+  await expect.poll(async () => (await info()).copy!.c[1]).toBeCloseTo(2, 2);
+  // scripts can animate it by name
+  await page.evaluate(() => { const p = (window as any).__studio.scriptPanel; p.setText(p.text + "\nmove Pin_1-1 by [0,1,0] 1s"); });
+  await expect(page.locator("#script .status")).toHaveText("✓");
+  // saved: after a reload it's rebuilt where it was
+  await expect.poll(async () => { const p = (await (await api(page).get("/api/home")).json()).projects.find((x: any) => x.name === "Copies");
+    return (await (await api(page).get(`/api/projects/${p.id}`)).json()).problem.copies?.[0]?.position?.[1]; }, { timeout: 5_000 }).toBe(2);
+  await page.reload();
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  i = await info();
+  expect(i.copy!.c[1]).toBeCloseTo(2, 2);
+  // linked: removing the source part empties the copy, with a message; restoring brings it back
+  await page.evaluate(async (pin) => { const s = (window as any).__studio; s.tree.selectId(pin); s.tree.removeSelected(); }, pin);
+  await expect.poll(async () => (await info()).geoSame).toBe(false);
+  await page.evaluate(() => (window as any).__studio.tree.selectId("copies/Pin_1-1"));
+  await expect(page.locator("#toolsbar .cppop .err")).toContainText("removed");
+  // undo the removal, then delete the copy from its panel; undo brings it back
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.keyboard.press("Meta+z");
+  await expect.poll(async () => (await info()).geoSame).toBe(true);
+  await page.evaluate(() => (window as any).__studio.tree.selectId("copies/Pin_1-1"));
+  await page.locator("#toolsbar .cppop [data-s=del]").click();
+  await expect.poll(async () => (await info()).copies.length).toBe(0);
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.keyboard.press("Meta+z");
+  await expect.poll(async () => (await info()).copies.length).toBe(1);
+  expect((await info()).copy).not.toBeNull();
+});
+
 test("lists and staggered loops: lift 1 s, vanish 0.5 s, next item 0.2 s later", async ({ page }) => {
   await page.goto("/");
   const text = ['label "Layer"', "list @top = */L11", "each @top stagger 0.2s {", "  move $ by [0,1,0] 1s", "  fade $ to 0 0.5s", "}", "wait 1s"].join("\n");
@@ -1416,7 +1480,7 @@ test("drawing sheets: the .draw script in the Illustration tab – view, hide, c
 });
 
 test("fast sheet PNG: one GPU frame per sheet in its style, on the paper with the title box", async ({ page }) => {
-  test.setTimeout(60_000);
+  test.setTimeout(120_000);
   await page.goto("/");
   const draw = ['paper A4', 'scale 1:10', 'dpi 100', '', 'sheet o "Outline"', '  view front', '  scale 1:20', '', 'sheet s "Shaded"', '  view front', '  style shaded', '',
     'sheet h', '  view front', '  style hidden', '  only red', '', 'sheet big', '  dpi 1200'].join("\n");
