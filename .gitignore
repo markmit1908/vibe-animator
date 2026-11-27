@@ -7,3 +7,4 @@ public/cad/*.glb
 .env
 .env.*
 .dev
+__pycache__/
