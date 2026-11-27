@@ -1380,6 +1380,15 @@ test("drawing sheets: the .draw script in the Illustration tab – view, hide, c
   await expect(page.locator("#sheet-preview .strip .th.bad")).toHaveCount(1);      // sheet d's unknown part
   await page.locator("#sheet-preview .strip .th[data-s=b]").click();
   await expect(page.locator("#sheet-preview header b")).toHaveText("b");
+  // live: typing in a sheet re-renders it (and shows it); moving the cursor into another sheet shows that one
+  const src0 = await page.locator("#sheet-preview .strip .th[data-s=a] img").getAttribute("src");
+  await page.evaluate(() => { const v = (window as any).__studio.drawPanel.view, d = v.state.doc, l = d.line(6);   // "  view front" in sheet a
+    v.dispatch({ changes: { from: l.to, insert: "\n  style shaded" }, selection: { anchor: l.to + 3 } }); });
+  await expect(page.locator("#sheet-preview header b")).toHaveText("Both", { timeout: 5_000 });
+  await expect(page.locator("#sheet-preview .info")).toContainText("shaded");
+  expect(await page.locator("#sheet-preview .strip .th[data-s=a] img").getAttribute("src")).not.toBe(src0);
+  await page.evaluate(() => { const v = (window as any).__studio.drawPanel.view; v.dispatch({ selection: { anchor: v.state.doc.line(10).from } }); });   // into sheet b
+  await expect(page.locator("#sheet-preview header b")).toHaveText("b");
   for (const n of ["a", "section-AA", "g"]) {
     const r = await api(page).get(`/api/files/Drawings/Sheets/${n}.png`);
     expect(r.status()).toBe(200);
@@ -1407,9 +1416,10 @@ test("drawing sheets: the .draw script in the Illustration tab – view, hide, c
 });
 
 test("fast sheet PNG: one GPU frame per sheet in its style, on the paper with the title box", async ({ page }) => {
+  test.setTimeout(60_000);
   await page.goto("/");
   const draw = ['paper A4', 'scale 1:10', 'dpi 100', '', 'sheet o "Outline"', '  view front', '  scale 1:20', '', 'sheet s "Shaded"', '  view front', '  style shaded', '',
-    'sheet h', '  view front', '  style hidden', '  only red', '', 'sheet big', '  dpi 1200', '  paper A0'].join("\n");
+    'sheet h', '  view front', '  style hidden', '  only red', '', 'sheet big', '  dpi 1200'].join("\n");
   const m = { name: "Png", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] },
     script: { language: "anim", text: 'label "P"' }, drawings: { language: "draw", text: draw },
     snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };

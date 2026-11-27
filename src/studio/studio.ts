@@ -605,7 +605,9 @@ let drawPanel: DrawPanel | undefined;
       clearTimeout(saveTimer);
       const save = () => { typing = typed; try { edit({ drawings: { language: 'draw', text } }); } finally { typing = false; } };
       if (typed) saveTimer = window.setTimeout(save, 500); else save();
+      if (typed) liveSheet();
     },
+    cursor: (name) => { if (previewEl && name && sheetImgs.has(name)) showSheet(name); else if (previewEl) liveSheet(); },
     preview: (name) => void previewSheet(name),
     saveAll: () => void saveAllSheets(),
     views: () => Object.keys(views),
@@ -1403,6 +1405,7 @@ interface SheetImg { url: string; ms: number; errors: { line: number; message: s
 let previewEl: HTMLElement | undefined, previewCur: string | undefined;
 const sheetImgs = new Map<string, SheetImg>();
 function closePreview() {
+  clearTimeout(liveTimer);
   previewEl?.remove(); previewEl = undefined; previewCur = undefined;
   for (const x of sheetImgs.values()) URL.revokeObjectURL(x.url);
   sheetImgs.clear();
@@ -1469,6 +1472,27 @@ async function renderIntoPreview(name: string): Promise<{ png: Blob; spec: Sheet
   if (old) URL.revokeObjectURL(old.url);
   sheetImgs.set(name, { url: URL.createObjectURL(r.png), ms: r.ms, errors: r.errors, spec: r.spec });
   return { png: r.png, spec: r.spec, errors: r.errors };
+}
+/** Live preview: while the preview is open, re-render the cursor's sheet ~300 ms after typing stops (not saved). */
+let liveTimer = 0, liveBusy = false, liveAgain = false;
+function liveSheet() {
+  if (!previewEl) return;
+  clearTimeout(liveTimer);
+  liveTimer = window.setTimeout(async () => {
+    if (liveBusy || progress.active) { liveAgain = true; if (!liveBusy) liveSheet(); return; }
+    const name = drawPanel!.sheetAtCursor();
+    if (!name || !previewEl) return;
+    liveBusy = true;
+    try {
+      const r = await renderIntoPreview(name);
+      if (!previewEl) return;
+      syncStrip();
+      if (r) { showSheet(name); drawPanel!.setRunErrors(r.errors); }
+    } finally {
+      liveBusy = false;
+      if (liveAgain) { liveAgain = false; liveSheet(); }
+    }
+  }, 300);
 }
 /** Preview: fast PNGs of every sheet (saved to the vault), the strip, and `focus` (the cursor's sheet) full size. */
 async function previewSheet(focus: string, save = true) {

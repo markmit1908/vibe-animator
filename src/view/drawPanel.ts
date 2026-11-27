@@ -44,6 +44,8 @@ export interface DrawPanelHooks {
   preview(sheet: string): void;
   /** Draw every sheet and save the SVGs to the vault */
   saveAll(): void;
+  /** the cursor moved into another sheet */
+  cursor?(sheet: string | undefined): void;
   /** completion: named views, snapshots */
   views(): string[];
   snapshots(): string[];
@@ -55,6 +57,7 @@ export class DrawPanel {
   private status: HTMLElement;
   private busyEl: HTMLElement;
   private setting = false;
+  private lastSheet: string | undefined;
   parsed: DrawScript;
 
   constructor(parent: HTMLElement, text: string, private hooks: DrawPanelHooks) {
@@ -96,6 +99,10 @@ export class DrawPanel {
             '.cm-tooltip': { backgroundColor: '#14191f', border: '1px solid #2b3540', color: '#d7dde4' },
           }, { dark: true }),
           EditorView.updateListener.of((u) => {
+            if (u.selectionSet || u.docChanged) {
+              const s = this.sheetAtCursor();
+              if (s !== this.lastSheet) { this.lastSheet = s; this.hooks.cursor?.(s); }
+            }
             if (!u.docChanged) return;
             const t = u.state.doc.toString();
             this.check(t);
