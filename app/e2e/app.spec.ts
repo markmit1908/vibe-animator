@@ -1383,8 +1383,32 @@ test("drawing sheets: the .draw script in the Illustration tab – view, hide, c
     const r = await api(page).get(`/api/files/Drawings/Sheets/${n}.svg`);
     expect(r.status()).toBe(200);
     expect(await r.text()).toContain("<svg");
+    const pdf = await api(page).get(`/api/files/Drawings/Sheets/${n}.pdf`);
+    expect(pdf.status()).toBe(200);
+    const body = await pdf.body();
+    expect(body.subarray(0, 5).toString()).toBe("%PDF-");
+    expect(body.toString("latin1")).toMatch(/\/MediaBox \[0 0 841\.8\d* 595\.2\d*\]/);   // A4 landscape in points
   }
   // the edited script is saved in the model
   await expect.poll(async () => { const p = (await (await api(page).get("/api/home")).json()).projects.find((x: any) => x.name === "Sheets");
     const mm = (await (await api(page).get(`/api/projects/${p.id}`)).json()).problem; const t = mm.drawings?.text; return Array.isArray(t) ? t.join("\n") : t; }, { timeout: 5_000 }).toContain("hide nothing-here");
+});
+
+test("batch drawings from the command line: npm run drawings -- <animation> [sheets]", async ({ page, baseURL }) => {
+  const draw = "paper A3\nsheet one\n  view front\nsheet two\n  view top\n";
+  const m = { name: "Batch", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "B"' }, drawings: { language: "draw", text: draw }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  const { execFileSync } = await import("node:child_process");
+  const run = (...a: string[]) => { try { return { out: execFileSync("node", ["scripts/drawings.mjs", ...a, "--url", baseURL!], { encoding: "utf8", stdio: "pipe" }), code: 0 }; }
+    catch (e: any) { return { out: String(e.stdout) + String(e.stderr), code: e.status }; } };
+  const r = run("Batch", "two");
+  expect(r.code).toBe(0);
+  expect(r.out).toContain("Drawings/Batch/two.pdf");
+  expect((await api(page).get("/api/files/Drawings/Batch/two.svg")).status()).toBe(200);
+  expect((await api(page).get("/api/files/Drawings/Batch/one.svg")).status()).toBe(404);   // only the named sheet
+  const bad = run("Batch", "nope");
+  expect(bad.code).toBe(1);
+  expect(bad.out).toContain('no sheet "nope"');
+  expect(run("No such animation").code).toBe(2);
 });

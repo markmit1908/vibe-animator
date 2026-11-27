@@ -189,8 +189,9 @@ its own layer (`outline` 0.5, `crease` 0.25, `hidden` 0.18 dashed, `hatch` 0.18,
 
 - **Controls:** paper, scale, hidden lines and crease angle for **⤓ Export SVG**, which draws the current view.
 - **Drawing script** (`.draw`, saved with the animation): each `sheet` is one drawing. Settings before the first sheet
-  are defaults. **▶ Preview sheet** draws the sheet the cursor is in and shows it over the view. **⤓ Save all**
-  draws every sheet into the vault as `Drawings/<animation>/<sheet>.svg`. Drawing a sheet never changes the studio's
+  are defaults. **▶ Preview sheet** draws the sheet the cursor is in and shows it over the view (download it as SVG
+  or PDF from there). **⤓ Save all** draws every sheet into the vault as `Drawings/<animation>/<sheet>.svg` and `.pdf`
+  (vector PDF at the paper size). Drawing a sheet never changes the studio's
   own view, pose or cut.
 
 ```
@@ -212,6 +213,10 @@ sheet core-section "Core – half section"
   number D-001            # title block fields per sheet; titleblock off leaves it out
   rev A
 ```
+
+**Batch** (the app must be running – `npm run dev`): `npm run drawings -- "<animation>" [sheet …]` saves the sheets
+(SVG + PDF) the same way, headless; `npm run drawings -- --all` does every animation with sheets; `--url` points at
+another server. It exits 1 if a sheet has an error.
 
 Cut faces are capped (what's inside a cut part stays hidden), outlined and hatched at 45° on the paper (135° for every other part). Fills (layer `fill`, under the lines) use the parts' base colours; their edges are traced at 0.25 mm on the paper and sit under the exact lines. The title block (bottom right) fills in the scale (NTS when fitted), paper size and date. A big assembly takes a few seconds per sheet
 (the plant model: 8M triangles, 6–8 s).
@@ -289,7 +294,8 @@ Every node appears in the tree with an id `plant/<child>/…`; duplicate sibling
 | `src/scene/` | Scene build (incl. the generated placeholder reactor), CAD loading/suppression, part state, origin fitting, shapes (`shapes.ts`) |
 | `src/script/`, `src/timeline/` | `.anim` parser, compiler, player, gizmo write-back |
 | `src/view/` | Tree (groups, folders), script panel, hidden-line drawing (`drawing.ts`), section caps (`caps.ts`), cutaway and keep-uncut (`cutaway.ts`), outline glows (`glow.ts`), palette, triad |
-| `src/drawing/` | Vector line drawings: mesh collection and cutaway clipping (`collect.ts`), feature edges (`edges.ts`), exact hidden-line removal (`hlr.ts`, with a depth pre-pass `zbuffer.ts`), the SVG sheet writer (`svg.ts`), the `.draw` parser (`script.ts`); its editor is `src/view/drawPanel.ts` |
+| `app/scripts/drawings.mjs` | `npm run drawings`: headless batch drawings (Playwright) |
+| `src/drawing/` | Vector line drawings: mesh collection and cutaway clipping (`collect.ts`), feature edges (`edges.ts`), exact hidden-line removal (`hlr.ts`, with a depth pre-pass `zbuffer.ts`), the SVG sheet writer (`svg.ts`), fills (`fills.ts`), sections (`sections.ts`), PDF (`pdf.ts`), the `.draw` parser (`script.ts`); its editor is `src/view/drawPanel.ts` |
 | `src/assist/` | Assist loop (Anthropic SDK over the key proxy), read and proposal tools (script, groups, part state, shapes, positions), system prompt, the host interface for the panel |
 | `tools/step2gltf.py` | STEP → glTF converter |
 | `tools/stepindex.py`, `tools/stepsplit.py` | `convert --split`: streaming STEP index; copies, parallel units, merge |

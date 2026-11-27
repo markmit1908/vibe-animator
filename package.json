@@ -7,7 +7,8 @@
     "dev": "cd app && npm run dev",
     "build": "cd app && npm run build",
     "typecheck": "tsc --noEmit && cd app && tsc -p . --noEmit",
-    "test:server": "cd app && PYTHONPATH=server .venv/bin/pytest -q server/tests"
+    "test:server": "cd app && PYTHONPATH=server .venv/bin/pytest -q server/tests",
+    "drawings": "node app/scripts/drawings.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.14.0",
@@ -18,7 +19,9 @@
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.14",
     "@lezer/highlight": "^1.2.5",
+    "jspdf": "^2.5.2",
     "lil-gui": "^0.20.0",
+    "svg2pdf.js": "^2.2.4",
     "three": "^0.170.0",
     "three-mesh-bvh": "^0.8.3",
     "yaml": "^2.6.0"

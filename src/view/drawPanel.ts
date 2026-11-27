@@ -61,7 +61,7 @@ export class DrawPanel {
     this.el = document.createElement('div'); this.el.className = 'draw-script';
     this.el.innerHTML = `<header><span>Drawing script</span><span class="st"></span><span style="flex:1"></span>
       <button data-a="preview" title="Draw the sheet the cursor is in and show it over the view">▶ Preview sheet</button>
-      <button data-a="save" title="Draw every sheet and save the SVGs to the vault (Drawings/<animation>/<sheet>.svg)">⤓ Save all</button></header>
+      <button data-a="save" title="Draw every sheet and save SVG + PDF to the vault (Drawings/<animation>/<sheet>.svg, .pdf)">⤓ Save all</button></header>
       <div class="ed"></div><div class="busy" hidden></div>`;
     parent.appendChild(this.el);
     this.status = this.el.querySelector('.st')!;

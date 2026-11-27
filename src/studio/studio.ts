@@ -32,6 +32,7 @@ import { ScriptError } from '../timeline/compile';
 import { applyEdit, cameraLine, type Edit, type Probe } from '../script/edit';
 import { makeDrawing, withDefaults, DEFAULT_DRAW, type DrawingOptions, type SheetSpec } from '../drawing';
 import { DrawPanel } from '../view/drawPanel';
+import { svgToPdf } from '../drawing/pdf';
 
 /** What the studio needs from its host app (SolverKit's editor). */
 export interface StudioIO {
@@ -1301,21 +1302,27 @@ async function previewSheet(name: string) {
     previewUrl = URL.createObjectURL(new Blob([r.svg], { type: 'image/svg+xml' }));
     previewEl = document.createElement('div'); previewEl.id = 'sheet-preview';
     const paper = `${r.spec.paper ?? 'A3'} ${r.spec.portrait ? 'portrait' : 'landscape'}, ${r.spec.scale ? `1:${r.spec.scale}` : 'fit'}`;
-    previewEl.innerHTML = `<header><b></b><span class="info"></span><button data-a="dl">⤓ Download SVG</button><button data-a="close">✕ Close</button></header><div class="page"><img alt="sheet"></div>`;
+    previewEl.innerHTML = `<header><b></b><span class="info"></span><button data-a="dl">⤓ SVG</button><button data-a="pdf">⤓ PDF</button><button data-a="close">✕ Close</button></header><div class="page"><img alt="sheet"></div>`;
     previewEl.querySelector('b')!.textContent = r.spec.title ?? name;
     previewEl.querySelector('.info')!.textContent = `${paper} · ${Math.round(r.stats.msTotal)} ms · ${r.stats.segments} pieces${r.errors.length ? ` · ${r.errors.length} problem(s), see the script` : ''}`;
     previewEl.querySelector<HTMLImageElement>('img')!.src = previewUrl;
     previewEl.querySelector<HTMLElement>('[data-a=close]')!.onclick = closePreview;
     previewEl.querySelector<HTMLElement>('[data-a=dl]')!.onclick = () => { const a = document.createElement('a'); a.href = previewUrl!; a.download = `${name}.svg`; a.click(); };
+    previewEl.querySelector<HTMLElement>('[data-a=pdf]')!.onclick = async () => {
+      const u = URL.createObjectURL(await svgToPdf(r.svg, r.spec.title ?? name));
+      const a = document.createElement('a'); a.href = u; a.download = `${name}.pdf`; a.click(); setTimeout(() => URL.revokeObjectURL(u), 1000);
+    };
     host().appendChild(previewEl);
   } finally { drawPanel!.busy(null); }
 }
-async function saveAllSheets() {
-  const sheets = drawPanel!.parsed.sheets;
-  if (!sheets.length) { drawPanel!.setStatus('No sheets to save', true); return; }
-  if (!io.files) { drawPanel!.setStatus('No vault access', true); return; }
-  const errors: { line: number; message: string }[] = [];
-  let saved = 0;
+/** Draw every sheet (or the named ones) and save <sheet>.svg and .pdf into the vault's Drawings/<animation>/. */
+async function saveAllSheets(only?: string[]): Promise<{ saved: string[]; errors: { line: number; message: string }[] }> {
+  const errors: { line: number; message: string }[] = [], saved: string[] = [];
+  const sheets = drawPanel!.parsed.sheets.filter((x) => !only?.length || only.includes(x.name));
+  for (const n of only ?? []) if (!drawPanel!.parsed.sheets.some((x) => x.name === n)) errors.push({ line: 0, message: `no sheet "${n}"` });
+  if (drawPanel!.parsed.errors.length) errors.push(...drawPanel!.parsed.errors);
+  if (!sheets.length) { drawPanel!.setStatus('No sheets to save', true); return { saved, errors }; }
+  if (!io.files) { drawPanel!.setStatus('No vault access', true); return { saved, errors: [...errors, { line: 0, message: 'no vault access' }] }; }
   try {
     for (const [i, sh] of sheets.entries()) {
       drawPanel!.busy(`Drawing ${sh.name} (${i + 1} of ${sheets.length})…`);
@@ -1323,13 +1330,17 @@ async function saveAllSheets() {
       const r = await runSheet(sh.name);
       if (!r) continue;
       errors.push(...r.errors);
-      const path = `${drawingsFolder()}/${sh.name}.svg`;
-      await io.files.upload(path, new File([r.svg], `${sh.name}.svg`, { type: 'image/svg+xml' }), undefined, true);
-      saved++;
+      const base = `${drawingsFolder()}/${sh.name}`;
+      await io.files.upload(`${base}.svg`, new File([r.svg], `${sh.name}.svg`, { type: 'image/svg+xml' }), undefined, true);
+      drawPanel!.busy(`Writing ${sh.name}.pdf (${i + 1} of ${sheets.length})…`);
+      const pdf = await svgToPdf(r.svg, r.spec.title ?? sh.name);
+      await io.files.upload(`${base}.pdf`, new File([pdf], `${sh.name}.pdf`, { type: 'application/pdf' }), undefined, true);
+      saved.push(`${base}.svg`, `${base}.pdf`);
     }
   } finally { drawPanel!.busy(null); }
-  drawPanel!.setRunErrors(errors);
-  if (!errors.length) drawPanel!.setStatus(`Saved ${saved} sheet${saved === 1 ? '' : 's'} to ${drawingsFolder()}/`);
+  drawPanel!.setRunErrors(errors.filter((e) => e.line > 0));
+  if (!errors.length) drawPanel!.setStatus(`Saved ${saved.length / 2} sheet${saved.length === 2 ? '' : 's'} (SVG + PDF) to ${drawingsFolder()}/`);
+  return { saved, errors };
 }
 function exportSvg(opt: DrawingOptions = {}) {
   const { svg } = vectorDrawing(opt);
@@ -2181,7 +2192,7 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 }
 
 // read-only handle for tests and debugging
-(window as any).__studio = { vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
+(window as any).__studio = { svgToPdf, vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
   /** tests: a block with many small parts buried behind the cut plane (x < 0), like dowels without holes */
   addTestBuried: (count = 60) => {
     const mk = (col: number) => withCaps(new THREE.MeshToonMaterial({ color: col, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));
