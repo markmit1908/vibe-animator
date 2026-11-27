@@ -80,7 +80,7 @@ used to illustrate the concept. Delivered live in a browser.
 - OCCT's glTF writer does not share meshes between instances, so `convert` re-instances baked copies (principal axes + vertex check), merges faces (one primitive per part), then runs `gltf-transform dedup`. Never use gltf-transform `instance`: it flattens the hierarchy and drops names.
 
 ## Testing
-- `cd app && npx playwright test`: the end-to-end suite (`app/e2e/app.spec.ts`, ~43 tests, ~5 min) on a fresh temporary
+- `cd app && npx playwright test`: the end-to-end suite (`app/e2e/app.spec.ts`, ~48 tests, ~5 min) on a fresh temporary
   vault and server (port 6173); `e2e/fixtures/small.glb` is a small CAD model. Run it before committing feature work.
 - `npm run test:server`: the server's pytest. `npm run typecheck` after every TS change.
 - In the page, `window.__studio` is a debug handle (built scene, player, store, tools, renderer, caps, drawing…) with

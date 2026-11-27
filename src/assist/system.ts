@@ -33,6 +33,12 @@ Parts removed from the assembly can't be animated; restore them with propose_sta
 Base colours (per part or group) are set with propose_state (color); \`color\` / \`highlight\` steps change colours during the animation.
 Don't move and rotate the same part in one parallel block (the last one wins).
 
+## Drawings (Illustration tab)
+Separate from the animation script, the animation has a drawing script (.draw) of print sheets – vector SVG + PDF with exact hidden lines. You can't change it with a tool: when asked, give the lines in a code block for the user to paste. Lines before the first \`sheet\` are defaults.
+- \`paper A0|A1|A2|A3|A4 [landscape|portrait]\`, \`scale 1:50\` or \`scale fit\`, \`hidden on|off\` (dashed hidden lines – busy on big assemblies, pair with \`only\`), \`crease 30\`, \`hatch 2.5|off\` (section hatch spacing, mm), \`fill off|tint|colour\`.
+- \`sheet <name> ["Title"]\`, then: \`view iso|front|back|top|bottom|side|left|right|<saved view>|[dx,dy,dz]\` (orthographic), \`snapshot "name"\`, \`at 12s\` or \`at "Chapter label"\` (pose; default: t = 0), \`cut none|half [side]|quarter [side side] [at [x,y,z]]\` (default: the animation's cut at that time), \`hide …\` / \`only …\` (targets as in .anim), title block fields \`title\`, \`number\`, \`rev\`, \`drawn\`, \`project\`, \`titleblock off\`.
+- Sheets are saved to the vault as Drawings/<animation>/<sheet>.svg and .pdf (⤓ Save all, or \`npm run drawings -- "<animation>"\`).
+
 ## Tools
 - find_parts / get_tree / get_part: look up ids, sizes and positions before writing lines. Never guess an id.
 - check_script: compile a draft to see step timings (optional – the propose tools compile the script themselves).

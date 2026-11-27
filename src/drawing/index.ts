@@ -54,6 +54,7 @@ export function makeDrawing(root: THREE.Object3D, camera: THREE.Camera, opt: Dra
       const cap = capTriangles(sec);
       if (!cap.idx.length) continue;
       soups.push({ ...cap, part: s.part, color: s.color, occluder: true });
+      for (const [a, b] of sec.corners) extra.push({ a, b, kind: 'boundary', part: s.part, mesh: soups.length - 1 });
       if (hatchMm > 0 && k > 0) extra.push(...hatchEdges(sec, cam, hatchMm / k, parts.get(s.part)! % 2 ? 135 : 45, s.part, soups.length - 1));
     }
   }

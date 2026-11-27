@@ -1412,3 +1412,47 @@ test("batch drawings from the command line: npm run drawings -- <animation> [she
   expect(bad.out).toContain('no sheet "nope"');
   expect(run("No such animation").code).toBe(2);
 });
+
+test("drawing sheets pose the model (at a time / chapter, a snapshot) and leave the studio as it was; undo; quarter cuts", async ({ page }) => {
+  await page.goto("/");
+  const draw = ["paper A4", "scale 1:100", "sheet t0", "  view front", "sheet t2", "  view front", "  at 2s", "sheet ch", "  view front", "  at \"Moved\"",
+    "sheet snap", "  view front", "  snapshot \"no-a\"", "sheet q", "  view iso", "  only shapes/c", "  cut quarter x z at [10,0,0]", "  scale 1:20"].join("\n");
+  const box = (id: string, x: number) => ({ id, kind: "box", size: [1, 1, 1], position: [x, 0.5, 0], rotation: [0, 0, 0], color: "#cccccc" });
+  const m = { name: "Poses", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] },
+    script: { language: "anim", text: 'label "Start"\nmove shapes/a by [-5,0,0] 2s\nlabel "Moved"\nwait 1s' }, drawings: { language: "draw", text: draw },
+    shapes: [box("a", 0), box("b", 2), { id: "c", kind: "box", size: [2, 2, 2], position: [10, 1, 0], rotation: [0, 0, 0], color: "#cccccc" }],
+    snapshots: { active: "default", items: { default: { locked: {}, hidden: {} }, "no-a": { locked: {}, hidden: { "shapes/a": true } } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Poses");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  await page.evaluate(() => { const s = (window as any).__studio; s.player.playing = false; s.player.seek(1); });
+  const run = (n: string) => page.evaluate(async (n) => { const r = await (window as any).__studio.runSheet(n); return { svg: r.svg, stats: r.stats, errors: r.errors }; }, n);
+  const width = (svg: string) => { const d = svg.match(/id="outline"[^>]*><path d="([^"]+)"/)![1]; const v = [...d.matchAll(/[ML](-?[\d.]+) /g)].map((x) => Number(x[1])); return Math.max(...v) - Math.min(...v); };
+  // the front view's width runs from a (left) to c (right)
+  const w0 = width((await run("t0")).svg), w2 = width((await run("t2")).svg), wc = width((await run("ch")).svg);
+  expect(w2 - w0).toBeCloseTo(50, 0);           // a moved 5 m left by 2 s: 50 mm wider at 1:100
+  expect(wc).toBeCloseTo(w2, 1);                // at "Moved" = the end of the move
+  const ws = width((await run("snap")).svg);
+  expect(w0 - ws).toBeCloseTo(20, 0);           // a hidden by the snapshot: the left edge is b's, 2 m further right
+  const snap = await run("snap");
+  expect(snap.errors).toEqual([]);
+  // the studio is as it was: time, positions, the snapshot's flags
+  const st = await page.evaluate(() => { const s = (window as any).__studio; return { t: s.player.time, ax: s.built.registry.get("shapes/a").getWorldPosition(new s.THREE.Vector3()).x, hidden: JSON.stringify(s.state.hidden), active: s.store.active }; });
+  expect(st.t).toBeCloseTo(1, 5); expect(st.ax).toBeCloseTo(-2.5, 3); expect(st.hidden).toBe("{}"); expect(st.active).toBe("default");
+  // a quarter cut: both cut faces capped and hatched, nothing else broken
+  const q = await run("q");
+  expect(q.errors).toEqual([]);
+  expect(q.stats["lines.hatch"]).toBeGreaterThan(30);
+  // long verticals: the two outer edges, the notch's two edges and the corner where the cut faces meet
+  const vert = [...q.svg.match(/id="outline"[^>]*><path d="([^"]+)"/)![1].split("M").filter(Boolean)].flatMap((pl) => {
+    const p = pl.split("L").map((x) => x.trim().split(" ").map(Number)); const out: number[] = [];
+    for (let i = 1; i < p.length; i++) if (Math.abs(p[i][0] - p[i - 1][0]) < 0.01 && Math.abs(p[i][1] - p[i - 1][1]) > 50) out.push(p[i][0]);
+    return out; });
+  expect(vert.length).toBe(5);
+  // undo / redo of a drawing script change made by code
+  await page.evaluate(() => (window as any).__studio.drawPanel.setText("sheet only\n  view top\n"));
+  await page.waitForTimeout(600);
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect.poll(() => page.evaluate(() => (window as any).__studio.drawPanel.text)).toBe(draw);
+});

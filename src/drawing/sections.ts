@@ -5,7 +5,11 @@ import type { Edge3 } from './edges';
 
 export type P4 = [number, number, number, number];
 type V3 = [number, number, number];
-export interface Section { plane: P4; loops: V3[][] }
+export interface Section {
+  plane: P4; loops: V3[][];
+  /** where this face meets another cut face (quarter cuts): drawn as edges */
+  corners: [V3, V3][];
+}
 
 const dist = (p: V3, pl: P4) => pl[0] * p[0] + pl[1] * p[1] + pl[2] * p[2] + pl[3];
 
@@ -68,7 +72,17 @@ export function sectionLoops(pos: Float32Array, idx: Uint32Array, planes: P4[], 
     // keep the part of the section inside the cut region (the other planes' removed side)
     let kept = loops;
     planes.forEach((q, j) => { if (j !== i) kept = kept.map((l) => clipNeg(l, q)).filter((l) => l.length >= 3); });
-    if (kept.length) out.push({ plane: pl, loops: kept });
+    // sides of the kept loops lying on another plane: the corner where two cut faces meet (count each once: j > i)
+    const corners: [V3, V3][] = [];
+    planes.forEach((q, j) => {
+      if (j <= i) return;
+      const eps = tol * 10;
+      for (const l of kept) for (let k = 0; k < l.length; k++) {
+        const a = l[k], b = l[(k + 1) % l.length];
+        if (Math.abs(dist(a, q)) < eps && Math.abs(dist(b, q)) < eps) corners.push([a, b]);
+      }
+    });
+    if (kept.length) out.push({ plane: pl, loops: kept, corners });
   });
   return out;
 }

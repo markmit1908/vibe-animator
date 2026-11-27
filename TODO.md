@@ -17,8 +17,9 @@
 
 ## Output
 - [ ] Outlines: pulse; saved always-on outlines; the selection as an outline; more than 4 looks at once (they share by colour now)
-- [ ] Hidden line: dashed hidden edges (selected parts), section hatching, SVG (vector) export
-- [ ] Print-quality SVG line drawings (in progress on `feature/svg-drawings`: phases 1–5 done – exact HLR, ISO layers, the `.draw` sheet script with preview and Save all, section caps + hatching, title block, fills, PDF + headless batch (`npm run drawings`); next: docs and tests pass): today's outlines are fine for animation but not for print, especially large-format drawings. Vector SVG of silhouettes, creases and part boundaries (from the geometry, not the screen pixels), with hidden lines removed, clean joins, line weights in mm at a chosen paper size and scale, layers per line type, and no limit from screen resolution
+- [ ] Hidden line view (screen): dashed hidden edges for selected parts, section hatching – the print drawings have both
+- [x] Print-quality SVG line drawings: the Illustration tab's `.draw` sheets – exact hidden lines from the geometry, ISO layers and weights in mm, paper and scale, section caps + hatching, title block, fills, SVG + vector PDF, headless batch (`npm run drawings`)
+- [ ] Drawings, next: perspective sheets; frame a sheet on chosen parts (`frame @x`) and detail views; hatch patterns per material; several views on one sheet; dimensions / labels / leaders; drawing in a Web Worker (the plant takes 5–8 s on the main thread); the assistant proposing `.draw` edits
 - [ ] Better transparency: making a part see-through to show what's inside is messy today, with every surface stacking up. Needs a clearer model: only the outer shell drawn see-through (depth pre-pass / first surface only), sorting or order-independent transparency, optional ghosted edges-only or x-ray styles, and contents drawn solid behind it
 - [ ] Video export (frame-by-frame render of the timeline)
 - [ ] PNG export: option for a solid background / chosen size
