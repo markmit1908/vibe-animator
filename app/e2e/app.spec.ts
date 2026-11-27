@@ -1307,3 +1307,62 @@ test("SVG line drawing: exact hidden lines from the geometry, ISO layers in mm",
   const outline = r.svg.match(/id="outline"[^>]*><path d="([^"]+)"/)![1];
   expect(outline.split("L").length).toBe(5);   // 4 corners + closing point: collinear pieces merged
 });
+
+test("drawing sheets: the .draw script in the Illustration tab – view, hide, cut, scale; preview; save all to the vault; autosaved", async ({ page }) => {
+  await page.goto("/");
+  const draw = ['paper A4', 'scale 1:10', 'bogus line', '', 'sheet a "Both"', '  view front', '  hidden on', '', 'sheet b', '  view front', '  hide front',
+    '', 'sheet c', '  view front', '  only front', '  cut half x at [0,0,0]'].join("\n");
+  const m = { name: "Sheets", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] },
+    script: { language: "anim", text: 'label "S"' }, drawings: { language: "draw", text: draw },
+    snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Sheets");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  await page.locator("#right [data-t=illustration]").click();
+  const panel = page.locator("#illustration .draw-script");
+  await expect(panel.locator(".st")).toHaveText("1 error");                 // "bogus line"
+  await page.evaluate(() => { const p = (window as any).__studio.drawPanel; p.setText(p.text.replace("bogus line\n", "")); });
+  await expect(panel.locator(".st")).toHaveText("✓ 3 sheets");
+  await page.evaluate(() => {
+    const s = (window as any).__studio, T = s.THREE;
+    const box = (w: number, z: number, id: string) => {
+      const b = new T.Mesh(new T.BoxGeometry(w, w, w), new T.MeshToonMaterial({ clippingPlanes: s.built.clipPlanes, clipIntersection: true }));
+      b.position.set(0, 1, z); b.userData.id = id; s.built.root.add(b); s.built.registry.set(id, b);
+    };
+    box(2, 0, "front"); box(1, -4, "behind");
+  });
+  const run = (n: string) => page.evaluate(async (n) => { const r = await (window as any).__studio.runSheet(n); return { svg: r.svg, stats: r.stats, errors: r.errors }; }, n);
+  const xs = (svg: string) => { const d = svg.match(/id="outline"[^>]*><path d="([^"]+)"/)![1]; const v = [...d.matchAll(/[ML]([\d.]+) /g)].map((x) => Number(x[1])); return Math.max(...v) - Math.min(...v); };
+  const a = await run("a");
+  expect(a.errors).toEqual([]);
+  expect(a.svg).toContain('width="297mm" height="210mm"');
+  expect(a.stats["lines.outline"]).toBe(1); expect(a.stats["lines.hidden"]).toBe(1);
+  expect(xs(a.svg)).toBeCloseTo(200, 0);                                     // 2 m at 1:10
+  const b = await run("b");
+  expect(b.stats["lines.outline"]).toBe(1); expect(b.stats["lines.hidden"]).toBe(0);
+  expect(xs(b.svg)).toBeCloseTo(100, 0);                                     // only the 1 m box behind
+  const c = await run("c");
+  expect(c.errors).toEqual([]);
+  expect(xs(c.svg)).toBeCloseTo(100, 0);                                     // the front box cut in half at x = 0
+  // the studio's own cut is back afterwards (the script has none)
+  expect(await page.evaluate(() => (window as any).__studio.built.clipPlanes[0].constant)).toBeGreaterThan(1e8);
+  // unknown parts are errors on the sheet's line
+  await page.evaluate(() => { const p = (window as any).__studio.drawPanel; p.setText(p.text + "\nsheet d\n  hide nothing-here\n"); });
+  expect((await run("d")).errors[0].message).toContain("nothing-here");
+  // preview
+  await page.evaluate(() => (window as any).__studio.previewSheet("a"));
+  await expect(page.locator("#sheet-preview img")).toBeVisible();
+  await page.locator("#sheet-preview [data-a=close]").click();
+  await expect(page.locator("#sheet-preview")).toHaveCount(0);
+  // save all → the vault
+  await panel.locator("[data-a=save]").click();
+  await expect(panel.locator(".st")).toContainText(/1 error|Saved/, { timeout: 30_000 });   // sheet d's unknown part
+  for (const n of ["a", "b", "c", "d"]) {
+    const r = await api(page).get(`/api/files/Drawings/Sheets/${n}.svg`);
+    expect(r.status()).toBe(200);
+    expect(await r.text()).toContain("<svg");
+  }
+  // the edited script is saved in the model
+  await expect.poll(async () => { const p = (await (await api(page).get("/api/home")).json()).projects.find((x: any) => x.name === "Sheets");
+    const mm = (await (await api(page).get(`/api/projects/${p.id}`)).json()).problem; const t = mm.drawings?.text; return Array.isArray(t) ? t.join("\n") : t; }, { timeout: 5_000 }).toContain("hide nothing-here");
+});

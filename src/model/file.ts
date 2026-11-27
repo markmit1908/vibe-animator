@@ -42,6 +42,8 @@ export interface AnimModel {
   /** Scene setup: the generated placeholder reactor (`generated`, `core`, `vessel`, …), palette, CAD models. */
   scene: Record<string, unknown> & { generated?: boolean; cad_models?: CadRef[] };
   script: { language: 'anim'; text: Lines };
+  /** Drawing sheets (Illustration tab): the .draw script (src/drawing/script.ts). */
+  drawings?: { language: 'draw'; text: Lines };
   snapshots: { active: string; items: Record<string, Snapshot> };
   groups: Record<string, string[]>;
   /** Tree folders for groups: folder path ("a/b") → group names (display only). */
@@ -71,7 +73,7 @@ export const joinLines = (l: Lines | undefined) => (Array.isArray(l) ? l.join('\
 export const splitLines = (s: string): string[] => s.replace(/\n$/, '').split('\n');
 
 /** Key order for writing (stable diffs); unknown keys follow in their own order. */
-const ORDER = ['name', 'uuid', 'solver', 'format', 'description', 'scene', 'script', 'snapshots', 'groups', 'folders', 'colors', 'removed', 'cutKeep', 'labels', 'views', 'keyframe', 'shapes', 'view', 'chat'];
+const ORDER = ['name', 'uuid', 'solver', 'format', 'description', 'scene', 'script', 'drawings', 'snapshots', 'groups', 'folders', 'colors', 'removed', 'cutKeep', 'labels', 'views', 'keyframe', 'shapes', 'view', 'chat'];
 
 export function canonical(m: AnimModel): string {
   const out: Record<string, unknown> = {};
@@ -80,6 +82,8 @@ export function canonical(m: AnimModel): string {
   if (typeof out.description === 'string') out.description = splitLines(out.description as string);
   const s = out.script as AnimModel['script'];
   if (s && typeof s.text === 'string') out.script = { ...s, text: splitLines(s.text) };
+  const dr = out.drawings as AnimModel['drawings'];
+  if (dr && typeof dr.text === 'string') out.drawings = { ...dr, text: splitLines(dr.text) };
   return JSON.stringify(out, null, 2) + '\n';
 }
 
@@ -94,6 +98,7 @@ export function readModel(json: string | object): AnimModel {
     format: m.format ?? 1,
     scene: m.scene ?? {},
     script: { language: 'anim', text: joinLines(m.script?.text) },
+    ...(m.drawings ? { drawings: { language: 'draw' as const, text: joinLines(m.drawings.text) } } : {}),
     snapshots: m.snapshots ?? { active: 'default', items: { default: { locked: {}, hidden: {} } } },
     groups: m.groups ?? {},
   };

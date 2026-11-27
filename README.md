@@ -71,7 +71,7 @@ use the **Import old project (.zip)…** link on Home; the model goes into `CAD/
 | **Assembly** (left) | The part tree: groups, CAD assemblies, removed parts. Snapshot bar on top, info box at the bottom. |
 | **3D view** (centre) | Orbit with the mouse, click parts to select them. View toolbar top right. XYZ triad bottom left. |
 | **Controls** (right) | Play/pause (Space), speed, time, cutaway, X-ray, scripted camera, chapters. |
-| **Script / Assist** (right, tabs) | The `.anim` editor, and the AI assistant. |
+| **Animation / Illustration / AI Assist** (right, tabs) | Animation: the controls and the `.anim` editor. Illustration: drawing sheets (SVG). AI Assist: the assistant. |
 
 **View toolbar:**
 - **Shaded / Shaded + outline / Hidden line** (*outline* here means the drawn edges; the script's `outline` step is a glow around chosen parts): hidden line draws visible edges only, black on white; shaded + outline draws those edges over the cel-shaded view. Lines are anti-aliased: silhouettes/outlines (against the background or a part behind) and edges (creases, and the boundary wherever two parts touch) have their own weights in ⚙, with crease angle, outline sensitivity and colours. ⚙ sets line weight, crease angle, sensitivity and colours.
@@ -181,7 +181,37 @@ each @layer3 stagger 0.2s order ring {   # $ = the item, $i = its index (0, 1, 2
 - **Gizmo edits at t > 0:** they update the `move`/`rotate` line for that target in the step at t, or add one (the step becomes `parallel { }`). If t is mid-step, the step is **split** first. **edit: by | to** chooses relative or absolute values. Inside a loop, the edit becomes a new step after it.
 - **📷** inserts the current camera view as a step.
 
-## AI assist (Assist tab)
+## Illustration (drawing sheets)
+
+The **Illustration** tab makes print-quality vector line drawings (SVG) from the geometry, not from screen pixels.
+Hidden lines are removed exactly, line weights are in mm at a chosen paper size and scale, and each line type is
+its own layer (`outline` 0.5, `crease` 0.25, `hidden` 0.18 dashed, `border`, as in ISO 128). Views are orthographic.
+
+- **Controls:** paper, scale, hidden lines and crease angle for **⤓ Export SVG**, which draws the current view.
+- **Drawing script** (`.draw`, saved with the animation): each `sheet` is one drawing. Settings before the first sheet
+  are defaults. **▶ Preview sheet** draws the sheet the cursor is in and shows it over the view. **⤓ Save all**
+  draws every sheet into the vault as `Drawings/<animation>/<sheet>.svg`. Drawing a sheet never changes the studio's
+  own view, pose or cut.
+
+```
+paper A1 landscape        # A0–A4, landscape | portrait
+scale 1:50                # or: scale fit
+hidden off                # dashed hidden lines (busy on big assemblies: use with `only`)
+crease 30                 # crease angle, degrees
+
+sheet core-section "Core – half section"
+  view front              # iso front back top bottom side left right, a saved view, or [dx, dy, dz]
+  snapshot "refuel-start" # pose from a snapshot
+  at 12.5s                # …and/or the animation at a time, or at "Chapter label"
+  cut half x at [0,0,0]   # none | half [side] | quarter [side side]; default: the animation's cut at that time
+  hide @building, ~bolt   # parts left out (ids, globs, @groups, names, ~text)
+  only @core              # draw just these
+```
+
+Cut faces are drawn as outlines (section hatching comes later). A big assembly takes a few seconds per sheet
+(the plant model: 8M triangles, 6–8 s).
+
+## AI assist (AI Assist tab)
 
 A chat with Claude (`claude-opus-5-5`). It sees the script (with step times and errors), the current time, selection,
 groups (and their folders), shapes, lock/hide state and the top of the assembly tree.
@@ -254,6 +284,7 @@ Every node appears in the tree with an id `plant/<child>/…`; duplicate sibling
 | `src/scene/` | Scene build (incl. the generated placeholder reactor), CAD loading/suppression, part state, origin fitting, shapes (`shapes.ts`) |
 | `src/script/`, `src/timeline/` | `.anim` parser, compiler, player, gizmo write-back |
 | `src/view/` | Tree (groups, folders), script panel, hidden-line drawing (`drawing.ts`), section caps (`caps.ts`), cutaway and keep-uncut (`cutaway.ts`), outline glows (`glow.ts`), palette, triad |
+| `src/drawing/` | Vector line drawings: mesh collection and cutaway clipping (`collect.ts`), feature edges (`edges.ts`), exact hidden-line removal (`hlr.ts`, with a depth pre-pass `zbuffer.ts`), the SVG sheet writer (`svg.ts`), the `.draw` parser (`script.ts`); its editor is `src/view/drawPanel.ts` |
 | `src/assist/` | Assist loop (Anthropic SDK over the key proxy), read and proposal tools (script, groups, part state, shapes, positions), system prompt, the host interface for the panel |
 | `tools/step2gltf.py` | STEP → glTF converter |
 | `tools/stepindex.py`, `tools/stepsplit.py` | `convert --split`: streaming STEP index; copies, parallel units, merge |

@@ -30,6 +30,9 @@
     "script": { "type": "object", "required": ["text"], "properties": {
       "language": { "const": "anim" },
       "text": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }] } } },
+    "drawings": { "type": "object", "description": "Drawing sheets (Illustration tab): the .draw script.", "required": ["text"], "properties": {
+      "language": { "const": "draw" },
+      "text": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }] } } },
     "snapshots": { "type": "object", "properties": {
       "active": { "type": "string" },
       "items": { "type": "object", "additionalProperties": { "type": "object", "properties": {

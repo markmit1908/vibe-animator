@@ -1,11 +1,12 @@
 // Vector line drawings from the scene geometry (exact hidden-line removal → SVG on a paper sheet).
 import * as THREE from 'three';
 import { collectMeshes, type MeshSoup } from './collect';
+export { parseDraw, withDefaults, DEFAULT_DRAW, type SheetSpec, type DrawScript } from './script';
 import { hiddenLines, type HlrOptions } from './hlr';
 import { toSvg, type SheetOptions } from './svg';
 
 export { collectMeshes, hiddenLines, toSvg };
-export interface DrawingOptions extends HlrOptions, SheetOptions { /** orthographic along the camera's view direction (default true) */ ortho?: boolean; exclude?: THREE.Object3D[] }
+export interface DrawingOptions extends HlrOptions, SheetOptions { /** orthographic along the camera's view direction (default true) */ ortho?: boolean; exclude?: THREE.Object3D[]; only?: THREE.Object3D[] }
 
 /** An orthographic camera looking the same way as `cam`, framing every mesh. */
 export function orthoFrom(cam: THREE.Camera, soups: MeshSoup[]): THREE.OrthographicCamera {
@@ -27,7 +28,7 @@ export function orthoFrom(cam: THREE.Camera, soups: MeshSoup[]): THREE.Orthograp
 
 export function makeDrawing(root: THREE.Object3D, camera: THREE.Camera, opt: DrawingOptions = {}) {
   const t0 = performance.now();
-  const soups = collectMeshes(root, opt.exclude);
+  const soups = collectMeshes(root, { exclude: opt.exclude, only: opt.only });
   const tc = performance.now() - t0;
   const cam = opt.ortho === false ? camera : orthoFrom(camera, soups);
   const r = hiddenLines(soups, cam, opt);

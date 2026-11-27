@@ -30,7 +30,8 @@ import type { Proposal } from '../assist/loop';
 import { parseAnim, toActions, type ParseError } from '../script/anim';
 import { ScriptError } from '../timeline/compile';
 import { applyEdit, cameraLine, type Edit, type Probe } from '../script/edit';
-import { makeDrawing, type DrawingOptions } from '../drawing';
+import { makeDrawing, withDefaults, DEFAULT_DRAW, type DrawingOptions, type SheetSpec } from '../drawing';
+import { DrawPanel } from '../view/drawPanel';
 
 /** What the studio needs from its host app (SolverKit's editor). */
 export interface StudioIO {
@@ -79,13 +80,14 @@ function scheduleThumb(delay = 2000) {
 // ---------- undo / redo (⌘/Ctrl+Z, ⇧⌘Z / Ctrl+Y) of the animation's state ----------
 // Every change goes through edit(): before the first change of a burst (400 ms), the state as it was is pushed.
 // Script typing has the editor's own undo; script changes made by code (gizmo write-back, an accepted proposal) undo here.
-type UndoKey = 'colors' | 'snapshots' | 'groups' | 'folders' | 'cutKeep' | 'labels' | 'removed' | 'script' | 'views' | 'keyframe' | 'shapes';
-const UNDO_KEYS: UndoKey[] = ['colors', 'snapshots', 'groups', 'folders', 'cutKeep', 'labels', 'removed', 'script', 'views', 'keyframe', 'shapes'];
+type UndoKey = 'colors' | 'snapshots' | 'groups' | 'folders' | 'cutKeep' | 'labels' | 'removed' | 'script' | 'drawings' | 'views' | 'keyframe' | 'shapes';
+const UNDO_KEYS: UndoKey[] = ['colors', 'snapshots', 'groups', 'folders', 'cutKeep', 'labels', 'removed', 'script', 'drawings', 'views', 'keyframe', 'shapes'];
 type DocState = Partial<Record<UndoKey, any>>;
 const clone = <T,>(x: T): T => (x === undefined ? x : JSON.parse(JSON.stringify(x)));
 const docNow: DocState = {
   colors: model.colors ?? {}, snapshots: model.snapshots ?? { active: 'default', items: {} }, groups: model.groups ?? {}, folders: model.folders ?? {},
   labels: model.labels ?? {}, removed: model.removed ?? [], cutKeep: model.cutKeep ?? [], views: model.views ?? {}, keyframe: model.keyframe, shapes: model.shapes ?? [], script: model.script ? { language: 'anim', text: joinLines(model.script.text) } : undefined,
+  drawings: model.drawings ? { language: 'draw', text: joinLines(model.drawings.text) } : undefined,
 };
 const undoStack: DocState[] = [], redoStack: DocState[] = [];
 let undoing = false, typing = false, burst = false, burstTimer: number | undefined;
@@ -94,9 +96,9 @@ function recordUndo(patch: Partial<AnimModel>) {
   if (!keys.length) return;
   const changed = keys.filter((k) => JSON.stringify((patch as any)[k]) !== JSON.stringify(docNow[k]));
   if (!changed.length) return;
-  if (typing && changed.every((k) => k === 'script')) {
-    // typed: the editor's undo owns it; older entries must not bring back the script from before the typing
-    for (const e of [...undoStack, ...redoStack]) delete e.script;
+  if (typing && changed.every((k) => k === 'script' || k === 'drawings')) {
+    // typed: the editor's undo owns it; older entries must not bring back the text from before the typing
+    for (const e of [...undoStack, ...redoStack]) for (const k of changed) delete e[k];
   } else if (!undoing) {
     if (!burst) { undoStack.push(clone(docNow)); if (undoStack.length > 100) undoStack.shift(); redoStack.length = 0; burst = true; }
     clearTimeout(burstTimer); burstTimer = window.setTimeout(() => (burst = false), 400);
@@ -558,8 +560,19 @@ tabCss.textContent = `#right { position: absolute; top: 0; right: 0; bottom: 0; 
   #right .rtabs button.on { color: #f2b705; border-bottom-color: #f2b705; } #script, #assist { border-top: 0 !important; } #assist { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 #illustration { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 #illustration .draw-script { flex: 1; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid #222a33; }
-#illustration .draw-script header { padding: 8px 10px; font: 600 12px system-ui; color: #d7dde4; }
-#illustration .draw-script .placeholder { margin: 0 10px; padding: 12px; border: 1px dashed #2b3540; border-radius: 6px; color: #7b8794; font: 12px/1.5 system-ui; }`;
+#illustration .draw-script header { display: flex; align-items: center; gap: 6px; padding: 6px 10px; font: 600 12px system-ui; color: #d7dde4; }
+#illustration .draw-script header .st { font-weight: 400; font-size: 11px; }
+#illustration .draw-script header button { background: #1b222a; color: #d7dde4; border: 1px solid #2b3540; border-radius: 4px; padding: 3px 8px; cursor: pointer; font: 12px system-ui; }
+#illustration .draw-script header button:hover { background: #26303a; }
+#illustration .draw-script .ed { flex: 1; min-height: 0; overflow: auto; }
+#illustration .draw-script .busy { padding: 6px 10px; font: 12px system-ui; color: #f2b705; border-top: 1px solid #222a33; }
+#sheet-preview { position: absolute; inset: 0 420px 0 0; z-index: 6; background: #e9ecef; display: flex; flex-direction: column; }
+.studio-root.right-collapsed #sheet-preview { right: 0; }
+#sheet-preview header { display: flex; gap: 8px; align-items: center; padding: 6px 10px; background: rgba(14,17,21,.95); color: #d7dde4; font: 12px system-ui; }
+#sheet-preview header .info { color: #7b8794; flex: 1; }
+#sheet-preview header button { background: #1b222a; color: #d7dde4; border: 1px solid #2b3540; border-radius: 4px; padding: 3px 8px; cursor: pointer; font: 12px system-ui; }
+#sheet-preview .page { flex: 1; min-height: 0; padding: 16px; display: flex; align-items: center; justify-content: center; }
+#sheet-preview img { max-width: 100%; max-height: 100%; box-shadow: 0 2px 12px rgba(0,0,0,.25); background: #fff; }`;
 document.head.appendChild(tabCss);
 right.prepend(tabs);
 // ---------- Illustration: drawing controls + (phase 2) the drawing script ----------
@@ -575,10 +588,20 @@ const ln = illGui.addFolder('Lines');
 ln.add(sheet, 'hidden').name('Hidden lines (dashed)');
 ln.add(sheet, 'creaseDeg', 5, 90, 1).name('Crease angle (°)');
 illGui.add(sheet, 'svg').name('⤓ Export SVG (current view, orthographic)');
+let drawPanel: DrawPanel | undefined;
 {
-  const ds = document.createElement('div'); ds.className = 'draw-script';
-  ds.innerHTML = `<header>Drawing script</header><div class="placeholder">Sheets – view, pose, cutaway, show/hide, paper and layers – will be set up here and run as a batch. For now, Export SVG draws the current view with the settings above.</div>`;
-  illEl.appendChild(ds);
+  let saveTimer: number | undefined;
+  drawPanel = new DrawPanel(illEl, model.drawings ? joinLines(model.drawings.text) : DEFAULT_DRAW, {
+    change: (text, typed) => {
+      clearTimeout(saveTimer);
+      const save = () => { typing = typed; try { edit({ drawings: { language: 'draw', text } }); } finally { typing = false; } };
+      if (typed) saveTimer = window.setTimeout(save, 500); else save();
+    },
+    preview: (name) => void previewSheet(name),
+    saveAll: () => void saveAllSheets(),
+    views: () => Object.keys(views),
+    snapshots: () => Object.keys(store.snapshots),
+  });
 }
 // ---------- assist tools (read-only) ----------
 const toolDeps: ToolDeps = {
@@ -1201,6 +1224,112 @@ function vectorDrawing(opt: DrawingOptions = {}) {
   console.info('drawing', r.stats);
   return r;
 }
+// ---------- drawing sheets (Illustration tab: the .draw script) ----------
+const SHEET_VIEWS: Record<string, [number, number, number]> = { iso: [1, 0.8, 1.1], front: [0, 0, 1], back: [0, 0, -1], top: [0, 1, 0], bottom: [0, -1, 0], side: [1, 0, 0], right: [1, 0, 0], left: [-1, 0, 0] };
+const drawingsFolder = () => `Drawings/${(model.name ?? 'animation').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'animation'}`;
+/** Draw one sheet: set its view and pose, draw, then put the studio back as it was. */
+async function runSheet(name: string): Promise<{ svg: string; stats: Record<string, number>; errors: { line: number; message: string }[]; spec: SheetSpec } | null> {
+  const parsed = drawPanel!.parsed;
+  const s0 = parsed.sheets.find((x) => x.name === name);
+  if (!s0) return null;
+  const spec = withDefaults(s0, parsed.defaults);
+  const errors: { line: number; message: string }[] = [];
+  const err = (message: string) => errors.push({ line: spec.line, message });
+  // view direction (orthographic)
+  const v = spec.view ?? 'iso';
+  let dir = new THREE.Vector3(...SHEET_VIEWS.iso);
+  if (Array.isArray(v)) dir.set(...v);
+  else if (SHEET_VIEWS[v]) dir.set(...SHEET_VIEWS[v]);
+  else if (views[v]) dir.fromArray(views[v].pos).sub(new THREE.Vector3().fromArray(views[v].look));
+  else err(`view: no view "${v}" (iso, front, back, top, bottom, side, left, right, or a saved view: ${Object.keys(views).join(', ') || 'none saved'})`);
+  if (dir.lengthSq() < 1e-12) { err('view: the direction is zero'); dir.set(...SHEET_VIEWS.iso); }
+  dir.normalize();
+  const cam = new THREE.PerspectiveCamera();
+  cam.up.set(0, 1, 0);
+  if (Math.abs(dir.y) > 0.999) cam.up.set(0, 0, -Math.sign(dir.y)); // plan views: north (−z) up
+  cam.position.copy(dir); cam.lookAt(0, 0, 0); cam.updateMatrixWorld();
+
+  const t0 = player.time, playing = player.playing, dirty = isDirty();
+  player.playing = false;
+  let saved: Snapshot | null = null;
+  const pose = async (snap: Snapshot) => { player.seek(0); useSnapshot(snap); applyPlacements(); for (const o of built.root.children) await reconcile(o); buildTimeline(); };
+  try {
+    if (spec.snapshot !== undefined) {
+      const snap = store.snapshots[spec.snapshot];
+      if (!snap) err(`snapshot: no snapshot "${spec.snapshot}" (${Object.keys(store.snapshots).join(', ')})`);
+      else { saved = captureSnapshot(camView()); await pose(snap); }
+    }
+    let t = 0;
+    if (typeof spec.at === 'number') t = Math.min(spec.at, player.duration);
+    else if (typeof spec.at === 'string') {
+      const step = player.tl.steps.find((x) => x.kind === 'label' && x.value === spec.at);
+      if (step) t = step.t; else err(`at: no chapter "${spec.at}" in the animation`);
+    }
+    // everything from here to the drawing is synchronous: no frame can change the pose in between
+    player.seek(t);
+    applyCut(spec.cut ?? ((player.current('cutaway')?.value ?? 'none') as Cut | CutMode));
+    const objs = (specs: string[], what: string) => {
+      const named = specs.filter((x) => x.startsWith('~')).flatMap((x) => { const o = partsNamed(x.slice(1)); if (!o.length) err(`${what}: nothing named "${x.slice(1)}"`); return o; });
+      const r = resolveIds(specs.filter((x) => !x.startsWith('~')));
+      if (r.unknown.length) err(`${what}: unknown ${r.unknown.join(', ')}`);
+      return [...r.ids.map((id) => built.registry.get(id)!).filter(Boolean), ...named];
+    };
+    const hide = objs(spec.hide, 'hide'), only = spec.only.length ? objs(spec.only, 'only') : undefined;
+    const r = makeDrawing(scene3, cam, {
+      exclude: [gizmo.getHelper(), ...hide], only, title: spec.title ?? spec.name,
+      paper: (spec.paper ?? 'A3') as DrawingOptions['paper'], portrait: spec.portrait, scale: spec.scale || undefined, hidden: spec.hidden, creaseDeg: spec.crease,
+    });
+    if (spec.scale && !r.scale) err('scale: only orthographic views have a scale');
+    return { svg: r.svg, stats: r.stats, errors, spec };
+  } finally {
+    if (saved) await pose(saved);
+    markDirty(dirty);
+    player.seek(Math.min(t0, player.duration)); player.playing = playing;
+  }
+}
+let previewEl: HTMLElement | undefined, previewUrl: string | undefined;
+function closePreview() { previewEl?.remove(); previewEl = undefined; if (previewUrl) URL.revokeObjectURL(previewUrl); previewUrl = undefined; }
+async function previewSheet(name: string) {
+  drawPanel!.busy(`Drawing ${name}…`);
+  await new Promise((r) => setTimeout(r, 30)); // let the message paint
+  try {
+    const r = await runSheet(name);
+    if (!r) return;
+    drawPanel!.setRunErrors(r.errors);
+    closePreview();
+    previewUrl = URL.createObjectURL(new Blob([r.svg], { type: 'image/svg+xml' }));
+    previewEl = document.createElement('div'); previewEl.id = 'sheet-preview';
+    const paper = `${r.spec.paper ?? 'A3'} ${r.spec.portrait ? 'portrait' : 'landscape'}, ${r.spec.scale ? `1:${r.spec.scale}` : 'fit'}`;
+    previewEl.innerHTML = `<header><b></b><span class="info"></span><button data-a="dl">⤓ Download SVG</button><button data-a="close">✕ Close</button></header><div class="page"><img alt="sheet"></div>`;
+    previewEl.querySelector('b')!.textContent = r.spec.title ?? name;
+    previewEl.querySelector('.info')!.textContent = `${paper} · ${Math.round(r.stats.msTotal)} ms · ${r.stats.segments} pieces${r.errors.length ? ` · ${r.errors.length} problem(s), see the script` : ''}`;
+    previewEl.querySelector<HTMLImageElement>('img')!.src = previewUrl;
+    previewEl.querySelector<HTMLElement>('[data-a=close]')!.onclick = closePreview;
+    previewEl.querySelector<HTMLElement>('[data-a=dl]')!.onclick = () => { const a = document.createElement('a'); a.href = previewUrl!; a.download = `${name}.svg`; a.click(); };
+    host().appendChild(previewEl);
+  } finally { drawPanel!.busy(null); }
+}
+async function saveAllSheets() {
+  const sheets = drawPanel!.parsed.sheets;
+  if (!sheets.length) { drawPanel!.setStatus('No sheets to save', true); return; }
+  if (!io.files) { drawPanel!.setStatus('No vault access', true); return; }
+  const errors: { line: number; message: string }[] = [];
+  let saved = 0;
+  try {
+    for (const [i, sh] of sheets.entries()) {
+      drawPanel!.busy(`Drawing ${sh.name} (${i + 1} of ${sheets.length})…`);
+      await new Promise((r) => setTimeout(r, 30));
+      const r = await runSheet(sh.name);
+      if (!r) continue;
+      errors.push(...r.errors);
+      const path = `${drawingsFolder()}/${sh.name}.svg`;
+      await io.files.upload(path, new File([r.svg], `${sh.name}.svg`, { type: 'image/svg+xml' }), undefined, true);
+      saved++;
+    }
+  } finally { drawPanel!.busy(null); }
+  drawPanel!.setRunErrors(errors);
+  if (!errors.length) drawPanel!.setStatus(`Saved ${saved} sheet${saved === 1 ? '' : 's'} to ${drawingsFolder()}/`);
+}
 function exportSvg(opt: DrawingOptions = {}) {
   const { svg } = vectorDrawing(opt);
   const a = document.createElement('a');
@@ -1325,7 +1454,7 @@ const undoToast = document.createElement('div');
 undoToast.style.cssText = 'position:absolute;left:50%;bottom:16px;transform:translateX(-50%);z-index:8;background:rgba(14,17,21,.95);color:#d7dde4;border:1px solid #2b3540;border-radius:6px;padding:5px 12px;font:12px system-ui;display:none;pointer-events:none';
 host().appendChild(undoToast);
 let toastTimer: number | undefined;
-const WHAT: Record<UndoKey, string> = { colors: 'colour', snapshots: 'move / lock / hide', groups: 'groups', folders: 'folders', cutKeep: 'keep uncut', labels: 'rename', removed: 'remove / restore', script: 'script edit', views: 'views', keyframe: 'thumbnail', shapes: 'shapes' };
+const WHAT: Record<UndoKey, string> = { colors: 'colour', snapshots: 'move / lock / hide', groups: 'groups', folders: 'folders', cutKeep: 'keep uncut', labels: 'rename', removed: 'remove / restore', script: 'script edit', drawings: 'drawing script edit', views: 'views', keyframe: 'thumbnail', shapes: 'shapes' };
 async function restoreDoc(d: DocState, verb: string) {
   const what = UNDO_KEYS.filter((k) => d[k] !== undefined && JSON.stringify(d[k]) !== JSON.stringify(docNow[k])).map((k) => WHAT[k]);
   undoing = true;
@@ -1357,6 +1486,7 @@ async function restoreDoc(d: DocState, verb: string) {
       docNow.script = clone(d.script);
       scriptPanel.setText(d.script.text);            // recompiles (not recorded: undoing)
     }
+    if (d.drawings && drawPanel && d.drawings.text !== drawPanel.text) { docNow.drawings = clone(d.drawings); drawPanel.setText(d.drawings.text); }
     buildTimeline({ atStart: true });
     player.seek(Math.min(t, player.duration));
     edit({ colors: { ...colors }, snapshots: { active: store.active, items: clone(store.snapshots) }, groups: clone(store.groups), folders: clone(store.folders), cutKeep: [...cutKeep], labels: { ...labels }, removed: [...removed], views: clone(views), shapes: clone(shapes) });
@@ -2050,7 +2180,7 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 }
 
 // read-only handle for tests and debugging
-(window as any).__studio = { vectorDrawing, exportSvg, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
+(window as any).__studio = { vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
   /** tests: a block with many small parts buried behind the cut plane (x < 0), like dowels without holes */
   addTestBuried: (count = 60) => {
     const mk = (col: number) => withCaps(new THREE.MeshToonMaterial({ color: col, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));

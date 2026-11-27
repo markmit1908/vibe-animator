@@ -130,6 +130,25 @@ each @layer3 stagger 0.2s order ring {
 - **🎯 Picking:** type `move ` (or `fade `, `each `, `list @x = `…), then click parts in the tree or 3D view to insert them. ⌘-click adds another; **Esc** stops.
 - **📷** inserts the current camera view.
 
+# Illustration
+
+Print-quality vector drawings (SVG) made from the geometry: exact hidden lines, line weights in mm, a layer per line type (outline, crease, hidden, border). Views are orthographic.
+
+- **⤓ Export SVG** (Controls) draws the current view with the paper, scale and line settings above it.
+- The **drawing script** lists sheets. Lines before the first `sheet` are defaults. **▶ Preview sheet** draws the sheet at the cursor; **⤓ Save all** writes every sheet to `Drawings/<animation>/<sheet>.svg` in the vault.
+
+```
+paper A1 landscape
+scale 1:50
+sheet core "Core – half section"
+  view front
+  at "Lift lid"
+  cut half x
+  hide @building
+```
+
+Sheet commands: `view` (iso, front, back, top, bottom, side, left, right, a saved view or `[dx, dy, dz]`), `snapshot "name"`, `at 12s` or `at "Chapter"`, `cut none|half|quarter [sides] [at [x,y,z]]`, `hide …`, `only …`, `title "…"`, and the defaults `paper`, `scale`, `hidden on|off`, `crease 30`. Drawing a sheet leaves the studio's view and pose as they were.
+
 # AI assist
 
 Ask about the model or describe animation steps.
