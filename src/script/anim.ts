@@ -12,6 +12,7 @@
  *   hide @shielding 1s     show @shielding     fade @bolts to 0.2 2s
  *   cutaway half -z at @reactor                  # section: side removed (x|-x|y|-y|z|-z), centred on a point or target
  *   cutaway half x keep @lid, machine            # …leaving these parts whole (plus the animation's saved keep-uncut list)
+ *   outline @lid #00e5ff 12px 0.5s               # a glow around the parts (colour, width), seen through others; outline @lid off 1s
  *   thumbnail outline                              # this moment is the card image on Home (shaded|outline|hidden)
  *   blank ~V-005202-001 1s                        # ~text: every part whose name contains text
  *   blank @lid 1s · unblank @lid · unblank all · blank others @core 1s   # blank works on locked parts too
@@ -56,13 +57,14 @@ export interface AnimStep {
   items?: Arg<string>;      // list: the items text
   flag?: Arg<string>;       // cutaway: nocap
   keep?: Arg<string>;       // cutaway: parts left whole ("a, @b")
+  width?: Arg<number>;      // outline: glow width in px
   endLine?: number;         // closing brace line of a block
 }
 
 export interface ParseError { line: number; from: number; to: number; message: string; fix?: { label: string; run: () => void } }
 export interface AnimDoc { steps: AnimStep[]; errors: ParseError[] }
 
-const VERBS = ['list', 'each', 'move', 'rotate', 'blank', 'unblank', 'hide', 'show', 'fade', 'highlight', 'color', 'label', 'camera', 'cutaway', 'wait', 'pivot', 'parallel', 'thumbnail'];
+const VERBS = ['list', 'each', 'move', 'rotate', 'blank', 'unblank', 'hide', 'show', 'fade', 'highlight', 'color', 'outline', 'label', 'camera', 'cutaway', 'wait', 'pivot', 'parallel', 'thumbnail'];
 export const ANIM_VERBS = VERBS;
 
 interface Tok { t: 'word' | 'str' | 'vec' | 'num' | 'dur' | 'color' | 'brace'; v: any; from: number; to: number }
@@ -190,6 +192,23 @@ export function parseAnim(text: string): AnimDoc {
         if (x && (x.t === 'color' || x.t === 'word')) { k++; step.word = arg(x); }
         tail(); break;
       }
+      case 'outline': {
+        // outline TARGETS [colour] [Npx] [off] [dur] [ease]
+        target();
+        while (peek()) {
+          const x = peek()!;
+          if (x.t === 'color') { step.word = arg(x); k++; continue; }
+          if (x.t === 'word' && /^\d*\.?\d+px$/.test(String(x.v))) {
+            const n = parseFloat(String(x.v));
+            if (!(n >= 1 && n <= 40)) err(x.from, x.to, 'Outline width is 1px .. 40px');
+            step.width = { value: n, from: x.from, to: x.to }; k++; continue;
+          }
+          if (x.t === 'word' && x.v === 'off') { step.flag = arg(x); k++; continue; }
+          if (x.t === 'word' && !['ease', 'linear', 'in', 'out'].includes(String(x.v))) { step.word = arg(x); k++; continue; }   // a named colour
+          break;
+        }
+        tail(); break;
+      }
       case 'label': {
         step.text = [];
         while (peek()?.t === 'str') step.text.push(arg(toks[k++])!);
@@ -305,6 +324,7 @@ export function toActions(steps: AnimStep[]): { camera?: any; timeline: any[] } 
       case 'fade': return { ...base, fade: tgt, to: s.num?.value ?? 0, dur: s.dur?.value ?? 1 };
       case 'highlight': return { ...base, highlight: tgt, color: s.word?.value ?? 'spent' };
       case 'color': return { ...base, highlight: tgt, color: s.word?.value ?? 'reset', dur: s.dur?.value ?? 0 };
+      case 'outline': return { ...base, outline: tgt, color: s.word?.value, width: s.width?.value, off: !!s.flag, dur: s.dur?.value ?? 0 };
       case 'label': return { ...base, label: s.text![0]?.value, sub: s.text![1]?.value };
       case 'camera': return { ...base, camera: s.word ? { view: s.word.value } : { pos: s.vec!.value, look: s.look?.value }, dur: s.dur?.value ?? 0 };
       case 'thumbnail': return { ...base, thumbnail: s.word?.value ?? 'shaded' };

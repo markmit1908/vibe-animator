@@ -1047,6 +1047,54 @@ test("keep uncut: a core block kept uncut stays visible inside the cut", async (
   await expect.poll(() => page.evaluate((id) => (window as any).__studio.built.registry.get(id).visible, id)).toBe(true);
 });
 
+test("outline: a glow around parts (colour, width, fades), seen through parts in front; hidden line too", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await page.goto("/");
+  const m = { name: "Glow", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] },
+    script: { language: "anim", text: 'camera [0,1,10] look [0,1,0]\nlabel "G"\nparallel {\n  outline blk #ff2020 12px 1s\n  outline front 1s\n}\nwait 1s\noutline blk, front off 1s' },
+    snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {},
+    shapes: [{ id: "front", kind: "box", size: [2, 2, 2], position: [-1.5, 1, 1.5], rotation: [0, 0, 0], color: "#888888" },
+             { id: "blk", kind: "box", size: [1, 1, 1], position: [-1.5, 1, -1.5], rotation: [0, 0, 0], color: "#888888" }] };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Glow");
+  const status = page.locator("#script .status");
+  await expect(status).toHaveText("✓", { timeout: 15_000 });
+  // rgb at world points, at time t
+  const rgb = (pts: number[][], t: number, shot?: string) => page.evaluate(async ({ pts, t }) => {
+    const s = (window as any).__studio;
+    s.player.playing = false; s.player.seek(t);
+    await new Promise((r) => setTimeout(r, 150));
+    s.drawFrame();
+    const cv = s.renderer.domElement as HTMLCanvasElement;
+    const c2 = document.createElement("canvas"); c2.width = cv.width; c2.height = cv.height; const g = c2.getContext("2d")!; g.drawImage(cv, 0, 0);
+    return pts.map((p) => { const v = new s.THREE.Vector3(...p).project(s.camera); return [...g.getImageData(Math.round((v.x + 1) / 2 * cv.width), Math.round((1 - v.y) / 2 * cv.height), 1, 1).data].slice(0, 3); });
+  }, { pts, t }).then(async (r) => { if (shot) await page.locator("#app canvas").screenshot({ path: shot }); return r; });
+  const hidden = [-1.5, 1, -1.5];          // the small box's centre, behind the front box
+  const besideHidden = [-0.9, 1, -1.5];    // just outside its silhouette (still in front of the front box)
+  const outsideFront = [-0.47, 1, 0.5];    // ~3 px outside the front box's silhouette (its back edge, seen from the right), over the background
+  const far = [2.5, 1, 1.5];
+  const [h0, b0, o0, f0] = await rgb([hidden, besideHidden, outsideFront, far], 0);
+  const [h1, b1, o1, f1] = await rgb([hidden, besideHidden, outsideFront, far], 1, process.env.GLOW_SHOT);
+  expect(h1[0] - h1[2]).toBeGreaterThan(h0[0] - h0[2] + 15);     // a red tint where the box is hidden
+  expect(b1[0] - b1[1]).toBeGreaterThan(b0[0] - b0[1] + 25);     // red glow just outside its silhouette, through the front box
+  expect(o1[2] + o1[1] - 2 * o1[0]).toBeGreaterThan(80);         // the front box's default cyan glow over the background
+  expect(o0.reduce((a, c) => a + c)).toBeLessThan(60);
+  expect(f1).toEqual(f0);                                          // nothing far away
+  const [h2, , o2] = await rgb([hidden, besideHidden, outsideFront], 3);
+  expect(h2).toEqual(h0); expect(o2).toEqual(o0);                   // off
+  // hidden line: the glow and the hidden tint too
+  await page.locator("#viewbar button", { hasText: "Hidden line" }).click();
+  const [hl0, bl0] = await rgb([hidden, besideHidden], 0);
+  const [hl1, bl1] = await rgb([hidden, besideHidden], 1, process.env.GLOW_SHOT?.replace(".png", "-hl.png"));
+  expect(hl1[1]).toBeLessThan(hl0[1] - 15);
+  expect(bl1[1]).toBeLessThan(bl0[1] - 25);
+  // errors
+  await page.evaluate(() => (window as any).__studio.scriptPanel.setText('label "G"\noutline blk plaid 1s'));
+  await expect(status).toHaveText("1 error");
+  await page.evaluate(() => (window as any).__studio.scriptPanel.setText('label "G"\noutline blk 90px'));
+  await expect(status).toHaveText("1 error");
+});
+
 test("section caps: overlapping solids (a dowel in a block without a hole) are capped, not holed", async ({ page }) => {
   await page.setViewportSize({ width: 1200, height: 800 });
   await page.goto("/");

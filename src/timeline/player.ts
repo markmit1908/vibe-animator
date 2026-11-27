@@ -33,6 +33,7 @@ export class Player {
       obj.quaternion.copy(s.quat);
       bodyMaterials(obj).forEach((m, i) => m.color.copy(s.colors[i]));
       setOpacity(obj, 1);
+      delete obj.userData.outline;
     }
     const cam = this.tl.camera;
     cam.pos.copy(cam.initPos); cam.look.copy(cam.initLook);

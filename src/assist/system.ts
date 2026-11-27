@@ -13,6 +13,7 @@ One step per line; steps run in sequence. \`parallel { … }\` runs the steps in
 - blank TARGET [1s] · unblank TARGET [1s] · unblank all · blank others TARGET [1s]   – blank = hide (works on locked parts); "blank others" hides everything not in TARGET; "unblank all" shows everything the script blanked
 - highlight TARGET #c0392b 1s                          – or a palette name (spent, fresh, fuel)
 - color TARGET #2e86de 1s · color TARGET reset 1s      – change a colour over time / back to the part's base colour
+- outline TARGET [#hex|name] [Npx] [dur] · outline TARGET off [dur]  – a glow around the parts (default cyan #00e5ff, 8px), seen through parts in front (buried parts get a faint tint); use it to point things out, fading on and off
 - list @layer3 = F1-*-3, F1-14-3, @bolts                 – a list (names, globs over part names, @groups); usable as @layer3 after this line
 - each @layer3 stagger 0.2s order ring { … }             – loop: inside, $ is the item and $i its index (vectors may use $i: [0, 1 + $i*0.05, 0]);
                                                           item i starts at i × stagger (no stagger: one after another); the loop ends when the last item ends;

@@ -75,6 +75,8 @@ unblank @x                            # unblank all: everything the script blank
 blank others @core 1s                 # reverse blank: hide everything else
 color @lid #2e86de 1s
 color @lid reset 1s
+outline @lid #ff3b30 12px 0.5s        # a glow around the parts, seen through others
+outline @lid off 1s
 highlight @spent spent 1s
 camera [12,16,14] look [0,5,0] 3s
 camera overview 2s                    # a view saved with the Views tool

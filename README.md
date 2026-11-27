@@ -135,6 +135,7 @@ One step per line; steps run in sequence. `#` starts a comment. Durations: `2s`,
 | `blank` / `unblank` | `blank @lid 1s` · `unblank all` · `blank others @core 1s` | Hide / show; work on locked parts (they don't move them). `blank others` hides everything not in the target (reverse blank); `unblank all` shows everything the script blanked. |
 | `fade` | `fade @bolts to 0.2 2s` · `fade @bolts 1s` | Opacity 0–1; without one it fades out. Faded to 0 = hidden. |
 | `color` | `color @lid #2e86de 1s` · `color @lid reset 1s` | Change colour over time / back to the base colour. |
+| `outline` | `outline @lid` · `outline @lid #ff3b30 12px 0.5s` · `outline machine, @bolts orange` · `outline @lid off 1s` | A glow around the parts to point them out: colour (`#hex` or a name; default cyan `#00e5ff`), width (1–40 px, default 8), fading in / out over the duration. It shows through parts in front, and a hidden part gets a faint tint of the colour, so buried parts can be found. Works on locked parts, in every view and in PNG export; follows the cut and blanking. |
 | `highlight` | `highlight @spent #c0392b 1s` | Like `color`; also takes palette names (`spent`, `fresh`, `fuel`). |
 | `camera` | `camera [12,16,14] look [0,5,0] 3s` · `camera overview 2s` | Moves the camera over the time given (instant without one). A name is a view saved with **Views**. A leading instant `camera` sets the opening view. |
 | `label` | `label "Remove lid" "Unbolt and lift"` | Chapter title (+ subtitle); listed under Chapters. |
@@ -247,6 +248,7 @@ Every node appears in the tree with an id `plant/<child>/…`; duplicate sibling
 - [x] Assembly: lock/hide/suppress, groups in folders, range selection, colours and palette, rename, remove/restore, snapshots, undo/redo
 - [x] Tools bar: blank / blank others / show all, select by name, set origin, camera views, thumbnail
 - [x] Basic modelling: box, cylinder, tube, sphere, cone, plane, hex prism; linear / circular arrays
+- [x] Outlines: a glow around parts, seen through others (script `outline`)
 - [x] Cutaways with sections (side, centre), section caps and parts kept uncut; hidden-line and shaded + outline views; PNG export
 - [x] AI assist (SolverKit's panel) with proposals
 - [x] STEP → glTF with multi-body splitting and re-instancing

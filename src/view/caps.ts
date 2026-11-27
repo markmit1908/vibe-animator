@@ -98,6 +98,10 @@ function onPartRender(this: THREE.Mesh, _r: THREE.WebGLRenderer, _s: THREE.Scene
   const u = (mat as THREE.ShaderMaterial).uniforms;
   u.partId.value = partHash(this);
   u.noClip.value = this.userData.uncut ? 1 : 0;
+  if (u.glowColor) {                                  // outline passes (glow.ts)
+    const g = this.userData.glow as { color: THREE.Color; k: number } | undefined;
+    if (g) { u.glowColor.value.copy(g.color); u.glowK.value = g.k; u.glowSlot.value = this.userData.glowSlot ?? 0; }
+  }
   const own = this.material as THREE.MeshToonMaterial;
   if (own?.color) u.partColor.value.copy(own.color);
   (mat as THREE.ShaderMaterial).uniformsNeedUpdate = true;

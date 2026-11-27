@@ -72,7 +72,7 @@ const colorChips = ViewPlugin.fromClass(class {
   update(u: ViewUpdate) { this.decorations = chipMatcher.updateDeco(u, this.decorations); }
 }, { decorations: (v) => v.decorations });
 /** Cursor at the colour of a `color`/`highlight` step (after its targets). */
-const COLOR_AT = /^\s*(color|highlight)\s+[^\s,]+(?:\s*,\s*[^\s,]+)*\s+(#?\w*)$/;
+const COLOR_AT = /^\s*(color|highlight|outline)\s+[^\s,]+(?:\s*,\s*[^\s,]+)*\s+(#?\w*)$/;
 
 // ---------- step timing gutter + active-step highlight ----------
 const setTimes = StateEffect.define<{ lines: Map<number, LineTiming>; active: Set<number> }>();
@@ -171,7 +171,7 @@ export class ScriptPanel {
   private pick?: { from: number; to: number };
   private pickEl!: HTMLElement;
   /** Verbs whose next word is a target. */
-  private static TARGETED = /^(\s*)(?:move|rotate|hide|show|fade|highlight|color|pivot|each|unblank|blank(?:\s+others)?|cutaway\s[^#]*?\bkeep|list\s+@[\w.-]+\s*=)\s+([^\s]*(?:,\s*[^\s]*)*)$/;
+  private static TARGETED = /^(\s*)(?:move|rotate|hide|show|fade|highlight|color|outline|pivot|each|unblank|blank(?:\s+others)?|cutaway\s[^#]*?\bkeep|list\s+@[\w.-]+\s*=)\s+([^\s]*(?:,\s*[^\s]*)*)$/;
 
   constructor(public right: HTMLElement, public name: string, text: string, public hooks: ScriptHooks) {
     const style = document.createElement('style'); style.textContent = CSS; document.head.appendChild(style);
@@ -208,7 +208,7 @@ export class ScriptPanel {
       const cm = before.match(COLOR_AT);
       if (cm) {
         const cols = this.hooks.colors?.() ?? [];
-        const extra = cm[1] === 'color' ? ['reset'] : ['spent', 'fresh', 'fuel'];
+        const extra = cm[1] === 'color' ? ['reset'] : cm[1] === 'outline' ? ['off', '#00e5ff', 'orange', 'red', '8px', '12px'] : ['spent', 'fresh', 'fuel'];
         const options: Completion[] = [
           ...cols.slice(0, 24).map((c, i) => ({ label: c, type: 'color', detail: i === 0 ? 'in the model' : undefined, boost: 99 - i })),
           ...extra.map((w) => ({ label: w, type: 'keyword', boost: -1 })),
@@ -287,6 +287,10 @@ export class ScriptPanel {
           if (/\bstagger$/.test(prev)) return null;
           const left = ['stagger', 'order'].filter((x) => !new RegExp(`\\b${x}\\b`).test(prev));
           return left.length ? kw(from, left) : null;
+        }
+        case 'outline': {
+          const left = [...(/(^|\s)(#\w+|off)\b/.test(prev) ? [] : ['off']), ...(/\dpx\b/.test(prev) ? [] : ['8px', '12px', '20px'])];
+          return kw(from, hasDur ? ease : left);
         }
         case 'hide': case 'show': case 'blank': case 'unblank': case 'color': case 'highlight':
           return hasDur ? kw(from, ease) : null;

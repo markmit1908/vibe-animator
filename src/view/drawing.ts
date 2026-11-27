@@ -112,6 +112,9 @@ export class DrawingMode {
     });
   }
 
+  /** The last normal pass's depth (log depth) – the outlines compare against it. */
+  get depth() { return this.rt.depthTexture; }
+
   render(scene: THREE.Scene, camera: THREE.PerspectiveCamera) {
     const r = this.renderer;
     const size = r.getDrawingBufferSize(new THREE.Vector2());

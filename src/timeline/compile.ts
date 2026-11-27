@@ -18,7 +18,10 @@ export class ScriptError extends Error { constructor(message: string, public lin
 export interface CameraRig { pos: THREE.Vector3; look: THREE.Vector3; initPos: THREE.Vector3; initLook: THREE.Vector3 }
 
 /** Virtual (compile-time) state, all WORLD space. */
-interface VState { pos: THREE.Vector3; quat: THREE.Quaternion; color: THREE.Color; base: THREE.Color; opacity: number }
+interface VState { pos: THREE.Vector3; quat: THREE.Quaternion; color: THREE.Color; base: THREE.Color; opacity: number; outline?: Glow }
+/** An outline (glow) on a part: colour, width in CSS px, strength 0..1. Set on `userData.outline` by tweens. */
+export interface Glow { color: THREE.Color; width: number; k: number }
+export const GLOW_DEFAULT = { color: '#00e5ff', width: 8 };
 
 const EASES: Record<string, (p: number) => number> = {
   ease: (p) => p * p * (3 - 2 * p),
@@ -47,7 +50,7 @@ function substitute(node: any, vars: Record<string, any>): any {
   return node;
 }
 
-const KINDS = ['list', 'each', 'pick', 'place', 'move', 'rotate', 'pivot', 'highlight', 'fade', 'label', 'cutaway', 'thumbnail', 'camera', 'wait', 'parallel', 'repeat', 'call'];
+const KINDS = ['list', 'each', 'pick', 'place', 'move', 'rotate', 'pivot', 'highlight', 'outline', 'fade', 'label', 'cutaway', 'thumbnail', 'camera', 'wait', 'parallel', 'repeat', 'call'];
 
 export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]; look: number[] },
   isLocked: (o: THREE.Object3D) => boolean = () => false,
@@ -368,6 +371,27 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
           const to = reset ? s.base.clone() : colorOf(a.color ?? 'spent');
           s.color = to.clone();
           tweens.push({ start: t, dur: d, apply: (p) => mats.forEach((m) => m.color.lerpColors(from, to, p)) });
+        }
+        return t + d;
+      }
+
+      case 'outline': {
+        // a glow around the parts; locked parts may be outlined (nothing moves)
+        const d = dur(0);
+        const named = a.color as string | undefined;
+        if (named && !named.startsWith('#') && !(named in scene.palette) && !(named.toLowerCase() in (THREE.Color as any).NAMES))
+          throw new Error(`Unknown colour "${named}" – use #rrggbb or a colour name (red, orange, cyan…)`);
+        for (const id of resolveTargets(a.target ?? val)) {
+          const s = state(id, false), obj = scene.registry.get(id)!;
+          const from: Glow = s.outline ?? { color: new THREE.Color(GLOW_DEFAULT.color), width: GLOW_DEFAULT.width, k: 0 };
+          const to: Glow = a.off ? { ...from, color: from.color.clone(), k: 0 }
+            : { color: named ? colorOf(named) : from.k > 0 ? from.color.clone() : new THREE.Color(GLOW_DEFAULT.color), width: a.width ?? (from.k > 0 ? from.width : GLOW_DEFAULT.width), k: 1 };
+          s.outline = to;
+          const c0 = from.k > 0 ? from.color : to.color, w0 = from.k > 0 ? from.width : to.width;
+          tweens.push({ start: t, dur: d, apply: (p) => {
+            const e = d > 0 ? ease(p) : 1;
+            obj.userData.outline = { color: c0.clone().lerp(to.color, e), width: w0 + (to.width - w0) * e, k: from.k + (to.k - from.k) * e } satisfies Glow;
+          } });
         }
         return t + d;
       }

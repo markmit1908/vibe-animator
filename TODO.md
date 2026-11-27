@@ -16,6 +16,7 @@
 - [ ] Set origin: cylinders with a non-vertical axis; also shift absolute script coordinates (offer to)
 
 ## Output
+- [ ] Outlines: pulse; saved always-on outlines; the selection as an outline; more than 4 looks at once (they share by colour now)
 - [ ] Hidden line: dashed hidden edges (selected parts), section hatching, SVG (vector) export
 - [ ] Video export (frame-by-frame render of the timeline)
 - [ ] PNG export: option for a solid background / chosen size

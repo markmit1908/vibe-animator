@@ -9,6 +9,7 @@ import { Player } from '../timeline/player';
 import { fitVerticalCylinder, planeHeight } from '../scene/origin';
 import { buildShape, freeName, KINDS, SHAPES_ROOT, shapePartId, SIZES, validName, type ShapeDef, type ShapeKind } from '../scene/shapes';
 import { capUniforms, SectionCaps, withCaps } from '../view/caps';
+import { OutlineGlow } from '../view/glow';
 import { applyCutaway, cutLine, DEFAULT_SIDES, toCut, Uncut, type Cut, type CutMode, type CutSide } from '../view/cutaway';
 import { CadManager } from '../scene/cad';
 import { setStore, setStoreWriter, store, useSnapshot, captureSnapshot, writeStore, markDirty, isDirty, onDirtyChange,
@@ -1146,6 +1147,7 @@ const triad = new Triad();
 // ---------- view toolbar (floating, top right of the viewport): style, standard views, PNG export ----------
 const drawing = new DrawingMode(renderer, built.clipPlanes);
 const caps = new SectionCaps(built.clipPlanes);
+const glow = new OutlineGlow(built.clipPlanes);   // script `outline`: glows around parts
 drawing.caps = caps;
 const viewDirs: Record<string, [number, number, number]> = { iso: [1, 0.8, 1.1], front: [0, 0, 1], top: [0, 1, 0.0001], side: [1, 0, 0] };
 function viewFrom(dir: [number, number, number]) {
@@ -1263,9 +1265,12 @@ function exportPng() {
 
 /** One frame of the main view in the current style (+ gizmo on top in drawing mode). */
 function drawFrame() {
-  if (!drawing.enabled) { renderer.render(scene3, camera); caps.render(renderer, scene3, camera, null); return; }
+  // outlines: the parts the script outlines now (only animated parts can carry one)
+  glow.update(player.tl.touched.map((id) => built.registry.get(id)).filter((o) => o?.userData.outline) as THREE.Object3D[]);
+  if (!drawing.enabled) { renderer.render(scene3, camera); caps.render(renderer, scene3, camera, null); glow.render(renderer, scene3, camera); return; }
   if (drawing.overlay) { renderer.render(scene3, camera); caps.render(renderer, scene3, camera, null); }   // shaded + outline: the cel-shaded frame, lines on top
   drawing.render(scene3, camera);
+  glow.render(renderer, scene3, camera, drawing.depth ?? undefined);
   const h = gizmo.getHelper();
   if (gizmo.object) { renderer.autoClear = false; renderer.clearDepth(); renderer.render(h, camera); renderer.autoClear = true; }
 }
