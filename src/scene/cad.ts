@@ -144,6 +144,9 @@ export class CadManager {
     for (const mesh of meshes) {
       if (mesh.userData.suppressed) continue;
       const e = this.geoms.get(mesh.userData.geomKey);
+      // keep its extent: boxes (copies, framing) must not change when geometry is freed
+      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+      mesh.userData.bbox = mesh.geometry.boundingBox!.clone();
       mesh.geometry = CadManager.EMPTY;
       mesh.userData.suppressed = true;
       if (e) {

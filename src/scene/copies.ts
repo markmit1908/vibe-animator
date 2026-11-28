@@ -52,7 +52,10 @@ export function sourcesBox(objs: THREE.Object3D[]): THREE.Box3 {
     const base = freshWorld(o);
     const walk = (x: THREE.Object3D, w: THREE.Matrix4) => {
       const g = (x as THREE.Mesh).geometry;
-      if ((x as THREE.Mesh).isMesh && g?.attributes?.position) {
+      // a CAD mesh whose geometry was freed (locked + hidden) keeps its box in userData.bbox
+      const saved = x.userData.bbox as THREE.Box3 | undefined;
+      if (saved && x.userData.suppressed) b.union(mb.copy(saved).applyMatrix4(w));
+      else if ((x as THREE.Mesh).isMesh && g?.attributes?.position) {
         if (!g.boundingBox) g.computeBoundingBox();
         if (!g.boundingBox!.isEmpty()) b.union(mb.copy(g.boundingBox!).applyMatrix4(w));
       }

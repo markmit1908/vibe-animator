@@ -742,6 +742,42 @@ test("copies keep a rotation: groups Alt-rotated then ⌘-dragged, even with sta
   expect(await q(ids.p1)).toEqual(s1);                                             // and the original
 });
 
+test("copies of placed parts inside a copy land in place (Duplicate rebuilds copies; placements applied before cloning; after a reload too)", async ({ page }) => {
+  await page.goto("/");
+  const { readFileSync } = await import("node:fs");
+  await api(page).put("/api/files/CAD/small.glb?overwrite=true", { data: readFileSync(new URL("./fixtures/small.glb", import.meta.url)) });
+  const m = { name: "Placed in copy", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [{ id: "plant", file: "CAD/small.glb", up: "y", position: [0, 0, 0] }] },
+    script: { language: "anim", text: 'label "P"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Placed in copy");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const ids = await page.evaluate(() => { const r = [...(window as any).__studio.built.registry.keys()]; return { p1: r.find((id: string) => id.endsWith("/Pin_1")), p2: r.find((id: string) => id.endsWith("/Pin_2")) }; });
+  const drag = (dx: number) => page.evaluate((dx) => { const g = (window as any).__studio.gizmo;
+    g.dispatchEvent({ type: "dragging-changed", value: true }); g.object.position.x += dx; g.object.updateMatrixWorld(true); g.dispatchEvent({ type: "objectChange" }); g.dispatchEvent({ type: "dragging-changed", value: false }); }, dx);
+  // copy A of Pin_1, then place A's part (a placement on a part inside a copy)
+  await page.evaluate((id) => (window as any).__studio.tree.selectId(id), ids.p1);
+  await page.evaluate(() => (window as any).__studio.duplicateSelection());
+  await expect.poll(() => page.evaluate(() => (window as any).__studio.copies.length)).toBe(1);
+  const inner = `copies/Pin_1-1/${ids.p1}`;
+  await page.evaluate((id) => (window as any).__studio.tree.selectId(id), inner);
+  await drag(2);
+  await expect.poll(() => page.evaluate((id) => !!(window as any).__studio.state.placements[id], inner)).toBe(true);
+  // a group of that placed part and Pin_2, duplicated in place
+  await page.evaluate(({ inner, p2 }) => { const s = (window as any).__studio; s.store.groups.mix = [inner, p2]; s.tree.rebuild(); }, { inner, p2: ids.p2 });
+  await page.locator("#tree .row .lbl", { hasText: /^mix$/ }).first().click();
+  await page.evaluate(() => (window as any).__studio.duplicateSelection());
+  await expect.poll(() => page.evaluate(() => (window as any).__studio.copies.length)).toBe(2);
+  const off = () => page.evaluate(({ inner, p2 }) => {
+    const s = (window as any).__studio, T = s.THREE, r = s.built.registry, c = s.copies[1].id, w = (o: any) => { o.updateWorldMatrix(true, false); return new T.Vector3().setFromMatrixPosition(o.matrixWorld); };
+    return [inner, p2].map((id) => +w(r.get(`copies/${c}/${id}`)).distanceTo(w(r.get(id))).toFixed(4));
+  }, { inner, p2: ids.p2 });
+  expect(await off()).toEqual([0, 0]);                                              // both exactly on their sources
+  await page.waitForTimeout(1500);
+  await page.reload();
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  expect(await off()).toEqual([0, 0]);
+});
+
 test("the tree keeps its open rows, selection and scroll when it rebuilds (making a group)", async ({ page }) => {
   await page.goto("/");
   const { readFileSync } = await import("node:fs");

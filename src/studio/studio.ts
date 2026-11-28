@@ -233,6 +233,8 @@ copiesRoot.name = 'copies'; copiesRoot.userData.copiesRoot = true; copiesRoot.us
 built.root.add(copiesRoot); built.registry.set(COPIES_ROOT, copiesRoot);
 /** per copy: why it's empty or incomplete */
 const copyErrors = new Map<string, string>();
+/** per copy: the sources' centre its parts were laid out from (a copy at this position sits exactly on them) */
+const copyCentres = new Map<string, THREE.Vector3>();
 /** The objects a copy clones: its targets, minus removed ones and ones under another target. */
 function copySources(d: CopyDef) {
   const r = resolveIds(d.of);
@@ -256,16 +258,22 @@ async function buildCopies() {
     for (const o of objs) o.traverse((x) => { if (x.userData.suppressed) supp.push(x as THREE.Mesh); });
     if (supp.length) await cad.restore(supp);
     let clash = '';
-    const { root } = buildCopy(d, { objs, skip: (o) => !!o.userData.removed }, (o, id) => {
+    const { root, centre } = buildCopy(d, { objs, skip: (o) => !!o.userData.removed }, (o, id) => {
       if (built.registry.has(id) && !clash) clash = id;
       o.userData.id = id; built.registry.set(id, o);
     });
     if (clash) copyErrors.set(d.id, `Name clash: ${clash} is used twice – rename this copy`);
+    copyCentres.set(d.id, centre);
     if (supp.length) cad.suppress(supp);
     copiesRoot.add(root);
+    // its built pose is home; then its parts' own placements – before a later copy clones them, so it sees them where they were placed
+    root.traverse((o) => {
+      o.userData.homeP = o.position.toArray(); o.userData.homeQ = o.quaternion.toArray();
+      const pl = state.placements[(o.userData.id ?? o.name) as string];   // (idOfObj isn't defined yet at the first build)
+      if (pl) { o.position.fromArray(pl.p); o.quaternion.fromArray(pl.q); }
+    });
     root.updateMatrixWorld(true);
   }
-  copiesRoot.traverse((o) => { o.userData.homeP = o.position.toArray(); o.userData.homeQ = o.quaternion.toArray(); });
   for (const id of removed) { const o = built.registry.get(id); if (o) o.userData.removed = true; }
   for (const [id, l] of Object.entries(labels)) { const o = built.registry.get(id); if (o) o.userData.label = l; }
 }
@@ -391,6 +399,8 @@ function setColors(specs: string[], hex: string | null) {
 
 useSnapshot(store.snapshots[store.active]);
 applyPlacements();
+// copies were first built before the placements were loaded: build them again from the placed sources
+if (copies.length) { await buildCopies(); applyPlacements(); }
 for (const o of built.root.children) await reconcile(o);
 applyColors();
 
@@ -1341,7 +1351,10 @@ gizmo.addEventListener('dragging-changed', (e: any) => {
         rotation: new THREE.Euler().setFromQuaternion(rot, 'XYZ').toArray().slice(0, 3).map((a) => +THREE.MathUtils.radToDeg(a as number).toFixed(3)),
         ...(cur?.mirror ? { mirror: cur.mirror } : {}) };
       copies.push(def);
-      await syncCopies(true, copyPartId(def.id));
+      await syncCopies(false, copyPartId(def.id));
+      // a new copy of parts: from the build's own centre (the drag D applied to it), so it lands exactly where they were dragged
+      if (!cur) { const cc = copyCentres.get(def.id); if (cc) placeCopyAt(def, cc.clone().applyMatrix4(D), q); }
+      edit({ copies: clone(copies) });
       toast(`Copied to ${def.id}`);
     })();
     return;
@@ -2420,7 +2433,9 @@ async function duplicateSelection() {
     def = { id: freeCopyName(String(base), taken), of: specs, position: c.toArray().map((v) => +v.toFixed(4)), rotation: [0, 0, 0] };
   }
   copies.push(def);
-  await syncCopies(true, copyPartId(def.id));
+  await syncCopies(false, copyPartId(def.id));
+  if (!cur) placeCopyAt(def, copyCentres.get(def.id));            // exactly on its sources (the build's own centre)
+  edit({ copies: clone(copies) });
   // the new copy, selected with the gizmo on it in Move mode (directly too, should the tree not find its row)
   const o = built.registry.get(copyPartId(def.id));
   if (o) {
@@ -2430,6 +2445,18 @@ async function duplicateSelection() {
   }
   updateTools();
   toast(`Duplicated as ${def.id} – in place, selected: drag it (right-click → Edit copy… for numbers)`, 3500);
+}
+/** Set a copy's position (world) and move its built root there – no rebuild. */
+function placeCopyAt(def: CopyDef, p?: THREE.Vector3, q?: THREE.Quaternion) {
+  if (!p) return;
+  def.position = p.toArray().map((v) => +v.toFixed(6));
+  if (q) def.rotation = new THREE.Euler().setFromQuaternion(q, 'XYZ').toArray().slice(0, 3).map((a) => +THREE.MathUtils.radToDeg(a as number).toFixed(4));
+  const o = built.registry.get(copyPartId(def.id));
+  if (!o) return;
+  o.position.fromArray(def.position);
+  o.quaternion.setFromEuler(new THREE.Euler(...(def.rotation.map(THREE.MathUtils.degToRad) as [number, number, number]), 'XYZ'));
+  o.userData.homeP = o.position.toArray(); o.userData.homeQ = o.quaternion.toArray();
+  o.updateMatrixWorld(true);
 }
 function renameCopyRefs(oldId: string, newId: string) {
   const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
