@@ -53,3 +53,5 @@
 - [ ] AssistPanel: styles for `.assist-reply` Markdown (now in app/src/index.css)
 - [ ] AssistPanel: slots for a header (effort, status) and code-block actions ("Insert into script")
 - [ ] Card thumbnails for non-React views: a documented `putThumb` path (we call the store directly)
+- [ ] AssistPanel: allow Accept / Reject on a proposal card while the turn is still running – today in-progress proposals render without `onDecide` (AssistPanel.tsx, `pendingProposals`), so a finished card can't be accepted until every round ends (seen 2026-11-27: a 28-copy card waited on a slow round 2)
+- [ ] AssistPanel: Stop keeps the proposals already made – today Stop restores the chat to before the prompt and drops `pendingProposals`, losing finished cards
