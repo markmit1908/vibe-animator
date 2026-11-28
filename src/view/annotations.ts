@@ -178,7 +178,7 @@ export class AnnotationLayer {
       const c = this.cards.get(a.id)!;
       const op = this.editing === a.id || this.selected === a.id ? 1 : this.hooks.opacity?.(a) ?? 1;
       const anc = this.visible && a.show && op > 0.001 ? this.hooks.anchor(a) : null;
-      if (!anc || (!anc.visible && this.editing !== a.id && this.selected !== a.id)) { c.style.display = 'none'; continue; }
+      if (!anc || (!anc.visible && this.editing !== a.id)) { c.style.display = 'none'; continue; }   // a hidden part hides its annotation (unless it's being edited)
       const p = scr(anc.p), l = scr(anc.p.clone().add(new THREE.Vector3(...a.offset)));
       if (p.behind || l.behind) { c.style.display = 'none'; continue; }
       c.style.display = '';

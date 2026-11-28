@@ -895,13 +895,19 @@ test("annotations list + assistant: filter, click to select and frame, show / de
   const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
   await open(page, "Notes list");
   await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
-  const list = page.locator(".annlist");
+  // the column beside the tree: closed at first, ✎ opens it (the tools bar moves over), remembered
+  const list = page.locator("#notes");
+  await expect(list).toBeHidden();
+  const tb0 = (await page.locator("#toolsbar").boundingBox())!.x;
+  await page.locator("#notes-toggle").click();
+  await expect(list).toBeVisible();
+  expect((await page.locator("#toolsbar").boundingBox())!.x).toBeCloseTo(tb0 + 260, 0);
   await expect(list.locator(".row")).toHaveCount(2);
   // filter
-  await list.locator("input").fill("spare");
+  await list.locator(".top input").fill("spare");
   await expect(list.locator(".row")).toHaveCount(1);
   await expect(list.locator(".row")).toContainText("Pumps");
-  await list.locator("input").fill("");
+  await list.locator(".top input").fill("");
   // click a row: selects its parts and frames them
   const tgt0 = await page.evaluate(() => (window as any).__studio.controls.target.toArray());
   await list.locator(".row", { hasText: "Pumps" }).locator(".tx").click();
@@ -909,9 +915,24 @@ test("annotations list + assistant: filter, click to select and frame, show / de
   await expect.poll(() => page.evaluate(() => +(window as any).__studio.controls.target.x.toFixed(2))).toBe(6);
   expect(tgt0[0]).not.toBe(6);
   // hide one from the list, then delete it
-  await list.locator(".row", { hasText: "Pumps" }).locator("[data-r=show]").click();
+  await list.locator(".row", { hasText: "Pumps" }).locator("[data-r=show]").uncheck();
   await expect.poll(async () => (await model(page, a.id)).annotations.find((x: any) => x.id === "a2").show).toBe(false);
   await expect(page.locator("#annotations .ann", { hasText: "Pumps" })).toBeHidden();
+  await list.locator(".row", { hasText: "Pumps" }).locator("[data-r=show]").check();
+  await expect(page.locator("#annotations .ann", { hasText: "Pumps" })).toBeVisible();
+  // a hidden part hides its annotation whatever the box says – even selected – and the row says so; the box keeps its state
+  await page.evaluate(() => { const s = (window as any).__studio; s.tree.selectId("shapes/pump"); s.tree.toggleHiddenSelected(); s.tree.selectId("shapes/pump"); });
+  await expect(page.locator("#annotations .ann", { hasText: "Pumps" })).toBeHidden();
+  await expect(list.locator(".row", { hasText: "Pumps" })).toContainText("part hidden", { timeout: 5_000 });
+  await expect(list.locator(".row", { hasText: "Pumps" }).locator("[data-r=show]")).toBeChecked();
+  await page.evaluate(() => { const s = (window as any).__studio; s.tree.selectId("shapes/pump"); s.tree.toggleHiddenSelected(); });
+  await expect(page.locator("#annotations .ann", { hasText: "Pumps" })).toBeVisible();
+  // "Show" in the column's header hides them all
+  await list.locator("[data-a=all]").uncheck();
+  await expect(page.locator("#annotations .ann").first()).toBeHidden();
+  await list.locator("[data-a=all]").check();
+  await list.locator(".row", { hasText: "Pumps" }).locator("[data-r=show]").uncheck();
+  await expect.poll(async () => (await model(page, a.id)).annotations.find((x: any) => x.id === "a2").show).toBe(false);
   await list.locator(".row", { hasText: "Pumps" }).locator("[data-r=del]").click();
   await expect.poll(async () => (await model(page, a.id)).annotations.length).toBe(1);
   // CSV
@@ -939,6 +960,10 @@ test("annotations list + assistant: filter, click to select and frame, show / de
   const made = (await model(page, a.id)).annotations.find((x: any) => x.title === "Pump P-1");
   expect(made).toMatchObject({ target: "@pumps", note: "Duty", anchor: { part: "shapes/pump", local: [0, 0.5, 0] } });   // top face of the pump, in its frame
   await expect(list.locator(".row")).toHaveCount(2);
+  // the column stays open after a reload
+  await page.reload();
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  await expect(list).toBeVisible();
   const del = await tool("propose_annotations", { summary: "Remove it", changes: [{ action: "delete", id: made.id }] });
   await page.evaluate((p) => (window as any).__studio.assist.host.accept(p), del.p);
   await expect.poll(async () => (await model(page, a.id)).annotations.length).toBe(1);

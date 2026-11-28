@@ -588,7 +588,6 @@ view.add(ui, 'xray').name('X-ray shells').onChange((on: boolean) => built.shellM
   m.transparent = true; m.depthWrite = !on;
 }));
 view.add(ui, 'followCamera').name('Scripted camera');
-view.add(ui, 'annotations').name('Annotations').onChange((on: boolean) => { if (annLayer) annLayer.visible = on; });
 const chapters = gui.addFolder('Chapters').close();
 function rebuildChapters() {
   [...chapters.controllers].forEach((c) => c.destroy());
@@ -1494,43 +1493,85 @@ function frameObjects(objs: THREE.Object3D[]) {
   camera.position.copy(c).addScaledVector(dir, r / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.15);
   controls.target.copy(c); controls.update();
 }
-// ---- the Annotations list (Controls): filter, click = select + frame, edit / show / delete, CSV ----
-const annF = gui.addFolder('Annotations');
-const annBox = document.createElement('div'); annBox.className = 'annlist';
-annF.$children.appendChild(annBox);
-pb.domElement.after(annF.domElement);                // near the top of Controls, under Playback
+// ---- the Annotations column (right of the assembly tree, shown / hidden by ✎): show all, filter, a checkbox per
+// annotation (its own show / hide – a hidden part hides its annotation whatever the box says), click = select + frame,
+// edit / delete, CSV ----
+const notesEl = document.createElement('div'); notesEl.id = 'notes';
+host().appendChild(notesEl);
+const notesToggle = document.createElement('button'); notesToggle.id = 'notes-toggle'; notesToggle.textContent = '✎';
+notesToggle.title = 'Annotations: show / hide the list beside the tree';
+host().appendChild(notesToggle);
+let notesOpen = false;
+try { notesOpen = localStorage.getItem('refuel.notesOpen') === '1'; } catch { /* private mode */ }
+function setNotesOpen(on: boolean) {
+  notesOpen = on;
+  host().classList.toggle('notes-open', on);
+  notesToggle.classList.toggle('on', on);
+  try { localStorage.setItem('refuel.notesOpen', on ? '1' : '0'); } catch { /* private mode */ }
+  if (on) refreshAnnList();
+}
+notesToggle.onclick = () => setNotesOpen(!notesOpen);
 {
   const css = document.createElement('style');
-  css.textContent = `.annlist { padding: 4px 6px 8px; font: 12px system-ui; color: #d7dde4; }
-.annlist .top { display: flex; gap: 4px; margin-bottom: 4px; } .annlist input { flex: 1; min-width: 0; background: #0a0c0f; color: inherit; border: 1px solid #2b3540; border-radius: 4px; padding: 2px 6px; font: 12px system-ui; }
-.annlist button { width: auto; flex: none; background: #1b222a; color: #d7dde4; border: 1px solid #2b3540; border-radius: 4px; padding: 1px 6px; cursor: pointer; font: 11.5px system-ui; }
-.annlist .row { display: flex; align-items: flex-start; gap: 4px; padding: 3px 4px; border-radius: 4px; cursor: pointer; }
-.annlist .row:hover { background: #1b222a; } .annlist .row.sel { background: #3a2a14; } .annlist .row.off { opacity: .5; }
-.annlist .row .tx { flex: 1; min-width: 0; } .annlist .row .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.annlist .row .s { color: #7b8794; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.annlist .row button { padding: 0 4px; } .annlist .none { color: #7b8794; font-size: 11.5px; padding: 2px 4px; }`;
+  const W = 260;
+  css.textContent = `#notes { position: absolute; top: 0; bottom: 0; left: 340px; width: ${W}px; z-index: 8; display: none; flex-direction: column;
+  background: rgba(14,17,21,.95); color: #d7dde4; font: 12px system-ui; border-right: 1px solid #222a33; }
+.studio-root.notes-open #notes { display: flex; } .studio-root.tree-collapsed #notes { left: 0; }
+#notes header { display: flex; align-items: center; gap: 6px; padding: 8px; border-bottom: 1px solid #222a33; } #notes header b { flex: 1; font-size: 13px; }
+#notes header label { display: flex; align-items: center; gap: 4px; color: #9aa6b2; font-size: 11.5px; cursor: pointer; }
+#notes .top { display: flex; gap: 4px; padding: 6px 8px; } #notes .top input { flex: 1; min-width: 0; background: #0a0c0f; color: inherit; border: 1px solid #2b3540; border-radius: 4px; padding: 3px 6px; font: 12px system-ui; }
+#notes button { background: #1b222a; color: #d7dde4; border: 1px solid #2b3540; border-radius: 4px; padding: 1px 6px; cursor: pointer; font: 11.5px system-ui; }
+#notes .list { flex: 1; overflow: auto; padding: 0 4px 8px; }
+#notes .row { display: flex; align-items: flex-start; gap: 5px; padding: 4px; border-radius: 4px; cursor: pointer; }
+#notes .row:hover { background: #1b222a; } #notes .row.sel { background: #3a2a14; } #notes .row.off .tx, #notes .row.gone .tx { opacity: .5; }
+#notes .row input[type=checkbox] { margin: 2px 0 0; flex: none; cursor: pointer; }
+#notes .row .tx { flex: 1; min-width: 0; } #notes .row .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#notes .row .s { color: #7b8794; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } #notes .row .gone-note { color: #c9a45c; }
+#notes .row button { padding: 0 4px; } #notes .none { color: #7b8794; font-size: 11.5px; padding: 6px 8px; }
+#notes-toggle { position: absolute; top: 40px; left: 348px; z-index: 6; background: #222a33; color: #d7dde4; border: 1px solid #2b3540; border-radius: 4px; padding: 3px 8px; cursor: pointer; }
+#notes-toggle.on { border-color: #f2b705; color: #f2b705; }
+.studio-root.tree-collapsed #notes-toggle { left: 8px; }
+.studio-root.notes-open #notes-toggle, .studio-root.notes-open #tree-toggle { left: ${348 + W}px; } .studio-root.notes-open.tree-collapsed #notes-toggle, .studio-root.notes-open.tree-collapsed #tree-toggle { left: ${8 + W}px; }
+.studio-root.notes-open #toolsbar { left: ${352 + W}px; } .studio-root.notes-open.tree-collapsed #toolsbar { left: ${12 + W}px; }
+.studio-root.notes-open:not(.tree-collapsed) #chapter, .studio-root.notes-open:not(.tree-collapsed) #sub { left: ${392 + W}px !important; }
+.studio-root.notes-open:not(.tree-collapsed) #clock { left: ${364 + W}px !important; }
+.studio-root.notes-open.tree-collapsed #chapter, .studio-root.notes-open.tree-collapsed #sub { left: ${52 + W}px !important; } .studio-root.notes-open.tree-collapsed #clock { left: ${24 + W}px !important; }
+.studio-root.notes-open #viewbar { max-width: calc(100% - ${396 + W}px - 476px); } .studio-root.notes-open.tree-collapsed #viewbar { max-width: calc(100% - ${56 + W}px - 476px); }
+.studio-root.notes-open.right-collapsed #viewbar { max-width: calc(100% - ${396 + W}px - 56px); } .studio-root.notes-open.right-collapsed.tree-collapsed #viewbar { max-width: calc(100% - ${112 + W}px); }`;
   document.head.appendChild(css);
 }
-let annFilter = '';
+/** The left edge of the 3D view's free area (tree + this column) – the axis triad sits there. */
+const leftPanelsW = () => (host().classList.contains('tree-collapsed') ? 12 : 352) + (notesOpen ? 260 : 0);
+let annFilter = '', annSig = '';
+/** Which annotations' parts are hidden now (a change re-renders the list). */
+const annHiddenNow = () => annotations.map((a) => (annLayerAnchor(a)?.visible === false || !annLayerAnchor(a) ? 1 : 0)).join('');
 function refreshAnnList() {
+  if (!notesOpen) return;
+  annSig = annHiddenNow();
   const f = annFilter.toLowerCase();
   const list = annotations.filter((a) => !f || [a.title, a.note, a.target].some((x) => x.toLowerCase().includes(f)));
   const e = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
   const tgt = (t: string) => t.startsWith('folder:') ? `▤ ${t.slice(7)}` : t.split(',').map((x) => x.trim().split('/').pop()).join(', ');
-  annBox.innerHTML = `<div class="top"><input placeholder="Filter annotations" value="${e(annFilter)}"><button data-a="csv" title="Export every annotation with its parts as CSV">⤓ CSV</button></div>
-    ${list.length ? list.map((a) => `<div class="row${annLayer.selected === a.id ? ' sel' : ''}${a.show ? '' : ' off'}" data-id="${a.id}"><div class="tx"><div class="t">${e(a.title || '(untitled)')}</div>
-      <div class="s">${e(tgt(a.target))}${a.note ? ' · ' + e(a.note.split('\n')[0]) : ''}</div></div>
-      <button data-r="show" title="${a.show ? 'Hide' : 'Show'} in the view">${a.show ? '◉' : '○'}</button><button data-r="edit" title="Edit">✎</button><button data-r="del" title="Delete">✕</button></div>`).join('')
-      : `<div class="none">${annotations.length ? 'No match.' : 'None yet – select parts and use ✎ Annotate.'}</div>`}`;
-  const inp = annBox.querySelector<HTMLInputElement>('input')!;
-  inp.oninput = () => { annFilter = inp.value; const pos = inp.selectionStart; refreshAnnList(); const i2 = annBox.querySelector<HTMLInputElement>('input')!; i2.focus(); i2.setSelectionRange(pos, pos); };
-  inp.onkeydown = (ev) => ev.stopPropagation();
-  annBox.querySelector<HTMLElement>('[data-a=csv]')!.onclick = () => exportAnnotationsCsv();
-  annBox.querySelectorAll<HTMLElement>('.row').forEach((row) => {
+  notesEl.innerHTML = `<header><b>Annotations</b><label title="Show or hide every annotation in the view"><input type="checkbox" data-a="all" ${annLayer.visible ? 'checked' : ''}> Show</label></header>
+    <div class="top"><input placeholder="Filter" value="${e(annFilter)}"><button data-a="csv" title="Export every annotation with its parts as CSV">⤓ CSV</button></div>
+    <div class="list">${list.length ? list.map((a) => {
+      const anc = annLayerAnchor(a), gone = !anc || !anc.visible;
+      return `<div class="row${annLayer.selected === a.id ? ' sel' : ''}${a.show ? '' : ' off'}${gone ? ' gone' : ''}" data-id="${a.id}">
+        <input type="checkbox" data-r="show" ${a.show ? 'checked' : ''} title="Show this annotation (a hidden part hides it anyway)">
+        <div class="tx"><div class="t">${e(a.title || '(untitled)')}</div>
+        <div class="s">${gone ? '<span class="gone-note">part hidden · </span>' : ''}${e(tgt(a.target))}${a.note ? ' · ' + e(a.note.split('\n')[0]) : ''}</div></div>
+        <button data-r="edit" title="Edit">✎</button><button data-r="del" title="Delete">✕</button></div>`;
+    }).join('') : `<div class="none">${annotations.length ? 'No match.' : 'None yet – select parts and use ✎ Annotate on the tools bar.'}</div>`}</div>`;
+  notesEl.querySelector<HTMLInputElement>('[data-a=all]')!.onchange = (ev) => { annLayer.visible = ui.annotations = (ev.target as HTMLInputElement).checked; };
+  const inp = notesEl.querySelector<HTMLInputElement>('.top input')!;
+  inp.oninput = () => { annFilter = inp.value; const pos = inp.selectionStart; refreshAnnList(); const i2 = notesEl.querySelector<HTMLInputElement>('.top input')!; i2.focus(); i2.setSelectionRange(pos, pos); };
+  notesEl.onkeydown = (ev) => ev.stopPropagation();
+  notesEl.querySelector<HTMLElement>('[data-a=csv]')!.onclick = () => exportAnnotationsCsv();
+  notesEl.querySelectorAll<HTMLElement>('.row').forEach((row) => {
     const a = annotations.find((x) => x.id === row.dataset.id)!;
     row.onclick = (ev) => {
       const btn = (ev.target as HTMLElement).closest<HTMLElement>('[data-r]');
-      if (btn?.dataset.r === 'show') { a.show = !a.show; saveAnnotations(); return; }
+      if (btn?.dataset.r === 'show') { a.show = (btn as HTMLInputElement).checked; saveAnnotations(); return; }
       if (btn?.dataset.r === 'del') { annotations = annotations.filter((x) => x !== a); saveAnnotations(); return; }
       const objs = annotationParts(a.target);
       if (objs.length) { tree.selectObjects(objs); frameObjects(objs); }
@@ -1539,6 +1580,9 @@ function refreshAnnList() {
     };
   });
 }
+// parts blanked / removed / cut away change which rows say "part hidden": re-render when that changes
+const notesTimer = setInterval(() => { if (notesOpen && !notesEl.contains(document.activeElement) && annHiddenNow() !== annSig) refreshAnnList(); }, 1000);
+setNotesOpen(notesOpen);
 /** CSV: id, title, note, target, the part ids it covers now, the leader point (world m). */
 function exportAnnotationsCsv() {
   const q = (v: string) => `"${v.replace(/"/g, '""')}"`;
@@ -3375,7 +3419,7 @@ renderer.setAnimationLoop(() => {
   scriptPanel?.setTiming(player.tl.lines, player.time);
   drawFrame();
   annLayer.update();
-  triad.render(renderer, camera, host().classList.contains('tree-collapsed') ? 12 : 352);
+  triad.render(renderer, camera, leftPanelsW());
 });
 
 // ?debug: dump CAD ids + stats into the DOM (for headless checks)
@@ -3484,6 +3528,7 @@ return {
     disposed = true;
     scriptPanel?.destroy();
     annLayer.dispose();
+    clearInterval(notesTimer); notesEl.remove(); notesToggle.remove();
     clearTimeout(chatTimer); clearTimeout(thumbTimer);
     assist?.dispose();
     renderer.setAnimationLoop(null);
