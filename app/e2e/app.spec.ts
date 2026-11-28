@@ -898,9 +898,19 @@ test("annotations in the tree Notes column + assistant: per-row note, checkbox, 
   // the Notes column of the tree: off at first, ✎ Notes in the tree's header turns it on (the tools bar moves over)
   const rowOf = (label: string) => page.locator("#tree .row").filter({ has: page.locator(".lbl", { hasText: new RegExp(`^${label}$`) }) });
   await expect(page.locator("#tree .note")).toHaveCount(0);
+  // ✎ Notes on the view bar switches every annotation off / on in the view
+  await expect(page.locator("#annotations .ann").first()).toBeVisible();
+  await page.locator("#viewbar [data-a=notes]").click();
+  await expect(page.locator("#annotations .ann").first()).toBeHidden();
+  await expect(page.locator("#viewbar [data-a=notes]")).not.toHaveClass(/on/);
   const tb0 = (await page.locator("#toolsbar").boundingBox())!.x;
   await page.locator("#tree [data-a=notes]").click();
   await expect(page.locator("#tree")).toHaveClass(/notes/);
+  // the tree's "Show notes in the view" is the same switch: off here; ticking it turns the view bar's button on again
+  await expect(page.locator("#tree .notesbar input[type=checkbox]")).not.toBeChecked();
+  await page.locator("#tree .notesbar input[type=checkbox]").check();
+  await expect(page.locator("#annotations .ann").first()).toBeVisible();
+  await expect(page.locator("#viewbar [data-a=notes]")).toHaveClass(/on/);
   expect((await page.locator("#toolsbar").boundingBox())!.x).toBeCloseTo(tb0 + 220, 0);
   // each row shows the annotation made on exactly it
   await expect(rowOf("tank").locator(".note .nt")).toHaveText("Tank T-1");

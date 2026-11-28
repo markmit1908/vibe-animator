@@ -1251,7 +1251,7 @@ const tree = new TreePanel(built, scene3, {
     show: (id, on) => { const x = annotations.find((y) => y.id === id); if (x) { x.show = on; saveAnnotations(); } },
     open: (id) => { const x = annotations.find((y) => y.id === id); if (!x) return; if (!x.show) { x.show = true; saveAnnotations(); } const objs = annotationParts(x.target); if (objs.length) frameObjects(objs); annLayer.select(id); annLayer.edit(id); },
     visible: () => annLayer?.visible ?? true,
-    setVisible: (on) => { annLayer.visible = ui.annotations = on; },
+    setVisible: (on) => setNotesVisible(on),
     csv: () => exportAnnotationsCsv(),
     toggled: (on) => host().classList.toggle('notes-open', on),
   },
@@ -1518,6 +1518,12 @@ function frameObjects(objs: THREE.Object3D[]) {
 }
 /** The left edge of the 3D view's free area (the tree, wider with its Notes column) – the axis triad sits there. */
 const leftPanelsW = () => (host().classList.contains('tree-collapsed') ? 12 : 352 + (tree.notesOn ? 220 : 0));
+/** All annotations on / off in the view: the view bar's ✎ Notes and the tree's "Show notes in the view" stay in step. */
+function setNotesVisible(on: boolean) {
+  annLayer.visible = ui.annotations = on;
+  document.querySelector('#viewbar [data-a=notes]')?.classList.toggle('on', on);
+  if (tree.notesOn) tree.setNotes(true);           // re-renders its bar's checkbox
+}
 /** Annotations changed: the tree's Notes column shows them. */
 function refreshAnnList() { tree.redraw(); }
 /** The annotations made on exactly this row's part / group / folder (the Notes column). */
@@ -2247,6 +2253,7 @@ function exportPng() {
     <div class="sep"></div>
     <div class="grp"><button data-v="iso">Iso</button><button data-v="front">Front</button><button data-v="top">Top</button><button data-v="side">Side</button><button data-v="fit" title="Fit everything visible in the current direction">Fit</button></div>
     <div class="sep"></div>
+    <button data-a="notes" class="on" title="Annotations in the view: on / off (all of them; also in the tree's Notes bar)">✎ Notes</button>
     <button data-a="png" title="Save the view as a PNG at 2× resolution, with a transparent background">⤓ PNG</button>
     <button data-a="cfg" title="Hidden-line settings">⚙</button>
     <div class="pop" hidden>
@@ -2273,6 +2280,7 @@ function exportPng() {
     else { lastView = v; viewFrom(viewDirs[v]); }
   }));
   bar.querySelector<HTMLElement>('[data-a=png]')!.onclick = exportPng;
+  bar.querySelector<HTMLElement>('[data-a=notes]')!.onclick = () => setNotesVisible(!annLayer.visible);
 
   // hidden-line settings (remembered in this browser)
   const DEF = { sil: 2.5, thickness: 1.25, angle: 41, depth: 4, line: '#111111', paper: '#ffffff' };
