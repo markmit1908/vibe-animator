@@ -24,7 +24,7 @@ import type { AnimModel } from '../model/file';
 import { joinLines } from '../model/file';
 import { DrawingMode } from '../view/drawing';
 import { ScriptPanel } from '../view/scriptPanel';
-import type { AssistHost, AssistMount } from '../assist/host';
+import { decidedEarly, proposalKey, type AssistHost, type AssistMount } from '../assist/host';
 import { assistClient, migrateChat, runAssist, type ChatMessage } from '../assist/loop';
 import type Anthropic from '@anthropic-ai/sdk';
 import { ASSIST_SYSTEM } from '../assist/system';
@@ -709,6 +709,11 @@ let drawPanel: DrawPanel | undefined;
 // ---------- assist tools (read-only) ----------
 const toolDeps: ToolDeps = {
   registry: built.registry,
+  annotationsOn: (id) => {
+    const o = built.registry.get(id); if (!o) return [];
+    const chain = new Set<THREE.Object3D>(); for (let p: THREE.Object3D | null = o; p; p = p.parent) chain.add(p);
+    return annotations.filter((a) => (a.anchor?.part === id) || annotationParts(a.target).some((x) => chain.has(x))).map((a) => `${a.id} "${a.title}"`);
+  },
   groups: () => store.groups,
   isLocked, isHidden,
   roots: () => built.root.children.filter((o) => built.registry.get(idOfObj(o)) === o),
@@ -994,6 +999,33 @@ let chatTimer: number | undefined;
 const assistEl = document.createElement('div'); assistEl.id = 'assist';
 right.appendChild(assistEl);
 const client = assistClient(io.assist.base);
+/**
+ * The verbose assist log: one JSONL file per send in the vault (Logs/assist/<animation>/<date time>.jsonl), written
+ * every few seconds while the turn runs (a stuck turn still leaves its log) and when it ends. Never holds the key
+ * (that's added by the server's proxy); the server logs the proxy side in Logs/assist/proxy.jsonl.
+ */
+function assistLog(history: ChatMessage[]) {
+  const t0 = Date.now(), d = new Date(t0), pad = (n: number) => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
+  const id = `${stamp}-${Math.random().toString(36).slice(2, 6)}`;
+  const folder = `Logs/assist/${(model.name ?? 'animation').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'animation'}`;
+  const lines: string[] = [];
+  let timer: number | undefined, closed = false, writing: Promise<unknown> = Promise.resolve();
+  const write = () => {
+    timer = undefined;
+    if (!io.files) return;
+    const text = lines.join('\n') + '\n';
+    writing = writing.then(() => io.files!.upload(`${folder}/${id}.jsonl`, new File([text], `${id}.jsonl`, { type: 'application/x-ndjson' }), undefined, true)).catch((e) => console.warn('assist log', e));
+  };
+  const rec = (r: Record<string, unknown>) => {
+    if (closed) return;
+    lines.push(JSON.stringify({ t: new Date().toISOString(), ms: Date.now() - t0, ...r }));
+    timer ??= window.setTimeout(write, 2000);
+  };
+  const last = [...history].reverse().find((m) => m.role === 'user');
+  rec({ ev: 'start', send: id, animation: model.name, prompt: last?.content, history_messages: history.length, app: 'refuel-anim' });
+  return { id, rec, close() { rec({ ev: 'close' }); closed = true; clearTimeout(timer); write(); } };
+}
 const assistHost: AssistHost = {
   status: io.assist.status,
   chat: () => chat,
@@ -1003,8 +1035,32 @@ const assistHost: AssistHost = {
     chatTimer = window.setTimeout(() => edit({ chat: JSON.parse(JSON.stringify(c)) }), 300);
   },
   start: (history, signal, effort) => (async function* () {
-    const context: Anthropic.ContentBlockParam[] = [{ type: 'text', text: await assistContext() }];
-    yield* runAssist({ client, system: ASSIST_SYSTEM, history, context, tools, effort, signal });
+    const log = assistLog(history);
+    const made: Proposal[] = [];       // this turn's proposals (put back if the user stops it)
+    try {
+      const context: Anthropic.ContentBlockParam[] = [{ type: 'text', text: await assistContext() }];
+      log.rec({ ev: 'context', content: context });
+      for await (const ev of runAssist({ client, system: ASSIST_SYSTEM, history, context, tools, effort, signal, log: log.rec, sendId: log.id, stallMs: (window as any).__assistStallMs })) {
+        if (ev.type === 'error' || ev.type === 'done') log.rec({ ev: `panel_${ev.type}`, ...ev });
+        if (ev.type === 'proposal') { const { type: _t, ...p } = ev; made.push(p as Proposal); }
+        yield ev;
+      }
+    } catch (e: any) { log.rec({ ev: 'exception', message: String(e?.message ?? e), stack: e?.stack }); throw e; }
+    finally {
+      if (signal.aborted) log.rec({ ev: 'aborted', proposals_kept: made.length });
+      log.close();
+      // solverkit-candidate: the panel's Stop drops the turn's proposals (it restores the chat to before the prompt);
+      // put them back once it has, with any decision made while the turn ran
+      if (signal.aborted && made.length) setTimeout(() => {
+        const msgs: ChatMessage[] = made.map((p) => {
+          const d = decidedEarly.get(proposalKey(p));
+          return { role: 'assistant', content: '', proposal: d === undefined ? p : { ...p, state: d ? 'accepted' : 'rejected' } };
+        });
+        msgs[msgs.length - 1].content = '(Stopped – the proposals made so far are kept.)';
+        assistHost.onChat([...chat, ...msgs]);
+        assist?.refresh();
+      }, 100);
+    }
   })(),
   script: () => scriptPanel?.text ?? '',
   previewing: () => (previewing ? String(previewing.text) : undefined),
@@ -1065,6 +1121,8 @@ Current time: ${player.time.toFixed(2)} s${player.playing ? ' (playing)' : ' (pa
 Selection: ${sel}${selBox && !selBox.isEmpty() ? ` – bbox centre [${selBox.getCenter(new THREE.Vector3()).toArray().map((v) => v.toFixed(2))}], size [${selBox.getSize(new THREE.Vector3()).toArray().map((v) => v.toFixed(2))}] m` : ''}
 Camera views: ${Object.keys(views).map((v) => `${v} (pos [${views[v].pos.map((x) => x.toFixed(1))}], look [${views[v].look.map((x) => x.toFixed(1))}])`).join(', ') || 'none'}
 Shapes: ${shapes.map((s) => `${s.id} (${s.kind} [${s.size}] at [${s.position}]${s.rotation.some((r) => r) ? ` rot [${s.rotation}]°` : ''}${s.array ? `, ×${s.array.count} ${s.array.type}` : ''})`).join(', ') || 'none'}
+Copies: ${copies.map((c) => `${c.id}${c.array ? ` (×${c.array.count})` : ''}`).join(', ') || 'none'}
+Annotations (${annotations.length}${annotations.length > 40 ? ', first 40' : ''}; get_annotations for notes, parts and points): ${annotations.slice(0, 40).map((a) => `${a.id} "${a.title}" on ${a.target}`).join(', ') || 'none'}
 Groups: ${Object.entries(store.groups).map(([g, ids]) => { const f = Object.entries(store.folders).find(([, gs]) => gs.includes(g))?.[0]; return `@${g} (${ids.length} members${f ? `, folder ${f}` : ''})`; }).join(', ') || 'none'}
 Snapshot: ${store.active}. Explicitly hidden: ${hidden.length ? hidden.slice(0, 20).join(', ') + (hidden.length > 20 ? ` … ${hidden.length - 20} more` : '') : 'none'}. Kept uncut by every cut: ${cutKeep.join(', ') || 'none'}. Placed away from their CAD position: ${Object.keys(state.placements).slice(0, 20).join(', ') || 'none'}. Unlocked (animatable) CAD: ${unlocked.length ? unlocked.slice(0, 20).join(', ') + (unlocked.length > 20 ? ' …' : '') : 'none – CAD is locked by default'}.
 

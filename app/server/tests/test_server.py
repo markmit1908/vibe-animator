@@ -23,3 +23,21 @@ def test_cad_files_are_served_from_the_vault(c, tmp_path):
     (tmp_path / "vault" / "CAD").mkdir(parents=True)
     (tmp_path / "vault" / "CAD" / "m.glb").write_bytes(b"glTF\x02\x00\x00\x00")
     assert c.get("/api/files/CAD/m.glb").content.startswith(b"glTF")
+
+
+def test_assist_proxy_requests_are_logged(c, tmp_path, monkeypatch):
+    # no key: the proxy answers at once (503); the log still gets its line, with the page's send id
+    for k in ("REFUELANIM_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY", "VITE_ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    (tmp_path / "vault").mkdir(parents=True, exist_ok=True)
+    r = c.post("/api/assist/proxy/v1/messages", json={"model": "x", "messages": []}, headers={"x-assist-send": "2026-11-27_10-00-00-abcd#1"})
+    log = tmp_path / "vault" / "Logs" / "assist" / "proxy.jsonl"
+    assert log.exists()
+    import json
+    rec = json.loads(log.read_text().splitlines()[-1])
+    assert rec["send"] == "2026-11-27_10-00-00-abcd#1" and rec["status"] == r.status_code and rec["outcome"] == "done"
+    assert rec["path"] == "/api/assist/proxy/v1/messages" and isinstance(rec["ms"], int)
+    assert "x-api-key" not in log.read_text() and "messages" not in rec
+    # other routes aren't logged
+    c.get("/api/files?folder=CAD")
+    assert len(log.read_text().splitlines()) == 1

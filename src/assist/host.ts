@@ -33,3 +33,16 @@ export interface AssistMount {
   send(text: string): void;
   dispose(): void;
 }
+
+// ---- stop-gaps for SolverKit's AssistPanel (solverkit-candidate) ----
+// The panel shows a turn's proposals without Accept / Reject until the turn ends, and Stop drops them. The app lets
+// a card be decided while the turn runs (applied at once) and puts a stopped turn's proposals back; this remembers
+// what was decided, by the proposal's content, so the panel's own decision later neither repeats nor loses it.
+
+/** A proposal's identity across the panel's copies of it (its content, without the decision). */
+export function proposalKey(p: Proposal): string {
+  const { state: _s, type: _t, review: _r, ...rest } = p as Proposal & { type?: unknown; review?: unknown };
+  return JSON.stringify(rest);
+}
+/** Proposals decided while their turn was still running: key → accepted? */
+export const decidedEarly = new Map<string, boolean>();

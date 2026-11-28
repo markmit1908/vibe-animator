@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from solverkit.api import ApiV1, HomeApp, PlatformApp, create_app
@@ -88,3 +90,57 @@ app = create_app(PlatformApp(
     api_v1=ApiV1(name="RefuelAnim", version=lambda: "0.1.0", store=store, schema=SCHEMA, settings_file=PATHS.settings_file),
     assist_key=lambda: os.environ.get("REFUELANIM_ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("VITE_ANTHROPIC_API_KEY"),
 ))
+
+
+class AssistProxyLog:
+    """Logs each request through the assist key proxy (/api/assist/proxy…) to <vault>/Logs/assist/proxy.jsonl: when it
+    started, the send it belongs to (x-assist-send, from the page's own log), the upstream status, time to first
+    byte, bytes streamed, duration and how it ended (done / client disconnected / error). Streams pass through
+    untouched; nothing of the request body or the key is written. Pure ASGI, so streaming isn't buffered."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http" or not scope.get("path", "").startswith("/api/assist/proxy"):
+            return await self.app(scope, receive, send)
+        t0 = time.monotonic()
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
+        rec: dict = {"t": datetime.now(timezone.utc).isoformat(), "send": headers.get("x-assist-send"), "method": scope.get("method"),
+                     "path": scope.get("path"), "status": None, "first_byte_ms": None, "bytes": 0, "chunks": 0, "outcome": None}
+
+        async def receive_logged():
+            msg = await receive()
+            if msg.get("type") == "http.disconnect" and rec["outcome"] is None:
+                rec["outcome"] = "client disconnected"
+            return msg
+
+        async def send_logged(msg):
+            if msg["type"] == "http.response.start":
+                rec["status"] = msg.get("status")
+            elif msg["type"] == "http.response.body":
+                body = msg.get("body", b"")
+                if body and rec["first_byte_ms"] is None:
+                    rec["first_byte_ms"] = round((time.monotonic() - t0) * 1000)
+                rec["bytes"] += len(body)
+                rec["chunks"] += 1
+            await send(msg)
+
+        try:
+            await self.app(scope, receive_logged, send_logged)
+            rec["outcome"] = rec["outcome"] or "done"
+        except BaseException as e:   # includes cancellation when the page goes away
+            rec["outcome"] = f"error: {type(e).__name__}: {e}"[:300]
+            raise
+        finally:
+            rec["ms"] = round((time.monotonic() - t0) * 1000)
+            try:
+                d = vault() / "Logs" / "assist"
+                d.mkdir(parents=True, exist_ok=True)
+                with (d / "proxy.jsonl").open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(rec) + "\n")
+            except OSError:
+                pass
+
+
+app.add_middleware(AssistProxyLog)

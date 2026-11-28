@@ -1015,6 +1015,97 @@ test("annotation callouts on drawing sheets: annotate on (SVG layer at the right
   expect(await ink("f")).toBeGreaterThan((await ink("g")) + 200);
 });
 
+// ---- the assistant against a fake API (the proxy route answered by the test) ----
+const sse = (events: any[]) => events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join("");
+const msgStart = { type: "message_start", message: { id: "msg_t", type: "message", role: "assistant", model: "claude-opus-5-5", content: [], stop_reason: null, usage: { input_tokens: 10, output_tokens: 1 } } };
+const textReply = (text: string) => sse([msgStart,
+  { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+  { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
+  { type: "content_block_stop", index: 0 },
+  { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } }, { type: "message_stop" }]);
+const toolReply = (name: string, input: any) => sse([msgStart,
+  { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_t", name, input: {} } },
+  { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: JSON.stringify(input) } },
+  { type: "content_block_stop", index: 0 },
+  { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 20 } }, { type: "message_stop" }]);
+
+test("assistant: a log per send in the vault; a dead stream ends the turn (logged); Accept now while it runs; Stop keeps the card; annotations on a proposed copy; get_part lists annotations", async ({ page }) => {
+  await page.goto("/");
+  const box = { id: "crate", kind: "box", size: [1, 1, 1], position: [0, 0.5, 0], rotation: [0, 0, 0], color: "#c8d0d9" };
+  const m = { name: "Assist log", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] }, shapes: [box],
+    script: { language: "anim", text: 'label "L"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {},
+    annotations: [{ id: "a1", title: "Crate", note: "", target: "shapes/crate", offset: [0, 1, 0], show: true }] };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  // the status check, then the API: answered per test step
+  await page.route("**/api/assist/status**", (r) => r.fulfill({ json: { enabled: true, model: "claude-opus-5-5" } }));
+  let answer: (route: any, n: number) => Promise<void> | void = (r) => r.fulfill({ status: 200, headers: { "content-type": "text/event-stream" }, body: textReply("Hello there.") });
+  let calls = 0;
+  await page.route("**/api/assist/proxy/**", (r) => answer(r, ++calls));
+  await open(page, "Assist log");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  await page.locator("#right [data-t=assist]").click();
+  const logs = async () => {
+    const r = await api(page).get(`/api/files?folder=${encodeURIComponent("Logs/assist/Assist log")}`);
+    if (!r.ok()) return [];
+    const j = await r.json(); const files = (Array.isArray(j) ? j : j.files ?? []).map((f: any) => f.path).filter((p: string) => p.endsWith(".jsonl")).sort();
+    return Promise.all(files.map(async (f: string) => (await (await api(page).get(`/api/files/${encodeURI(f)}`)).text()).trim().split("\n").map((l) => JSON.parse(l))));
+  };
+  const send = (text: string) => page.evaluate((t) => (window as any).__studio.assist.mount.send(t), text);
+  // 1) a plain reply: one log file, start → request → block → end
+  await send("Hi");
+  await expect(page.getByText("Hello there.")).toBeVisible({ timeout: 10_000 });
+  await expect.poll(async () => (await logs()).length, { timeout: 10_000 }).toBe(1);
+  let L = (await logs())[0];
+  expect(L.map((r: any) => r.ev)).toEqual(expect.arrayContaining(["start", "context", "send", "request", "first_event", "message_start", "block", "response", "end", "close"]));
+  expect(L[0]).toMatchObject({ ev: "start", prompt: "Hi", animation: "Assist log" });
+  expect(L.find((r: any) => r.ev === "block")).toMatchObject({ type: "text", content: "Hello there." });
+  expect(L.find((r: any) => r.ev === "end")).toMatchObject({ reason: "done", stop_reason: "end_turn" });
+  expect(JSON.stringify(L)).not.toMatch(/sk-ant|x-api-key/);
+  // 2) a dead stream: no answer at all → the turn ends after the stall timeout, with a message; the log says so
+  await page.evaluate(() => { (window as any).__assistStallMs = 1500; });
+  answer = () => {};                                                         // never answers
+  await send("Are you there?");
+  await expect(page.getByText(/The connection to the assistant stopped/)).toBeVisible({ timeout: 15_000 });
+  await expect.poll(async () => (await logs()).length, { timeout: 10_000 }).toBe(2);
+  L = (await logs())[1];
+  expect(L.find((r: any) => r.ev === "stall")).toBeTruthy();
+  expect(L.find((r: any) => r.ev === "end")).toMatchObject({ reason: "stall" });
+  // 3) a card while the turn runs: round 1 proposes a shape, round 2 hangs → Accept now applies it (once); Stop keeps it, accepted
+  await page.evaluate(() => { (window as any).__assistStallMs = 600_000; });
+  answer = (r, n) => n % 2 === 1
+    ? r.fulfill({ status: 200, headers: { "content-type": "text/event-stream" }, body: toolReply("propose_shapes", { summary: "A marker", changes: [{ action: "create", name: "marker", kind: "box", size: { width: 0.2, height: 0.2, depth: 0.2 }, position: [2, 0.1, 0] }] }) })
+    : undefined;                                                             // round 2: hangs
+  calls = 0;
+  await send("Add a marker");
+  const early = page.getByTestId("early-decide");
+  await expect(early).toBeVisible({ timeout: 10_000 });
+  await early.getByRole("button", { name: "Accept now" }).click();
+  await expect.poll(async () => (await model(page, a.id)).shapes?.map((x: any) => x.id)).toEqual(["crate", "marker"]);
+  await expect(early).toContainText("Accepted (applied)");
+  await page.getByRole("button", { name: /^Stop/ }).click();
+  const kept = page.getByTestId("proposal").last();
+  await expect(kept).toContainText("create marker");
+  await expect(kept).toContainText("Accepted");
+  await expect(page.getByText("(Stopped – the proposals made so far are kept.)")).toBeVisible();
+  expect((await model(page, a.id)).shapes.filter((x: any) => x.id === "marker").length).toBe(1);   // applied once
+  // 4) annotations on a copy proposed in the same conversation: accepted, attached once the copy exists
+  const tool = (name: string, input: any) => page.evaluate(async ({ name, input }) => {
+    const s = (window as any).__studio, t = s.tools.find((x: any) => x.name === name);
+    let p: any; const g = t.run(input); for (let r = await g.next(); !r.done; r = await g.next()) if (r.value.type === "proposal") { const { type, ...x } = r.value; p = x; }
+    return p;
+  }, { name, input });
+  const cp = await tool("propose_copies", { summary: "Two crates", changes: [{ action: "create", name: "crates", of: ["shapes/crate"], offset: [0, 0, 3], array: { type: "linear", count: 2, step: [2, 0, 0] } }] });
+  const an = await tool("propose_annotations", { summary: "Label them", changes: [{ action: "create", title: "Spare crates", target: "copies/crates" }] });
+  expect(an.check.ok).toBe(true);
+  expect(an.changes[0]).toMatchObject({ pending: true, target: "copies/crates" });
+  await page.evaluate((p) => (window as any).__studio.assist.host.accept(p), an);   // the annotation first…
+  await page.evaluate((p) => (window as any).__studio.assist.host.accept(p), cp);   // …then its copies
+  await expect(page.locator("#annotations .ann", { hasText: "Spare crates" })).toBeVisible();
+  // 5) get_part lists a part's annotations
+  const part = await page.evaluate(async () => { const t = (window as any).__studio.tools.find((x: any) => x.name === "get_part"); const g = t.run({ id: "shapes/crate" }); let r = await g.next(); while (!r.done) r = await g.next(); return r.value.content; });
+  expect(part).toContain('annotations: a1 "Crate"');
+});
+
 test("the tree keeps its open rows, selection and scroll when it rebuilds (making a group)", async ({ page }) => {
   await page.goto("/");
   const { readFileSync } = await import("node:fs");

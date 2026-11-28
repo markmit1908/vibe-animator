@@ -19,6 +19,8 @@ export interface ToolDeps {
   screenshot: (view: string, target?: string) => { data: string; width: number; height: number; note: string };
   /** Top-level roots of the assembly (CAD model wrappers / generated parts). */
   roots: () => THREE.Object3D[];
+  /** Annotations about a part (on it, a group or folder holding it, or one of its ancestors): "a1 \"Title\"". */
+  annotationsOn?: (id: string) => string[];
 }
 
 const idOf = (o: THREE.Object3D) => (o.userData.id ?? o.name) as string;
@@ -87,6 +89,7 @@ export function readTools(d: ToolDeps): AssistTool[] {
           b.isEmpty() ? 'bbox: (no geometry)' : `bbox: min ${v3(b.min)} max ${v3(b.max)} size ${v3(b.getSize(new THREE.Vector3()))} centre ${v3(b.getCenter(new THREE.Vector3()))}`,
           `world position: ${v3(o.getWorldPosition(new THREE.Vector3()))}`,
           `groups: ${groups.join(', ') || 'none'}`,
+          ...(d.annotationsOn ? [`annotations: ${d.annotationsOn(i.id).join(', ') || 'none'}`] : []),
           `children (${ch.length}):${ch.slice(0, 60).map((c) => `\n  ${idOf(c)}`).join('')}${ch.length > 60 ? `\n  … ${ch.length - 60} more` : ''}`,
         ].join('\n') });
       },
@@ -264,7 +267,17 @@ export interface ModelProposeDeps {
 }
 export interface AnnotationInfo { id: string; title: string; note: string; target: string; parts: string[]; point: number[] | null; show: boolean }
 /** One annotation change, checked (create: a new id is given at accept time). */
-export interface AnnotationChange { action: 'create' | 'update' | 'delete'; id?: string; title?: string; note?: string; target?: string; point?: number[]; show?: boolean; parts?: number }
+export interface AnnotationChange { action: 'create' | 'update' | 'delete'; id?: string; title?: string; note?: string; target?: string; point?: number[]; show?: boolean; parts?: number;
+  /** its target is a copy proposed in this conversation, not accepted yet (it resolves once the copy exists) */
+  pending?: boolean }
+
+/** Copies proposed in this session (not accepted yet): annotations may target them – they resolve once accepted. */
+const proposedCopies = new Set<string>();
+/** A target naming only proposed copies ("copies/X", "X", "copies/X-0"…, lists of them). */
+function onProposedCopies(target: string): boolean {
+  const items = target.split(',').map((x) => x.trim()).filter(Boolean);
+  return items.length > 0 && items.every((t) => { const n = t.replace(/^copies\//, '').split('/')[0]; return proposedCopies.has(n) || proposedCopies.has(n.replace(/-\d+$/, '')); });
+}
 
 function annotationChanges(input: any[], d: ModelProposeDeps): { changes: AnnotationChange[]; problems: string[] } {
   const problems: string[] = [], changes: AnnotationChange[] = [];
@@ -283,6 +296,7 @@ function annotationChanges(input: any[], d: ModelProposeDeps): { changes: Annota
       const t = String(c.target ?? '').trim();
       if (!t) { problems.push(`${ch.title || ch.id}: target – part ids / names, @group or folder:Path`); continue; }
       const res = d.annotationTarget!(t);
+      if ((res.unknown.length || !res.parts) && onProposedCopies(t)) { ch.target = t; ch.parts = 0; ch.pending = true; changes.push(ch); continue; }   // a copy proposed in this conversation: resolves once it's accepted
       if (res.unknown.length) problems.push(`${ch.title || ch.id}: unknown ${res.unknown.join(', ')}`);
       else if (!res.parts) problems.push(`${ch.title || ch.id}: "${t}" covers no parts`);
       ch.target = t; ch.parts = res.parts;
@@ -542,6 +556,7 @@ export function modelProposeTools(d: ModelProposeDeps): AssistTool[] {
       async *run(i: any) {
         const { changes, problems } = copyChanges(i.changes, d);
         const ok = !problems.length;
+        if (ok) for (const c of changes) if (c.def) proposedCopies.add(c.def.id);
         const label = ok ? `✓ ${changes.length} cop${changes.length > 1 ? 'ies' : 'y'}` : `${problems.length} problem${problems.length > 1 ? 's' : ''}`;
         yield { type: 'proposal', kind: 'copies', summary: i.summary, check: { ok, label }, changes, problems } as AssistEvent;
         return { content: ok ? `Proposed (${label}); waiting for the user.\n${changes.filter((c) => c.def).map((c) => `${c.def!.id}: sources' centre [${c.centre}] → [${c.def!.position}]`).join('\n')}` : `Problems:\n${problems.join('\n')}\nFix them and propose again.` };
@@ -559,7 +574,7 @@ export function modelProposeTools(d: ModelProposeDeps): AssistTool[] {
       },
     } satisfies AssistTool, {
       name: 'propose_annotations',
-      description: 'Propose annotations: a title and a note about parts (ids, names, globs), a @group, a list, or a folder ("folder:Path/Sub"), shown in the view as a card with a leader. create {title, note, target, point?} – point [x,y,z] is where the leader points (on the target; default its centre; read boxes with get_part); update {id, title?, note?, target?, point?, show?}; delete {id}. Ids come from get_annotations. Each becomes a card the user accepts.',
+      description: 'Propose annotations: a title and a note about parts (ids, names, globs), a @group, a list, or a folder ("folder:Path/Sub"), shown in the view as a card with a leader. create {title, note, target, point?} – point [x,y,z] is where the leader points (on the target; default its centre; read boxes with get_part). A target may be a copy proposed earlier in this conversation (\"copies/<name>\"; one annotation on an array copy covers all its members) – propose the copies and their annotations in the same turn; the annotations attach once the copies card is accepted (leave point out for those); update {id, title?, note?, target?, point?, show?}; delete {id}. Ids come from get_annotations. Each becomes a card the user accepts.',
       input_schema: {
         type: 'object',
         properties: {

@@ -236,7 +236,7 @@ Cut faces are capped (what's inside a cut part stays hidden), outlined and hatch
 ## AI assist (AI Assist tab)
 
 A chat with Claude (`claude-opus-5-5`). It sees the script (with step times and errors), the current time, selection,
-groups (and their folders), shapes, lock/hide state and the top of the assembly tree.
+groups (and their folders), shapes, copies, annotations, lock/hide state and the top of the assembly tree.
 
 **What it can look up:** search parts, read bounding boxes and positions, browse the tree, compile a draft script, and take a screenshot.
 
@@ -249,6 +249,9 @@ groups (and their folders), shapes, lock/hide state and the top of the assembly 
 
 The panel is SolverKit's Assist panel: Send/Stop (Esc gives the prompt back), Edit in place, Regenerate, Copy, **Clear**, and an **Accept all / Reject all** queue of waiting changes. Every code block in a reply has **Insert into script**; **Effort** sets how hard the model thinks (default *low*, the fastest; use medium/high for harder requests). Script changes are proposed as small edits (only the changed lines are sent), shown as a full diff.
 The conversation is saved in the animation file.
+While a reply runs, its cards already have **Accept now** / **Reject** (applied at once, not again at the end), and **Stop** keeps the cards made so far; a reply whose connection goes quiet for 2 minutes ends with a message, keeping its cards (these three work around SolverKit's panel – `solverkit-candidate`). It can propose linked copies and annotations on them in one turn (the annotations attach once the copies are accepted).
+
+**Logs:** every send writes `Logs/assist/<animation>/<date time>.jsonl` in the vault – the prompt, context, each request, every content block whole (thinking, text, tool input), tool calls and results with timings, proposals, usage, stop reasons, stalls, errors and aborts – flushed every 2 s while the reply runs, so a stuck one still leaves its log. The server appends each proxied API request to `Logs/assist/proxy.jsonl` (the send it belongs to, status, time to first byte, bytes, duration, outcome). Neither holds the API key.
 
 **Setup:** put the key in the repo's `.env` (git-ignored) as `ANTHROPIC_API_KEY=…` (or `VITE_ANTHROPIC_API_KEY`) and
 restart `npm run dev`. The server reads it and SolverKit's assist proxy adds it to requests; the key never reaches the page.

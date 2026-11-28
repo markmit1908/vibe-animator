@@ -1,13 +1,13 @@
 // The Studio's Assist tab: SolverKit's AssistPanel (composer, streaming, Stop/Edit/Regenerate/Copy/Clear, proposal
 // queue) over the studio's assist loop (AssistHost). Our proposal kinds (script edit, groups, part state, shapes, placement) are
 // registered here as SolverKit proposal kinds. The studio is plain DOM, so this mounts its own React root.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { AssistPanel, CheckBadge, TextDiffCard, proposalKinds, replyMarkdown } from "@solverkit/app";
 import type { AssistSeed, ChatMessage as SkChat, Proposal as SkProposal } from "@solverkit/app";
 import { Button } from "@solverkit/ui";
 import { Pause, Play } from "lucide-react";
-import type { AssistHost, AssistMount, Effort } from "../../src/assist/host";
+import { decidedEarly, proposalKey, type AssistHost, type AssistMount, type Effort } from "../../src/assist/host";
 import type { ChatMessage, Proposal } from "../../src/assist/loop";
 import { sizeKeys, type AnnotationChange, type CopyChange, type PlacementPlan, type ShapeChange } from "../../src/assist/tools";
 
@@ -45,11 +45,45 @@ function ChangeCard({ p, title, lines, onDecide }: { p: SkProposal; title: strin
 const short = (ids: string[]) => ids.slice(0, 4).map((x) => x.split("/").pop()).join(", ") + (ids.length > 4 ? " …" : "");
 const plural = (n: number) => `${n} part${n === 1 ? "" : "s"}`;
 
+// ---- deciding a card while its turn still runs (solverkit-candidate: SolverKit's AssistPanel gives pending cards no
+// onDecide) – Accept now applies it at once; when the turn ends the panel's own decision follows (not applied twice)
+let earlyAccept: (p: Proposal) => Promise<void> = async () => {};
+function EarlyDecide({ p, onDecide, children }: { p: SkProposal; onDecide?: (a: boolean) => void; children: ReactNode }) {
+  const key = proposalKey(p as unknown as Proposal);
+  const [early, setEarly] = useState<boolean | undefined>(decidedEarly.get(key));
+  const applied = useRef(false);
+  // the finished card: carry the early decision over to the panel (marks it; onAccept skips re-applying)
+  useEffect(() => {
+    const d = decidedEarly.get(key);
+    if (onDecide && !p.state && d !== undefined && !applied.current) { applied.current = true; onDecide(d); }
+  }, [onDecide, p.state, key]);
+  if (onDecide || p.state) return <>{children}</>;
+  return (
+    <div className="space-y-1" data-testid="early-decide">
+      {children}
+      <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
+        {early === undefined
+          ? <>
+              <span className="flex-1">The reply is still running –</span>
+              <Button size="xs" disabled={!p.check.ok} onClick={() => { decidedEarly.set(key, true); setEarly(true); void earlyAccept(p as unknown as Proposal); }}>Accept now</Button>
+              <Button size="xs" variant="outline" onClick={() => { decidedEarly.set(key, false); setEarly(false); }}>Reject</Button>
+            </>
+          : <span>{early ? "Accepted (applied)" : "Rejected"} – the reply is still running</span>}
+      </div>
+    </div>
+  );
+}
+/** Register a proposal kind whose cards can be decided while the turn runs. */
+function register(kind: { id: string; queueLabel: () => string; render: (p: SkProposal, v: View, onDecide?: (a: boolean) => void) => ReactNode }) {
+  proposalKinds.register({ ...kind, render: (p: SkProposal, v: View, onDecide?: (a: boolean) => void) =>
+    <EarlyDecide p={p} onDecide={onDecide}>{kind.render(p, v, onDecide)}</EarlyDecide> } as any);
+}
+
 let registered = false;
 function registerKinds() {
   if (registered) return;
   registered = true;
-  proposalKinds.register({
+  register({
     id: "script edit",
     queueLabel: () => "Script",
     render: (p: SkProposal, v: View, onDecide?: (a: boolean) => void) => {
@@ -73,7 +107,7 @@ function registerKinds() {
       );
     },
   });
-  proposalKinds.register({
+  register({
     id: "groups",
     queueLabel: () => "Groups",
     render: (p: SkProposal, _v: View, onDecide?: (a: boolean) => void) => (
@@ -81,7 +115,7 @@ function registerKinds() {
         <>{c.action} <b>@{c.name}</b>{c.ids.length ? ` – ${plural(c.ids.length)}: ${short(c.ids)}` : ""}</>)} />
     ),
   });
-  proposalKinds.register({
+  register({
     id: "shapes",
     queueLabel: () => "Shapes",
     render: (p: SkProposal, _v: View, onDecide?: (a: boolean) => void) => (
@@ -97,7 +131,7 @@ function registerKinds() {
       })} />
     ),
   });
-  proposalKinds.register({
+  register({
     id: "copies",
     queueLabel: () => "Copies",
     render: (p: SkProposal, _v: View, onDecide?: (a: boolean) => void) => (
@@ -113,7 +147,7 @@ function registerKinds() {
       })} />
     ),
   });
-  proposalKinds.register({
+  register({
     id: "annotations",
     queueLabel: () => "Annotations",
     render: (p: SkProposal, _v: View, onDecide?: (a: boolean) => void) => (
@@ -121,13 +155,13 @@ function registerKinds() {
         if (c.action === "delete") return <>delete <b>{c.id}</b></>;
         const pt = c.point ? ` at [${c.point.map((n) => +n.toFixed(2)).join(", ")}]` : "";
         return <>
-          {c.action} <b>{c.title ?? c.id}</b>{c.target ? <> on {c.target} ({plural(c.parts ?? 0)})</> : null}{pt}{c.show === false ? ", hidden" : ""}
+          {c.action} <b>{c.title ?? c.id}</b>{c.target ? <> on {c.target} {c.pending ? "(a proposed copy – attaches once it's accepted)" : `(${plural(c.parts ?? 0)})`}</> : null}{pt}{c.show === false ? ", hidden" : ""}
           {c.note ? <span className="text-muted-foreground">{` – ${c.note.length > 90 ? c.note.slice(0, 90) + "…" : c.note}`}</span> : null}
         </>;
       })} />
     ),
   });
-  proposalKinds.register({
+  register({
     id: "placement",
     queueLabel: () => "Position",
     render: (p: SkProposal, _v: View, onDecide?: (a: boolean) => void) => {
@@ -141,7 +175,7 @@ function registerKinds() {
       </>)} />;
     },
   });
-  proposalKinds.register({
+  register({
     id: "state",
     queueLabel: () => "Parts",
     render: (p: SkProposal, _v: View, onDecide?: (a: boolean) => void) => (
@@ -170,6 +204,7 @@ function AssistTab({ host, bus }: { host: AssistHost; bus: Bus }) {
   const [effort, setEffort] = useState<Effort>("low")   // fast by default; medium/high for harder requests;
   const [status, setStatus] = useState<{ ok: boolean; text: string }>({ ok: true, text: "checking…" });
   useEffect(() => {
+    earlyAccept = async (p) => { await host.accept(p); setTick((t) => t + 1); };
     bus.refresh = () => { setChat(host.chat()); setTick((t) => t + 1); };
     bus.send = (text) => setSeed({ id: Date.now(), text });
   }, [bus, host]);
@@ -198,7 +233,10 @@ function AssistTab({ host, bus }: { host: AssistHost; bus: Bus }) {
         onChat={(c) => { setChat(c as ChatMessage[]); host.onChat(c as ChatMessage[]); }}
         start={(history, signal) => ({ events: host.start(history as ChatMessage[], signal, effort) as AsyncIterable<never> })}
         view={view}
-        onAccept={(p) => { void Promise.resolve(host.accept(p as unknown as Proposal)).then(() => setTick((t) => t + 1)); }}
+        onAccept={(p) => {
+          if (decidedEarly.get(proposalKey(p as unknown as Proposal)) === true) return;   // applied already (Accept now)
+          void Promise.resolve(host.accept(p as unknown as Proposal)).then(() => setTick((t) => t + 1));
+        }}
         seed={seed}
         starters={STARTERS}
         intro="Ask about the model, or describe animation steps. Changes come as proposals for you to accept."
