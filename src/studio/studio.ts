@@ -1010,12 +1010,19 @@ function assistLog(history: ChatMessage[]) {
   const id = `${stamp}-${Math.random().toString(36).slice(2, 6)}`;
   const folder = `Logs/assist/${(model.name ?? 'animation').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'animation'}`;
   const lines: string[] = [];
-  let timer: number | undefined, closed = false, writing: Promise<unknown> = Promise.resolve();
+  let timer: number | undefined, closed = false, inFlight = false, dirty = false, failures = 0;
+  // one upload at a time, always the newest content; an upload that hangs is given up after 20 s (a stuck write
+  // mustn't freeze the log – it did on 2026-11-27, or the turn did: this tells them apart)
   const write = () => {
     timer = undefined;
     if (!io.files) return;
+    if (inFlight) { dirty = true; return; }
+    inFlight = true; dirty = false;
     const text = lines.join('\n') + '\n';
-    writing = writing.then(() => io.files!.upload(`${folder}/${id}.jsonl`, new File([text], `${id}.jsonl`, { type: 'application/x-ndjson' }), undefined, true)).catch((e) => console.warn('assist log', e));
+    const up = io.files.upload(`${folder}/${id}.jsonl`, new File([text], `${id}.jsonl`, { type: 'application/x-ndjson' }), undefined, true);
+    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('log upload took over 20 s')), 20_000));
+    Promise.race([up, timeout]).catch((e) => { failures++; console.warn('assist log', e); if (!closed) lines.push(JSON.stringify({ t: new Date().toISOString(), ms: Date.now() - t0, ev: 'log_write_failed', message: String(e?.message ?? e), failures })); dirty = true; })
+      .finally(() => { inFlight = false; if (dirty) write(); });
   };
   const rec = (r: Record<string, unknown>) => {
     if (closed) return;
@@ -1024,8 +1031,10 @@ function assistLog(history: ChatMessage[]) {
   };
   const last = [...history].reverse().find((m) => m.role === 'user');
   rec({ ev: 'start', send: id, animation: model.name, prompt: last?.content, history_messages: history.length, app: 'refuel-anim' });
-  return { id, rec, close() { rec({ ev: 'close' }); closed = true; clearTimeout(timer); write(); } };
+  return { id, rec, close() { if (closed) return; rec({ ev: 'close' }); closed = true; clearTimeout(timer); write(); } };
 }
+/** How long the panel may take to ask for the next event before the turn is closed from our side (tests lower it). */
+const PANEL_STUCK_MS = 60_000;
 const assistHost: AssistHost = {
   status: io.assist.status,
   chat: () => chat,
@@ -1036,30 +1045,65 @@ const assistHost: AssistHost = {
   },
   start: (history, signal, effort) => (async function* () {
     const log = assistLog(history);
-    const made: Proposal[] = [];       // this turn's proposals (put back if the user stops it)
+    const made: Proposal[] = [];       // this turn's proposals (put back if the turn is stopped)
+    let reply = '';                    // the reply text handed to the panel so far
+    // the handover to the panel: what it's waiting for, since when (heartbeat), and a turn the panel stopped reading
+    let phase: 'context' | 'api' | 'panel' = 'context', since = Date.now(), handed = 0, lastType = '', putBackDone = false;
+    const prompt = [...history].reverse().find((m) => m.role === 'user');
+    /** Put the turn's prompt / reply / cards back into the chat (after the panel's Stop dropped them). */
+    const putBack = (why: string, withPromptAndReply: boolean) => {
+      if (putBackDone || (!made.length && !withPromptAndReply)) return;
+      putBackDone = true;
+      log.rec({ ev: 'put_back', why, proposals: made.length, with_prompt_and_reply: withPromptAndReply });
+      setTimeout(() => {
+        const msgs: ChatMessage[] = made.map((p) => {
+          const dd = decidedEarly.get(proposalKey(p));
+          return { role: 'assistant', content: '', proposal: dd === undefined ? p : { ...p, state: dd ? 'accepted' : 'rejected' } };
+        });
+        const note = withPromptAndReply ? `${reply.trim()}\n\n(${why})`.trim() : `(${why})`;
+        if (msgs.length) msgs[msgs.length - 1].content = note; else msgs.push({ role: 'assistant', content: note });
+        const before = withPromptAndReply && prompt && chat[chat.length - 1] !== prompt ? [prompt] : [];
+        assistHost.onChat([...chat, ...before, ...msgs]);
+        assist?.refresh();
+      }, 100);
+    };
+    const stuckMs = (window as any).__assistPanelStuckMs ?? PANEL_STUCK_MS;
+    const beat = window.setInterval(() => {
+      const waited = Date.now() - since;
+      log.rec({ ev: 'heartbeat', waiting_for: phase, for_ms: waited, handed, last_type: lastType });
+      if (phase === 'panel' && waited > stuckMs && !signal.aborted) {
+        // the panel stopped reading the turn: close it ourselves – press its Stop, then put everything back
+        log.rec({ ev: 'panel_stuck', for_ms: waited, handed, last_type: lastType });
+        putBack('The reply had finished but the panel stopped reading it – closed and kept here.', true);
+        const stop = Array.from(assistEl.querySelectorAll<HTMLButtonElement>('button')).find((b) => /^stop/i.test((b.getAttribute('aria-label') ?? b.textContent ?? '').trim()));
+        stop?.click();
+        log.rec({ ev: 'panel_stop_pressed', found: !!stop });
+        clearInterval(beat); log.close();
+      }
+    }, 5000);
     try {
       const context: Anthropic.ContentBlockParam[] = [{ type: 'text', text: await assistContext() }];
       log.rec({ ev: 'context', content: context });
+      phase = 'api'; since = Date.now();
       for await (const ev of runAssist({ client, system: ASSIST_SYSTEM, history, context, tools, effort, signal, log: log.rec, sendId: log.id, stallMs: (window as any).__assistStallMs })) {
-        if (ev.type === 'error' || ev.type === 'done') log.rec({ ev: `panel_${ev.type}`, ...ev });
         if (ev.type === 'proposal') { const { type: _t, ...p } = ev; made.push(p as Proposal); }
-        yield ev;
+        if (ev.type === 'text') reply += ev.text;
+        if (ev.type !== 'text' && ev.type !== 'writing') log.rec({ ev: 'handover', seq: handed + 1, ...(ev.type === 'error' || ev.type === 'done' || ev.type === 'round' ? ev : { type: ev.type }) });
+        handed++; lastType = ev.type;
+        phase = 'panel'; since = Date.now();
+        yield ev;                                   // resumes when the panel asks for the next event
+        const waited = Date.now() - since;
+        if (waited > 1000) log.rec({ ev: 'panel_slow', type: ev.type, seq: handed, wait_ms: waited });
+        phase = 'api'; since = Date.now();
       }
     } catch (e: any) { log.rec({ ev: 'exception', message: String(e?.message ?? e), stack: e?.stack }); throw e; }
     finally {
+      clearInterval(beat);
       if (signal.aborted) log.rec({ ev: 'aborted', proposals_kept: made.length });
       log.close();
       // solverkit-candidate: the panel's Stop drops the turn's proposals (it restores the chat to before the prompt);
       // put them back once it has, with any decision made while the turn ran
-      if (signal.aborted && made.length) setTimeout(() => {
-        const msgs: ChatMessage[] = made.map((p) => {
-          const d = decidedEarly.get(proposalKey(p));
-          return { role: 'assistant', content: '', proposal: d === undefined ? p : { ...p, state: d ? 'accepted' : 'rejected' } };
-        });
-        msgs[msgs.length - 1].content = '(Stopped – the proposals made so far are kept.)';
-        assistHost.onChat([...chat, ...msgs]);
-        assist?.refresh();
-      }, 100);
+      if (signal.aborted) putBack('Stopped – the proposals made so far are kept.', false);
     }
   })(),
   script: () => scriptPanel?.text ?? '',

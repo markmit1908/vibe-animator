@@ -160,7 +160,7 @@ export async function* runAssist(o: AssistRun): AsyncGenerator<AssistEvent, void
         if (b) b.text += d.type === 'text_delta' ? d.text : d.type === 'thinking_delta' ? d.thinking : d.type === 'input_json_delta' ? d.partial_json : '';
       } else if (ev.type === 'content_block_stop') {
         const b = blocks.get(ev.index);
-        if (b) log({ ev: 'block', round, index: ev.index, type: b.type, name: b.name, ms: Math.round(now - b.started), chars: b.text.length, content: b.text });
+        if (b) log({ ev: 'block', round, index: ev.index, type: b.type, name: b.name, block_ms: Math.round(now - b.started), chars: b.text.length, content: b.text });
       }
       if (ev.type === 'content_block_start' && ev.content_block.type === 'tool_use') {
         const t = o.tools.find((x) => x.name === ev.content_block.name);
@@ -176,7 +176,7 @@ export async function* runAssist(o: AssistRun): AsyncGenerator<AssistEvent, void
     });
     const done = stream.finalMessage().then((m) => ({ m }), (e) => ({ e }));
     let finished: { m?: any; e?: any } | undefined;
-    done.then((r) => { finished = r; wake?.(); });
+    done.then((r) => { finished = r; log({ ev: 'final_message', round, ok: !('e' in r), queued: queue.length }); wake?.(); });
     // dead stream: nothing (not even a ping) for stallMs → abort this request and end the turn
     let stalled = false;
     const stallMs = o.stallMs ?? ASSIST_STALL_MS;
@@ -193,7 +193,7 @@ export async function* runAssist(o: AssistRun): AsyncGenerator<AssistEvent, void
         wake = undefined;
       }
     } finally { clearInterval(watch); }
-    log({ ev: 'response', round, ms: Math.round(performance.now() - rt0), pings, max_gap_ms: Math.round(maxGap),
+    log({ ev: 'response', round, round_ms: Math.round(performance.now() - rt0), pings, max_gap_ms: Math.round(maxGap),
       ...(finished.e ? { error: String(finished.e?.message ?? finished.e), status: finished.e?.status } : { stop_reason: finished.m?.stop_reason, usage: finished.m?.usage, model: finished.m?.model }) });
     if (finished.e) {
       const e = finished.e;
@@ -244,7 +244,7 @@ export async function* runAssist(o: AssistRun): AsyncGenerator<AssistEvent, void
           } catch (e: any) { r = { content: `Tool failed: ${e?.message ?? e}`, is_error: true }; }
         }
       }
-      log({ ev: 'tool_result', round, name: call.name, id: call.id, ms: Math.round(performance.now() - tt0), is_error: r.is_error,
+      log({ ev: 'tool_result', round, name: call.name, id: call.id, tool_ms: Math.round(performance.now() - tt0), is_error: r.is_error,
         content: typeof r.content === 'string' ? r.content : (r.content as any[]).map((b) => b.type === 'text' ? b.text : `[${b.type}]`).join('\n') });
       results.push({ type: 'tool_result', tool_use_id: call.id, content: r.content as any, is_error: r.is_error });
     }

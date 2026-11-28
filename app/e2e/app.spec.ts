@@ -1059,6 +1059,10 @@ test("assistant: a log per send in the vault; a dead stream ends the turn (logge
   expect(L.map((r: any) => r.ev)).toEqual(expect.arrayContaining(["start", "context", "send", "request", "first_event", "message_start", "block", "response", "end", "close"]));
   expect(L[0]).toMatchObject({ ev: "start", prompt: "Hi", animation: "Assist log" });
   expect(L.find((r: any) => r.ev === "block")).toMatchObject({ type: "text", content: "Hello there." });
+  expect(typeof L.find((r: any) => r.ev === "block").block_ms).toBe("number");             // its own field, not the time since the start
+  L.forEach((r: any, i: number) => { if (i) expect(r.ms).toBeGreaterThanOrEqual(L[i - 1].ms); });  // ms only grows
+  expect(L.find((r: any) => r.ev === "final_message")).toMatchObject({ round: 1, ok: true });
+  expect(L.filter((r: any) => r.ev === "handover").map((r: any) => r.type)).toEqual(["done"]);
   expect(L.find((r: any) => r.ev === "end")).toMatchObject({ reason: "done", stop_reason: "end_turn" });
   expect(JSON.stringify(L)).not.toMatch(/sk-ant|x-api-key/);
   // 2) a dead stream: no answer at all → the turn ends after the stall timeout, with a message; the log says so
@@ -1067,8 +1071,9 @@ test("assistant: a log per send in the vault; a dead stream ends the turn (logge
   await send("Are you there?");
   await expect(page.getByText(/The connection to the assistant stopped/)).toBeVisible({ timeout: 15_000 });
   await expect.poll(async () => (await logs()).length, { timeout: 10_000 }).toBe(2);
-  L = (await logs())[1];
-  expect(L.find((r: any) => r.ev === "stall")).toBeTruthy();
+  const byPrompt = async (p: string) => (await logs()).find((l: any[]) => l[0]?.prompt === p) ?? [];
+  await expect.poll(async () => (await byPrompt("Are you there?")).map((r: any) => r.ev), { timeout: 15_000 }).toEqual(expect.arrayContaining(["stall", "end", "close"]));
+  L = await byPrompt("Are you there?");
   expect(L.find((r: any) => r.ev === "end")).toMatchObject({ reason: "stall" });
   // 3) a card while the turn runs: round 1 proposes a shape, round 2 hangs → Accept now applies it (once); Stop keeps it, accepted
   await page.evaluate(() => { (window as any).__assistStallMs = 600_000; });
@@ -1101,7 +1106,22 @@ test("assistant: a log per send in the vault; a dead stream ends the turn (logge
   await page.evaluate((p) => (window as any).__studio.assist.host.accept(p), an);   // the annotation first…
   await page.evaluate((p) => (window as any).__studio.assist.host.accept(p), cp);   // …then its copies
   await expect(page.locator("#annotations .ann", { hasText: "Spare crates" })).toBeVisible();
-  // 5) get_part lists a part's annotations
+  // 5) a panel that stops reading the turn: closed from our side after the stuck time, prompt + reply + cards kept, logged
+  await page.evaluate(() => { (window as any).__assistPanelStuckMs = 1500; });
+  answer = (r) => r.fulfill({ status: 200, headers: { "content-type": "text/event-stream" }, body: textReply("All done here.") });
+  const nBefore = (await logs()).length;
+  await page.evaluate(async () => {
+    const s = (window as any).__studio, h = s.assist.host;
+    const history = [...h.chat(), { role: "user", content: "Reader stops" }];
+    const it = h.start(history, new AbortController().signal, "low")[Symbol.asyncIterator]();
+    await it.next();                                                         // read one event, then never again
+  });
+  await expect.poll(async () => (await logs()).length, { timeout: 15_000 }).toBe(nBefore + 1);
+  await expect.poll(async () => (await byPrompt("Reader stops")).map((r: any) => r.ev), { timeout: 20_000 }).toEqual(expect.arrayContaining(["heartbeat", "panel_stuck", "put_back", "close"]));
+  const chatNow = await page.evaluate(() => (window as any).__studio.assist.host.chat().slice(-2).map((m: any) => [m.role, m.content]));
+  expect(chatNow[0]).toEqual(["user", "Reader stops"]);
+  expect(chatNow[1][1]).toContain("the panel stopped reading it");
+  // 6) get_part lists a part's annotations
   const part = await page.evaluate(async () => { const t = (window as any).__studio.tools.find((x: any) => x.name === "get_part"); const g = t.run({ id: "shapes/crate" }); let r = await g.next(); while (!r.done) r = await g.next(); return r.value.content; });
   expect(part).toContain('annotations: a1 "Crate"');
 });
