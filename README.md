@@ -148,6 +148,7 @@ One step per line; steps run in sequence. `#` starts a comment. Durations: `2s`,
 | `label` | `label "Remove lid" "Unbolt and lift"` | Chapter title (+ subtitle); listed under Chapters. |
 | `cutaway` | `cutaway quarter` · `cutaway half -z at @reactor` · `cutaway half y at [0,8,0]` | `none`, `half`, `quarter`. Optionally the side removed (`x`, `-x`, `y` = top, `-y`, `z`, `-z`; a quarter takes two, e.g. `x -z`) and the centre: `at [x,y,z]` or `at TARGET` (its bounding-box centre). Defaults: `half x`, `quarter x z`, at the origin. Cuts CAD and shells. Cut faces are **capped** (inside faces drawn flat in the part's colour, darker; outlined in the line views); `nocap` leaves that cut open. `keep TARGETS` leaves those parts whole for this cut, as well as the animation's **Keep uncut** list (e.g. `cutaway half x keep @lid, machine`). |
 | `wait` | `wait 2s` | |
+| `annotate` | `annotate all off` · `annotate @pumps on 1s` · `annotate "Tank T-1" off` | Show / hide annotations (fading over the duration): by target (the same target, or any whose parts overlap it), by `"Title"`, by id (`a1`) or `all`. With no `annotate` steps, annotations show as set in the list. Start with `annotate all off` to reveal them one by one. |
 | `thumbnail` | `thumbnail outline` | This moment is the card image on Home (`shaded`, `outline`, `hidden`; default shaded). Wins over the Thumbnail button. |
 | `parallel { … }` | see below | The steps inside run together. |
 | `list` | `list @layer3 = F1-*-3, F1-14-3, @bolts` | A named list, usable as `@layer3` after this line. |

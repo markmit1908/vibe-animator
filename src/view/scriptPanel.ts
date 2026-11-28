@@ -171,7 +171,7 @@ export class ScriptPanel {
   private pick?: { from: number; to: number };
   private pickEl!: HTMLElement;
   /** Verbs whose next word is a target. */
-  private static TARGETED = /^(\s*)(?:move|rotate|hide|show|fade|highlight|color|outline|pivot|each|unblank|blank(?:\s+others)?|cutaway\s[^#]*?\bkeep|list\s+@[\w.-]+\s*=)\s+([^\s]*(?:,\s*[^\s]*)*)$/;
+  private static TARGETED = /^(\s*)(?:move|rotate|hide|show|fade|highlight|color|outline|pivot|each|annotate|unblank|blank(?:\s+others)?|cutaway\s[^#]*?\bkeep|list\s+@[\w.-]+\s*=)\s+([^\s]*(?:,\s*[^\s]*)*)$/;
 
   constructor(public right: HTMLElement, public name: string, text: string, public hooks: ScriptHooks) {
     const style = document.createElement('style'); style.textContent = CSS; document.head.appendChild(style);
@@ -256,6 +256,7 @@ export class ScriptPanel {
         ] };
       }
       if (/^\s*thumbnail\s+\w*$/.test(before)) return kw(from, ['shaded', 'outline', 'hidden'], 'view style');
+      if (/^\s*annotate\s+(?:"[^"]*"|\S+)\s+\w*$/.test(before)) return kw(from, ['on', 'off'], 'annotation');
       const cut = before.match(/^\s*cutaway\s+(\w*)$/);
       if (cut) return kw(from, ['none', 'half', 'quarter']);
       const cut2 = before.match(/^\s*cutaway\s+(half|quarter)\b(.*?)(\w*)$/);

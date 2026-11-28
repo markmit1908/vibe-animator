@@ -9,7 +9,9 @@ import type { BuiltScene } from '../scene/build';
  */
 
 export interface Tween { start: number; dur: number; apply: (p: number) => void }
-export interface StepEvent { t: number; kind: 'label' | 'cutaway' | 'thumbnail'; value: any; sub?: string }
+export interface StepEvent { t: number; kind: 'label' | 'cutaway' | 'thumbnail' | 'annotate'; value: any; sub?: string }
+/** An `annotate` step's selector: a quoted title, or a target text (part ids / @group / folder:Path / an annotation id / all). */
+export interface AnnotateSel { title?: string; target?: string }
 /** Script line -> when that step runs (for the editor's step gutter / run-to). */
 export interface LineTiming { start: number; end: number }
 export interface Timeline { tweens: Tween[]; steps: StepEvent[]; duration: number; camera: CameraRig; touched: string[]; lines: Map<number, LineTiming> }
@@ -50,13 +52,15 @@ function substitute(node: any, vars: Record<string, any>): any {
   return node;
 }
 
-const KINDS = ['list', 'each', 'pick', 'place', 'move', 'rotate', 'pivot', 'highlight', 'outline', 'fade', 'label', 'cutaway', 'thumbnail', 'camera', 'wait', 'parallel', 'repeat', 'call'];
+const KINDS = ['list', 'each', 'pick', 'place', 'move', 'rotate', 'pivot', 'highlight', 'outline', 'fade', 'label', 'cutaway', 'thumbnail', 'annotate', 'camera', 'wait', 'parallel', 'repeat', 'call'];
 
 export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]; look: number[] },
   isLocked: (o: THREE.Object3D) => boolean = () => false,
   groups: Record<string, string[]> = {},
   isRemoved: (o: THREE.Object3D) => boolean = () => false,
-  views: Record<string, { pos: number[]; look: number[] }> = {}): Timeline {
+  views: Record<string, { pos: number[]; look: number[] }> = {},
+  /** how many annotations an `annotate` selector matches (0 → an error on its line); absent: not checked */
+  annotationsMatch?: (sel: AnnotateSel) => number): Timeline {
   const view = (name: string, line?: number) => {
     const v = views[name];
     if (!v) throw new ScriptError(`Unknown view "${name}"${Object.keys(views).length ? ` – saved views: ${Object.keys(views).join(', ')}` : ' – save one with the Views tool'}`, line);
@@ -295,6 +299,13 @@ export function compile(script: any, scene: BuiltScene, camInit: { pos: number[]
       case 'thumbnail':
         steps.push({ t, kind: 'thumbnail', value: val });
         return t;
+
+      case 'annotate': {
+        const sel = val as AnnotateSel;
+        if (annotationsMatch && !annotationsMatch(sel)) throw new ScriptError(sel.title !== undefined ? `No annotation titled "${sel.title}"` : `No annotation on "${sel.target}" (annotate a target, "Title", an id like a1, or all)`, a.line);
+        steps.push({ t, kind: 'annotate', value: { ...sel, on: a.on !== false, dur: a.dur ?? 0 } });
+        return t + (a.dur ?? 0);
+      }
 
       case 'label':
         steps.push({ t, kind: 'label', value: val, sub: a.sub });

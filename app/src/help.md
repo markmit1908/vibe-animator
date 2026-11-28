@@ -105,6 +105,8 @@ cutaway half nocap                    # cut faces are capped (darker part colour
 cutaway half x keep @lid, machine     # …leaving these parts whole
 wait 2s
 thumbnail outline                     # this moment is the card image on Home
+annotate all off                      # annotations: hide all…
+annotate @pumps on 1s                 # …fade in those on the pumps (or "Title", an id like a1)
 parallel {
   move @lid by [4,0,0] 5s
   fade @bolts to 0 2s

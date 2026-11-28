@@ -18,7 +18,7 @@ One step per line; steps run in sequence. \`parallel { … }\` runs the steps in
 - each @layer3 stagger 0.2s order ring { … }             – loop: inside, $ is the item and $i its index (vectors may use $i: [0, 1 + $i*0.05, 0]);
                                                           item i starts at i × stagger (no stagger: one after another); the loop ends when the last item ends;
                                                           order x|-x|y|-y|z|-z|ring|-ring|random (default: as listed)
-- camera [x,y,z] look [x,y,z] 3s · camera <view> 3s (a named view the user saved; listed in the context) · label "Title" "subtitle" · thumbnail [shaded|outline|hidden] (this moment is the card image on Home) · cutaway none|half|quarter [sides: x|-x|y|-y|z|-z; half one, quarter two] [at [x,y,z] | at TARGET] [keep TARGETS] [nocap]  (cut faces are capped unless nocap; keep leaves those parts whole for this cut, on top of the saved keep-uncut list) · wait 2s
+- camera [x,y,z] look [x,y,z] 3s · camera <view> 3s (a named view the user saved; listed in the context) · label "Title" "subtitle" · thumbnail [shaded|outline|hidden] (this moment is the card image on Home) · annotate TARGET|"Title"|a1|all on|off [dur] (shows / hides annotations; by target: the same target or overlapping parts; with none, annotations show as set) · cutaway none|half|quarter [sides: x|-x|y|-y|z|-z; half one, quarter two] [at [x,y,z] | at TARGET] [keep TARGETS] [nocap]  (cut faces are capped unless nocap; keep leaves those parts whole for this cut, on top of the saved keep-uncut list) · wait 2s
 - # comments. Durations: 2s, 500ms. A step without a duration is instant.
 TARGET is one of:
 - a part id from the assembly tree (e.g. plant/model/root/V-010001-511_A/…)

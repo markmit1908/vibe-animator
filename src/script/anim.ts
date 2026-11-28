@@ -14,6 +14,7 @@
  *   cutaway half x keep @lid, machine            # …leaving these parts whole (plus the animation's saved keep-uncut list)
  *   outline @lid #00e5ff 12px 0.5s               # a glow around the parts (colour, width), seen through others; outline @lid off 1s
  *   thumbnail outline                              # this moment is the card image on Home (shaded|outline|hidden)
+ *   annotate @pumps on 0.5s · annotate "Tank T-1" off · annotate all off   # annotations (by target, title, id or all)
  *   blank ~V-005202-001 1s                        # ~text: every part whose name contains text
  *   blank @lid 1s · unblank @lid · unblank all · blank others @core 1s   # blank works on locked parts too
  *   highlight @spent #c0392b 1s                    # or palette name
@@ -64,7 +65,7 @@ export interface AnimStep {
 export interface ParseError { line: number; from: number; to: number; message: string; fix?: { label: string; run: () => void } }
 export interface AnimDoc { steps: AnimStep[]; errors: ParseError[] }
 
-const VERBS = ['list', 'each', 'move', 'rotate', 'blank', 'unblank', 'hide', 'show', 'fade', 'highlight', 'color', 'outline', 'label', 'camera', 'cutaway', 'wait', 'pivot', 'parallel', 'thumbnail'];
+const VERBS = ['list', 'each', 'move', 'rotate', 'blank', 'unblank', 'hide', 'show', 'fade', 'highlight', 'color', 'outline', 'label', 'camera', 'cutaway', 'wait', 'pivot', 'parallel', 'thumbnail', 'annotate'];
 export const ANIM_VERBS = VERBS;
 
 interface Tok { t: 'word' | 'str' | 'vec' | 'num' | 'dur' | 'color' | 'brace'; v: any; from: number; to: number }
@@ -252,6 +253,13 @@ export function parseAnim(text: string): AnimDoc {
         }
         tail(); break;
       }
+      case 'annotate': {                                // annotate TARGET|"Title"|all on|off [dur]
+        if (peek()?.t === 'str') step.text = [arg(toks[k++])!]; else target();
+        const x = peek();
+        if (x?.t === 'word' && (x.v === 'on' || x.v === 'off')) { k++; step.word = arg(x); }
+        else err((x ?? toks[toks.length - 1]).from, (x ?? toks[toks.length - 1]).to, 'Expected on or off');
+        tail(); break;
+      }
       case 'thumbnail': {                               // thumbnail [shaded|outline|hidden]: this moment is the card image
         if (peek()?.t === 'word') {
           const x = toks[k++];
@@ -328,6 +336,7 @@ export function toActions(steps: AnimStep[]): { camera?: any; timeline: any[] } 
       case 'label': return { ...base, label: s.text![0]?.value, sub: s.text![1]?.value };
       case 'camera': return { ...base, camera: s.word ? { view: s.word.value } : { pos: s.vec!.value, look: s.look?.value }, dur: s.dur?.value ?? 0 };
       case 'thumbnail': return { ...base, thumbnail: s.word?.value ?? 'shaded' };
+      case 'annotate': return { ...base, annotate: s.text?.[0] ? { title: s.text[0].value } : { target: s.target?.value ?? '' }, on: s.word?.value !== 'off', dur: s.dur?.value ?? 0 };
       case 'cutaway': return { ...base, cutaway: { mode: s.word!.value, sides: s.items?.value ? s.items.value.split(',') : undefined, at: s.vec?.value, of: tgt, nocap: !!s.flag, keep: s.keep?.value.split(',').map((x) => x.trim()).filter(Boolean) } };
       case 'wait': return { ...base, wait: s.dur!.value };
       case 'parallel': return { ...base, parallel: s.children!.map((c) => [conv(c)]) };

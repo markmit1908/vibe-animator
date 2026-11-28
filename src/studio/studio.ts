@@ -40,6 +40,7 @@ import { svgToPdf } from '../drawing/pdf';
 import { ProgressSplash } from '../view/progress';
 import { partsInRect } from '../view/boxSelect';
 import { AnnotationLayer, type Annotation } from '../view/annotations';
+import type { AnnotateSel } from '../timeline/compile';
 
 /** What the studio needs from its host app (SolverKit's editor). */
 export interface StudioIO {
@@ -284,6 +285,8 @@ await buildCopies();
 
 // ---------- annotations (model `annotations`): a title + note about parts / a group / a folder, with a leader to a picked point ----------
 let annotations: Annotation[] = clone(model.annotations ?? []);
+/** the script's annotate steps, resolved (`resolveAnnSteps`; declared here – the first compile runs before the annotation code below) */
+let annSteps: { t: number; dur: number; on: boolean; ids: Set<string> }[] = [];
 /** An annotation's target → parts: ids, @groups, "a, b" lists, or folder:Path (its groups, and its sub-folders', now). */
 function annotationParts(target: string): THREE.Object3D[] {
   const specs = target.startsWith('folder:')
@@ -452,7 +455,7 @@ function lockedIn(acts: ReturnType<typeof toActions>): string[] {
   const t = player?.time ?? 0;
   player?.seek(0);
   try {
-    compile(acts, built, acts.camera ?? defaultCam, (o) => { if (isLocked(o)) ids.add(idOfObj(o)); return false; }, store.groups, isRemoved, views);
+    compile(acts, built, acts.camera ?? defaultCam, (o) => { if (isLocked(o)) ids.add(idOfObj(o)); return false; }, store.groups, isRemoved, views, (sel) => annotationsFor(sel).length);
   } catch { /* other errors are reported elsewhere */ } finally { player?.seek(t); }
   return [...ids];
 }
@@ -463,10 +466,11 @@ function buildTimeline(o: { atStart?: boolean } = {}): boolean {
   // scene at its start pose and changed it (base colours); the old player's reset would undo that change
   if (!o.atStart) player?.seek(0);
   try {
-    const tl = compile(script, built, script.camera ?? defaultCam, (o) => isLocked(o) && !previewUnlocked.has(idOfObj(o)), store.groups, isRemoved, views);
+    const tl = compile(script, built, script.camera ?? defaultCam, (o) => isLocked(o) && !previewUnlocked.has(idOfObj(o)), store.groups, isRemoved, views, (sel) => annotationsFor(sel).length);
     player = new Player(built, tl);
     player.playing = playing;
     player.seek(Math.min(t, tl.duration));
+    resolveAnnSteps();
     subEl.textContent = '';
     scriptPanel?.setErrors(scriptErrors);
     onTimeline();
@@ -717,7 +721,7 @@ const toolDeps: ToolDeps = {
       const acts = toActions(doc.steps);
       // locked parts are reported, not errors: accepting a proposal unlocks them (every one the script animates)
       const locked = lockedIn(acts);
-      const tl = compile(acts, built, acts.camera ?? defaultCam, () => false, store.groups, isRemoved, views);
+      const tl = compile(acts, built, acts.camera ?? defaultCam, () => false, store.groups, isRemoved, views, (sel) => annotationsFor(sel).length);
       const src = text.split('\n');
       return { errors: [], locked, duration: tl.duration, steps: [...tl.lines].sort((a, b) => a[0] - b[0]).map(([line, x]) => ({ line, ...x, text: src[line - 1].trim() })) };
     } catch (e: any) {
@@ -1301,13 +1305,46 @@ const annLayer = new AnnotationLayer(renderer.domElement.parentElement!, () => c
   edited: (a, title, note) => { const x = annotations.find((y) => y.id === a.id); if (x) { x.title = title; x.note = note; saveAnnotations(); } },
   remove: (a) => { annotations = annotations.filter((y) => y.id !== a.id); saveAnnotations(); toast('Annotation deleted (⌘Z brings it back)'); },
   picked: (a) => { const objs = annotationParts(a.target); if (objs.length) tree.selectObjects(objs); refreshAnnList(); },
+  opacity: (a) => annOpacity(a),
 });
 annLayer.set(annotations);
+/** The annotations an `annotate` step selects: "Title", an id, `all`, the same target text, or any whose parts overlap the target's. */
+function annotationsFor(sel: AnnotateSel): Annotation[] {
+  if (sel.title !== undefined) return annotations.filter((a) => a.title === sel.title);
+  const t = (sel.target ?? '').trim();
+  if (t === 'all') return annotations;
+  const norm = (x: string) => x.split(',').map((y) => y.trim()).filter(Boolean).sort().join(',');
+  const direct = annotations.filter((a) => a.id === t || norm(a.target) === norm(t));
+  if (direct.length) return direct;
+  const mine = annotationParts(t);
+  if (!mine.length) return [];
+  const within = (o: THREE.Object3D, set: Set<THREE.Object3D>) => { for (let p: THREE.Object3D | null = o; p; p = p.parent) if (set.has(p)) return true; return false; };
+  const set = new Set(mine);
+  return annotations.filter((a) => annotationParts(a.target).some((o) => within(o, set) || mine.some((m) => within(m, new Set([o])))));
+}
+/** The script's annotate steps, resolved (after each compile, and when annotations change). */
+function resolveAnnSteps() {
+  annSteps = player.tl.steps.filter((x) => x.kind === 'annotate').sort((x, y) => x.t - y.t)
+    .map((x) => ({ t: x.t, dur: x.value.dur ?? 0, on: x.value.on !== false, ids: new Set(annotationsFor(x.value).map((a) => a.id)) }));
+}
+/** An annotation's opacity at the playhead: its steps in order (fading over each one's duration); 1 when none apply. */
+function annOpacity(a: Annotation): number {
+  if (!annSteps.length) return 1;
+  let v = 1;
+  const now = player.time;
+  for (const st of annSteps) {
+    if (!st.ids.has(a.id) || st.t > now + 1e-9) continue;
+    const to = st.on ? 1 : 0;
+    v = st.dur > 0 && now < st.t + st.dur ? v + (to - v) * ((now - st.t) / st.dur) : to;
+  }
+  return v;
+}
 /** Annotations changed: save (undoable), cards, list. */
 function saveAnnotations() {
   edit({ annotations: clone(annotations) });
   annLayer.set(annotations);
   refreshAnnList();
+  resolveAnnSteps();
 }
 /** Point the camera at objects from the current direction (fit their box). */
 function frameObjects(objs: THREE.Object3D[]) {

@@ -27,6 +27,8 @@ export interface AnnotationHooks {
   remove(a: Annotation): void;
   /** a card was clicked: select what it's about */
   picked(a: Annotation): void;
+  /** 0..1 from the animation script's annotate steps (1 when the script has none) */
+  opacity?(a: Annotation): number;
 }
 
 const CSS = `
@@ -174,19 +176,22 @@ export class AnnotationLayer {
     let lines = '';
     for (const a of this.list) {
       const c = this.cards.get(a.id)!;
-      const anc = this.visible && a.show ? this.hooks.anchor(a) : null;
+      const op = this.editing === a.id || this.selected === a.id ? 1 : this.hooks.opacity?.(a) ?? 1;
+      const anc = this.visible && a.show && op > 0.001 ? this.hooks.anchor(a) : null;
       if (!anc || (!anc.visible && this.editing !== a.id && this.selected !== a.id)) { c.style.display = 'none'; continue; }
       const p = scr(anc.p), l = scr(anc.p.clone().add(new THREE.Vector3(...a.offset)));
       if (p.behind || l.behind) { c.style.display = 'none'; continue; }
       c.style.display = '';
+      c.style.opacity = op < 1 ? op.toFixed(3) : '';
       c.classList.toggle('dim', !anc.visible);
       const w = c.offsetWidth, h = c.offsetHeight;
       c.style.left = `${l.x - w / 2}px`; c.style.top = `${l.y - h / 2}px`;
       // the leader stops at the card's edge
       const dx = p.x - l.x, dy = p.y - l.y, k = Math.min(Math.abs(dx) > 1e-6 ? (w / 2) / Math.abs(dx) : Infinity, Math.abs(dy) > 1e-6 ? (h / 2) / Math.abs(dy) : Infinity, 1);
       const ex = l.x + dx * k, ey = l.y + dy * k;
-      if (Math.hypot(p.x - ex, p.y - ey) > 2) lines += `<line x1="${ex.toFixed(1)}" y1="${ey.toFixed(1)}" x2="${p.x.toFixed(1)}" y2="${p.y.toFixed(1)}"/>`;
-      lines += `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.5"/>`;
+      const o = op < 1 ? ` opacity="${op.toFixed(3)}"` : '';
+      if (Math.hypot(p.x - ex, p.y - ey) > 2) lines += `<line${o} x1="${ex.toFixed(1)}" y1="${ey.toFixed(1)}" x2="${p.x.toFixed(1)}" y2="${p.y.toFixed(1)}"/>`;
+      lines += `<circle${o} cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="2.5"/>`;
     }
     this.svg.innerHTML = lines;
   }

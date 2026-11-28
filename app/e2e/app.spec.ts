@@ -944,6 +944,43 @@ test("annotations list + assistant: filter, click to select and frame, show / de
   await expect.poll(async () => (await model(page, a.id)).annotations.length).toBe(1);
 });
 
+test("annotate steps in the script: all off, fade one group's on by target, another by title; errors for unknown ones", async ({ page }) => {
+  await page.goto("/");
+  const box = (id: string, x: number) => ({ id, kind: "box", size: [1, 1, 1], position: [x, 0.5, 0], rotation: [0, 0, 0], color: "#c8d0d9" });
+  const anns = [
+    { id: "a1", title: "Tank T-1", note: "", target: "shapes/tank", offset: [0, 0.8, 0], show: true },
+    { id: "a2", title: "Pumps", note: "", target: "@pumps", offset: [0, 0.8, 0], show: true },
+  ];
+  const text = ['label "A"', "annotate all off", "wait 1s", "annotate @pumps on 1s", "wait 1s", 'annotate "Tank T-1" on'].join("\n");
+  const m = { name: "Annotate steps", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] }, shapes: [box("tank", 0), box("pump", 2)],
+    script: { language: "anim", text }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } },
+    groups: { pumps: ["shapes/pump"] }, annotations: anns };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Annotate steps");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  await page.evaluate(() => { const s = (window as any).__studio; s.ui.followCamera = false; s.camera.position.set(1, 1.5, 7); s.controls.target.set(1, 0.5, 0); s.controls.update(); });
+  const at = async (t: number) => {
+    await page.evaluate((t) => { const s = (window as any).__studio; s.player.playing = false; s.player.seek(t); }, t);
+    await page.waitForTimeout(150);
+    return page.evaluate(() => Object.fromEntries([...document.querySelectorAll("#annotations .ann")].map((c: any) =>
+      [c.textContent.trim(), c.style.display === "none" ? 0 : c.style.opacity === "" ? 1 : +(+c.style.opacity).toFixed(2)])));
+  };
+  expect(await at(0.5)).toEqual({ "Tank T-1": 0, Pumps: 0 });
+  const mid = await at(1.5);
+  expect(mid["Tank T-1"]).toBe(0); expect(mid.Pumps).toBeGreaterThan(0.3); expect(mid.Pumps).toBeLessThan(0.7);   // fading in
+  expect(await at(2.5)).toEqual({ "Tank T-1": 0, Pumps: 1 });
+  expect(await at(3.2)).toEqual({ "Tank T-1": 1, Pumps: 1 });
+  // errors on the step's line
+  await page.evaluate(() => (window as any).__studio.scriptPanel.setText('label "A"\nannotate "Nope" on'));
+  await expect(page.locator("#script .status")).toHaveText("1 error");
+  await page.evaluate(() => (window as any).__studio.scriptPanel.setText('label "A"\nannotate @pumps 1s'));
+  await expect(page.locator("#script .status")).toHaveText("1 error");
+  // no annotate steps: the cards are back as configured
+  await page.evaluate(() => (window as any).__studio.scriptPanel.setText('label "A"'));
+  await expect(page.locator("#script .status")).toHaveText("✓");
+  expect(await at(0)).toEqual({ "Tank T-1": 1, Pumps: 1 });
+});
+
 test("the tree keeps its open rows, selection and scroll when it rebuilds (making a group)", async ({ page }) => {
   await page.goto("/");
   const { readFileSync } = await import("node:fs");
