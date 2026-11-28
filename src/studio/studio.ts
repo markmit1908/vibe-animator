@@ -34,7 +34,7 @@ import { parseAnim, toActions, type ParseError } from '../script/anim';
 import { ScriptError } from '../timeline/compile';
 import { applyEdit, cameraLine, type Edit, type Probe } from '../script/edit';
 import { makeDrawing, withDefaults, DEFAULT_DRAW, type DrawingOptions, type SheetSpec } from '../drawing';
-import { PAPER, layout, fitScale, titleBox } from '../drawing/svg';
+import { PAPER, layout, fitScale, titleBox, CALLOUT, calloutBox, leaderEnd } from '../drawing/svg';
 import { DrawPanel } from '../view/drawPanel';
 import { svgToPdf } from '../drawing/pdf';
 import { ProgressSplash } from '../view/progress';
@@ -1775,10 +1775,29 @@ async function withSheet<T>(name: string, body: (c: SheetCtx) => T): Promise<{ o
     player.seek(Math.min(t0, player.duration)); player.playing = playing;
   }
 }
+/** A sheet's annotation callouts (world): shown, on at the sheet's time (script steps), the point visible at its pose and not left out by hide / only. */
+function sheetCallouts({ spec, hide, only }: SheetCtx): { point: number[]; label: number[]; title: string }[] {
+  if (!spec.annotate) return [];
+  const under = (o: THREE.Object3D, set: THREE.Object3D[]) => { for (let p: THREE.Object3D | null = o; p; p = p.parent) if (set.includes(p)) return true; return false; };
+  built.root.updateMatrixWorld(true); refreshWorld(built.root);
+  const out: { point: number[]; label: number[]; title: string }[] = [];
+  for (const a of annotations) {
+    if (!a.show || annOpacity(a) < 0.5 || !a.title) continue;
+    const anc = annLayerAnchor(a);
+    if (!anc || !anc.visible) continue;
+    const at = a.anchor ? built.registry.get(a.anchor.part) : undefined;
+    const parts = at ? [at] : annotationParts(a.target);
+    if (parts.every((o) => under(o, hide) || (only && !under(o, only)))) continue;
+    out.push({ point: anc.p.toArray(), label: anc.p.clone().add(new THREE.Vector3(...a.offset)).toArray(), title: a.title });
+  }
+  return out;
+}
 /** The exact drawing of a sheet (SVG). */
 async function runSheet(name: string): Promise<{ svg: string; stats: Record<string, number>; errors: { line: number; message: string }[]; spec: SheetSpec } | null> {
-  const r = await withSheet(name, ({ spec, cam, hide, only, err }) => {
+  const r = await withSheet(name, (ctx) => {
+    const { spec, cam, hide, only, err } = ctx;
     const d = makeDrawing(scene3, cam, {
+      worldCallouts: sheetCallouts(ctx),
       exclude: [gizmo.getHelper(), ...hide], only, title: spec.title ?? spec.name,
       paper: (spec.paper ?? 'A3') as DrawingOptions['paper'], portrait: spec.portrait, scale: spec.scale || undefined, hidden: spec.hidden, creaseDeg: spec.crease, hatch: spec.hatch, fill: spec.fill,
       titleBlock: spec.titleblock === false ? false : { title: spec.title ?? spec.name },
@@ -1791,8 +1810,10 @@ async function runSheet(name: string): Promise<{ svg: string; stats: Record<stri
 /** The fast raster sheet (PNG): one GPU frame in the sheet's style, on the paper with border and title box. */
 async function renderSheetPng(name: string): Promise<{ png: Blob; canvas: HTMLCanvasElement; ms: number; errors: { line: number; message: string }[]; spec: SheetSpec } | null> {
   const t0 = performance.now();
-  const r = await withSheet(name, ({ spec, cam, hide, only, err }) => {
+  const r = await withSheet(name, (ctx) => {
+    const { spec, cam, hide, only, err } = ctx;
     const style = spec.style ?? 'outline';
+    const callouts = sheetCallouts(ctx);
     // the parts drawn: visible meshes under `only` (or everything), minus `hide` and the gizmo
     const skip = new Set<THREE.Object3D>([gizmo.getHelper(), ...hide]);
     const drawn: THREE.Mesh[] = [];
@@ -1854,6 +1875,17 @@ async function renderSheetPng(name: string): Promise<{ png: Blob; canvas: HTMLCa
       const g = canvas.getContext('2d')!;
       g.fillStyle = '#fff'; g.fillRect(0, 0, canvas.width, canvas.height);
       g.drawImage(renderer.domElement, Math.round(area.x0 * px), Math.round(area.y0 * px));
+      // annotation callouts, as in the SVG (mm on the paper, through the sheet's camera)
+      const mm = (p: number[]) => { const v = new THREE.Vector3(...p).project(o); return [area.x0 + (v.x + 1) / 2 * aw, area.y0 + (1 - v.y) / 2 * ah]; };
+      for (const c of callouts) {
+        const [ax, ay] = mm(c.point), [lx, ly] = mm(c.label), b = calloutBox(c.title, lx, ly, area), [ex, ey] = leaderEnd(ax, ay, b);
+        g.strokeStyle = '#000'; g.lineWidth = CALLOUT.line * px; g.fillStyle = '#000';
+        g.beginPath(); g.moveTo(ax * px, ay * px); g.lineTo(ex * px, ey * px); g.stroke();
+        g.beginPath(); g.arc(ax * px, ay * px, CALLOUT.dot * px, 0, Math.PI * 2); g.fill();
+        g.fillStyle = '#fff'; g.fillRect(b.x * px, b.y * px, b.w * px, b.h * px); g.strokeRect(b.x * px, b.y * px, b.w * px, b.h * px);
+        g.fillStyle = '#000'; g.font = `${CALLOUT.size * px}px Helvetica, Arial, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+        g.fillText(c.title, b.cx * px, (b.cy + CALLOUT.size * 0.35) * px);
+      }
       // border and title box, as in the SVG
       g.strokeStyle = '#000'; g.lineWidth = 0.7 * px; g.strokeRect(margin / 2 * px, margin / 2 * px, (W - margin) * px, (H - margin) * px);
       if (spec.titleblock !== false) {

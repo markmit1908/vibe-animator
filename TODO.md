@@ -23,7 +23,7 @@
 - [x] Print-quality SVG line drawings: the Illustration tab's `.draw` sheets – exact hidden lines from the geometry, ISO layers and weights in mm, paper and scale, section caps + hatching, title block, fills, SVG + vector PDF, headless batch (`npm run drawings`)
 - [ ] Drawings, next: perspective sheets; frame a sheet on chosen parts (`frame @x`) and detail views; hatch patterns per material; several views on one sheet; dimensions / labels / leaders; drawing in a Web Worker (the plant takes 5–8 s on the main thread); the assistant proposing `.draw` edits
 - [ ] Better transparency: making a part see-through to show what's inside is messy today, with every surface stacking up. Needs a clearer model: only the outer shell drawn see-through (depth pre-pass / first surface only), sorting or order-independent transparency, optional ghosted edges-only or x-ray styles, and contents drawn solid behind it
-- [ ] Annotations: ~~3D labels + leaders, edit, layer toggle (phase 1)~~, ~~list panel + CSV + assistant (2)~~, ~~script `annotate` steps (3)~~; next: drawing-sheet callouts (4); later: dimensions
+- [ ] Annotations: ~~3D labels + leaders, edit, layer toggle (phase 1)~~, ~~list panel + CSV + assistant (2)~~, ~~script `annotate` steps (3)~~, ~~drawing-sheet callouts (4)~~; later: dimensions, callouts that avoid each other on sheets, copies carrying their sources' annotations
 - [ ] Tools bar: taller than short windows now – make it scroll or fold into sections
 - [ ] Video export (frame-by-frame render of the timeline)
 - [ ] PNG export: option for a solid background / chosen size

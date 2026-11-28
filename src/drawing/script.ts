@@ -20,6 +20,7 @@
  *   file core-section-A          export file name (no extension): <file>.svg / .pdf; default: the sheet name
  *   style outline            fast preview PNG: shaded | outline | hidden (the SVG is always lines)
  *   dpi 150                   preview PNG resolution
+ *   annotate on               annotation callouts (leader + title) on the sheet (off by default)
  *   Section hatching: `hatch 2.5` (spacing in paper mm) or `hatch off`. `titleblock off` leaves the title box out.
  */
 import type { Cut, CutMode, CutSide } from '../view/cutaway';
@@ -42,6 +43,8 @@ export interface SheetSpec {
   style?: 'shaded' | 'outline' | 'hidden';
   /** the preview PNG's resolution */
   dpi?: number;
+  /** annotation callouts on the sheet */
+  annotate?: boolean;
   /** export file name without extension (default: the sheet name) */
   file?: string;
   titleblock?: boolean;
@@ -55,14 +58,14 @@ export interface SheetSpec {
 export interface DrawError { line: number; message: string }
 export interface DrawScript { defaults: SheetSpec; sheets: SheetSpec[]; errors: DrawError[] }
 
-export const DRAW_KEYWORDS = ['sheet', 'paper', 'scale', 'hidden', 'crease', 'hatch', 'fill', 'style', 'dpi', 'title', 'file', 'titleblock', 'view', 'snapshot', 'at', 'cut', 'hide', 'only'];
+export const DRAW_KEYWORDS = ['sheet', 'paper', 'scale', 'hidden', 'crease', 'hatch', 'fill', 'style', 'dpi', 'annotate', 'title', 'file', 'titleblock', 'view', 'snapshot', 'at', 'cut', 'hide', 'only'];
 export const PAPERS = ['A0', 'A1', 'A2', 'A3', 'A4'];
 const SIDES = ['x', '-x', 'y', '-y', 'z', '-z'];
 
 /** Settings a sheet takes from the defaults when it doesn't set them. */
 export function withDefaults(s: SheetSpec, d: SheetSpec): SheetSpec {
   const out = { ...s };
-  for (const k of ['paper', 'portrait', 'scale', 'hidden', 'crease', 'hatch', 'fill', 'style', 'dpi', 'titleblock', 'view', 'snapshot', 'at', 'cut'] as const) if (out[k] === undefined) (out as any)[k] = d[k];
+  for (const k of ['paper', 'portrait', 'scale', 'hidden', 'crease', 'hatch', 'fill', 'style', 'dpi', 'annotate', 'titleblock', 'view', 'snapshot', 'at', 'cut'] as const) if (out[k] === undefined) (out as any)[k] = d[k];
   out.hide = [...d.hide, ...s.hide];
   out.only = s.only.length ? s.only : d.only;
   return out;
@@ -108,6 +111,9 @@ export function parseDraw(text: string): DrawScript {
       case 'fill':
         if (rest !== 'off' && rest !== 'tint' && rest !== 'colour' && rest !== 'color') { err('fill: off, tint (part colours, lightened) or colour'); return; }
         cur.fill = rest === 'color' ? 'colour' : rest as 'off' | 'tint' | 'colour'; return;
+      case 'annotate':
+        if (rest !== 'on' && rest !== 'off') { err('annotate: on or off (annotation callouts on the sheet)'); return; }
+        cur.annotate = rest === 'on'; return;
       case 'style':
         if (rest !== 'shaded' && rest !== 'outline' && rest !== 'hidden') { err('style: shaded, outline or hidden (the preview PNG)'); return; }
         cur.style = rest; return;

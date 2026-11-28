@@ -210,6 +210,7 @@ crease 30                 # crease angle, degrees
 hatch 2.5                 # section hatch spacing in mm, or: hatch off
 fill tint                 # part fills under the lines: off | tint (lightened) | colour
 style outline             # the fast PNG: shaded | outline | hidden (the SVG is always lines)
+annotate on               # annotation callouts: leader + boxed title (layer `annotations`); off by default
 dpi 150                   # the PNG's resolution
 
 sheet core-section "Core – half section"

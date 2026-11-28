@@ -23,6 +23,23 @@ export interface SheetOptions {
   title?: string;
   /** the title block (bottom right); false = none */
   titleBlock?: TitleBlock | false;
+  /** annotation callouts, in drawing units (as the segments): the point, where the label sits, its title */
+  callouts?: Callout[];
+}
+export interface Callout { a: [number, number]; l: [number, number]; title: string }
+/** Callout text size and box padding, paper mm (ISO 3.5 mm lettering). */
+export const CALLOUT = { size: 3.5, pad: 1.4, line: 0.25, dot: 0.6 };
+/** A callout's label box (mm), centred on (x, y), kept inside the area. */
+export function calloutBox(title: string, x: number, y: number, area: { x0: number; y0: number; x1: number; y1: number }) {
+  const w = Math.max(8, title.length * CALLOUT.size * 0.55) + CALLOUT.pad * 2, h = CALLOUT.size + CALLOUT.pad * 2;
+  const cx = Math.min(Math.max(x, area.x0 + w / 2), area.x1 - w / 2), cy = Math.min(Math.max(y, area.y0 + h / 2), area.y1 - h / 2);
+  return { x: cx - w / 2, y: cy - h / 2, w, h, cx, cy };
+}
+/** Where a leader from (px, py) meets the edge of a box centred on (cx, cy). */
+export function leaderEnd(px: number, py: number, b: { cx: number; cy: number; w: number; h: number }): [number, number] {
+  const dx = px - b.cx, dy = py - b.cy;
+  const k = Math.min(Math.abs(dx) > 1e-9 ? (b.w / 2) / Math.abs(dx) : Infinity, Math.abs(dy) > 1e-9 ? (b.h / 2) / Math.abs(dy) : Infinity, 1);
+  return [b.cx + dx * k, b.cy + dy * k];
 }
 /** The title box: a plain rectangle, lower right, with a short description (and the scale, small). */
 export interface TitleBlock { title?: string }
@@ -136,6 +153,20 @@ export function toSvg(r: HlrResult, opt: SheetOptions = {}): { svg: string; scal
   const fillSvg = r.fills?.length ? `<g id="fill" inkscape:groupmode="layer" inkscape:label="fill" stroke="none" fill-rule="evenodd">${r.fills.map((fl) =>
     `<path fill="${fl.color}" d="${fl.loops.map((l) => 'M' + l.map((p) => `${f(X(p[0]))} ${f(Y(p[1]))}`).join('L') + 'Z').join('')}"/>`).join('')}</g>` : '';
   if (r.fills) stats.fills = r.fills.reduce((n, fl) => n + fl.loops.length, 0);
+  // annotation callouts: a dot at the point, a leader to the label's box, the title
+  let callSvg = '';
+  if (opt.callouts?.length) {
+    const C = CALLOUT;
+    const parts = opt.callouts.map((c) => {
+      const px = X(c.a[0]), py = Y(c.a[1]), b = calloutBox(c.title, X(c.l[0]), Y(c.l[1]), area);
+      const [ex, ey] = leaderEnd(px, py, b);
+      const lead = Math.hypot(px - ex, py - ey) > 0.5 ? `<path d="M${f(px)} ${f(py)}L${f(ex)} ${f(ey)}" fill="none" stroke="#000" stroke-width="${C.line}"/>` : '';
+      return `${lead}<circle cx="${f(px)}" cy="${f(py)}" r="${C.dot}" fill="#000"/><rect x="${f(b.x)}" y="${f(b.y)}" width="${f(b.w)}" height="${f(b.h)}" fill="#fff" stroke="#000" stroke-width="${C.line}"/>`
+        + `<text x="${f(b.cx)}" y="${f(b.cy + C.size * 0.35)}" font-size="${C.size}" text-anchor="middle">${esc(c.title)}</text>`;
+    });
+    callSvg = `<g id="annotations" inkscape:groupmode="layer" inkscape:label="annotations" font-family="Helvetica, Arial, sans-serif">${parts.join('')}</g>`;
+    stats.annotations = opt.callouts.length;
+  }
   const border = opt.border !== false ? `<g id="border" inkscape:groupmode="layer" inkscape:label="border" fill="none" stroke="#000" stroke-width="0.7"><rect x="${m / 2}" y="${m / 2}" width="${W - m}" height="${H - m}"/></g>` : '';
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="${W}mm" height="${H}mm" viewBox="0 0 ${W} ${H}">
@@ -143,6 +174,7 @@ export function toSvg(r: HlrResult, opt: SheetOptions = {}): { svg: string; scal
 <rect id="paper" width="${W}" height="${H}" fill="#fff"/>
 ${fillSvg}
 ${groups.join('\n')}
+${callSvg}
 ${border}
 ${tb ? titleBlockSvg(W, H, m, opt.titleBlock || {}, scale ? `1:${scale}` : 'NTS') : ''}
 </svg>

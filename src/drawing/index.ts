@@ -9,6 +9,7 @@ import type { Edge3 } from './edges';
 
 export { collectMeshes, hiddenLines, toSvg };
 export interface DrawingOptions extends HlrOptions, SheetOptions { /** orthographic along the camera's view direction (default true) */ ortho?: boolean; exclude?: THREE.Object3D[]; only?: THREE.Object3D[];
+  /** annotation callouts in world space: the point, where the label sits, its title */ worldCallouts?: { point: number[]; label: number[]; title: string }[];
   /** section hatch spacing on the paper, mm (0 = no hatching; default 2.5) */ hatch?: number;
   /** part fills under the lines: the part colours, or tinted halfway to white */ fill?: 'off' | 'tint' | 'colour';
   /** fill tracing resolution on the paper, mm per pixel (default 0.25) */ fillMm?: number }
@@ -73,7 +74,11 @@ export function makeDrawing(root: THREE.Object3D, camera: THREE.Camera, opt: Dra
   }
   const r = hiddenLines(soups, cam, { ...opt, extra, fillBuffer: fill });
   const t1 = performance.now();
-  const out = toSvg(r, opt);
+  // callouts: world → drawing units, as hlr maps the edges (NDC × half the frame)
+  const [fx, fy] = [r.frame[2], r.frame[3]];
+  const toDraw = (p: number[]): [number, number] => { const v = new THREE.Vector3(...p).project(cam); return [v.x * fx, v.y * fy]; };
+  const callouts = opt.worldCallouts?.map((c) => ({ a: toDraw(c.point), l: toDraw(c.label), title: c.title }));
+  const out = toSvg(r, { ...opt, ...(callouts ? { callouts } : {}) });
   const stats = { msCollect: tc, ...r.stats, msSvg: performance.now() - t1, ...Object.fromEntries(Object.entries(out.stats).map(([k, v]) => [`lines.${k}`, v])), bytes: out.svg.length };
   return { svg: out.svg, scale: out.scale, stats };
 }

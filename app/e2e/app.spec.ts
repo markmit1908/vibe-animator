@@ -981,6 +981,40 @@ test("annotate steps in the script: all off, fade one group's on by target, anot
   expect(await at(0)).toEqual({ "Tank T-1": 1, Pumps: 1 });
 });
 
+test("annotation callouts on drawing sheets: annotate on (SVG layer at the right point, PNG), off, hidden parts dropped", async ({ page }) => {
+  await page.goto("/");
+  const box = { id: "tank", kind: "box", size: [1, 1, 1], position: [0, 0.5, 0], rotation: [0, 0, 0], color: "#c8d0d9" };
+  const anns = [{ id: "a1", title: "Tank T-1", note: "", target: "shapes/tank", anchor: { part: "shapes/tank", local: [0, 0.5, 0] }, offset: [1, 0.6, 0], show: true }];
+  const draw = ["paper A4", "scale 1:20", "annotate on", "", "sheet f", "  view front", "", "sheet g", "  view front", "  annotate off", "", "sheet h", "  view front", "  hide tank"].join("\n");
+  const m = { name: "Callouts", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] }, shapes: [box],
+    script: { language: "anim", text: 'label "C"' }, drawings: { language: "draw", text: draw },
+    snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {}, annotations: anns };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Callouts");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  await page.locator("#right [data-t=illustration]").click();
+  await expect(page.locator("#illustration .draw-script .st")).toHaveText("✓ 3 sheets");
+  const run = (n: string) => page.evaluate(async (n) => { const r = await (window as any).__studio.runSheet(n); return { svg: r.svg as string, errors: r.errors, stats: r.stats }; }, n);
+  const f = await run("f");
+  expect(f.errors).toEqual([]);
+  expect(f.svg).toContain('id="annotations"');
+  expect(f.svg).toContain(">Tank T-1</text>");
+  expect(f.stats["lines.annotations"]).toBe(1);
+  // the dot sits on the top edge of the box's outline, in the middle
+  const d = f.svg.match(/id="outline"[^>]*><path d="([^"]+)"/)![1];
+  const pts = [...d.matchAll(/[ML](-?[\d.]+) (-?[\d.]+)/g)].map((x) => [+x[1], +x[2]]);
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+  const dot = f.svg.match(/id="annotations".*?<circle cx="([\d.]+)" cy="([\d.]+)"/)!;
+  expect(+dot[1]).toBeCloseTo((Math.min(...xs) + Math.max(...xs)) / 2, 1);
+  expect(+dot[2]).toBeCloseTo(Math.min(...ys), 1);                                   // the top (y down on paper)
+  expect((await run("g")).svg).not.toContain('id="annotations"');
+  expect((await run("h")).svg).not.toContain('id="annotations"');                   // its part is hidden on this sheet
+  // the fast PNG draws it too: more dark pixels than the sheet without
+  const ink = (n: string) => page.evaluate(async (n) => { const r = await (window as any).__studio.renderSheetPng(n); const g = r.canvas.getContext("2d"); const d = g.getImageData(0, 0, r.canvas.width, r.canvas.height).data;
+    let k = 0; for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] < 200) k++; return k; }, n);
+  expect(await ink("f")).toBeGreaterThan((await ink("g")) + 200);
+});
+
 test("the tree keeps its open rows, selection and scroll when it rebuilds (making a group)", async ({ page }) => {
   await page.goto("/");
   const { readFileSync } = await import("node:fs");
