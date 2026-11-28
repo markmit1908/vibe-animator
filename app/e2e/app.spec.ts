@@ -882,7 +882,7 @@ test("annotations: annotate a shape at a picked point (title + note), drag, edit
   await expect(page.locator("#annotations .ann")).toHaveCount(2);
 });
 
-test("annotations list + assistant: filter, click to select and frame, show / delete, CSV; get_annotations, propose_annotations (create at a point, update, delete)", async ({ page }) => {
+test("annotations in the tree Notes column + assistant: per-row note, checkbox, part hidden, edit / add / delete by typing, CSV; get_annotations, propose_annotations (create at a point, update, delete)", async ({ page }) => {
   await page.goto("/");
   const box = (id: string, x: number) => ({ id, kind: "box", size: [1, 1, 1], position: [x, 0.5, 0], rotation: [0, 0, 0], color: "#c8d0d9" });
   const anns = [
@@ -895,52 +895,58 @@ test("annotations list + assistant: filter, click to select and frame, show / de
   const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
   await open(page, "Notes list");
   await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
-  // the column beside the tree: closed at first, ✎ opens it (the tools bar moves over), remembered
-  const list = page.locator("#notes");
-  await expect(list).toBeHidden();
+  // the Notes column of the tree: off at first, ✎ Notes in the tree's header turns it on (the tools bar moves over)
+  const rowOf = (label: string) => page.locator("#tree .row").filter({ has: page.locator(".lbl", { hasText: new RegExp(`^${label}$`) }) });
+  await expect(page.locator("#tree .note")).toHaveCount(0);
   const tb0 = (await page.locator("#toolsbar").boundingBox())!.x;
-  await page.locator("#notes-toggle").click();
-  await expect(list).toBeVisible();
-  expect((await page.locator("#toolsbar").boundingBox())!.x).toBeCloseTo(tb0 + 260, 0);
-  await expect(list.locator(".row")).toHaveCount(2);
-  // filter
-  await list.locator(".top input").fill("spare");
-  await expect(list.locator(".row")).toHaveCount(1);
-  await expect(list.locator(".row")).toContainText("Pumps");
-  await list.locator(".top input").fill("");
-  // click a row: selects its parts and frames them
-  const tgt0 = await page.evaluate(() => (window as any).__studio.controls.target.toArray());
-  await list.locator(".row", { hasText: "Pumps" }).locator(".tx").click();
-  await expect.poll(() => page.evaluate(() => (window as any).__studio.tree.selectedSpecs())).toEqual(["shapes/pump"]);
-  await expect.poll(() => page.evaluate(() => +(window as any).__studio.controls.target.x.toFixed(2))).toBe(6);
-  expect(tgt0[0]).not.toBe(6);
-  // hide one from the list, then delete it
-  await list.locator(".row", { hasText: "Pumps" }).locator("[data-r=show]").uncheck();
+  await page.locator("#tree [data-a=notes]").click();
+  await expect(page.locator("#tree")).toHaveClass(/notes/);
+  expect((await page.locator("#toolsbar").boundingBox())!.x).toBeCloseTo(tb0 + 220, 0);
+  // each row shows the annotation made on exactly it
+  await expect(rowOf("tank").locator(".note .nt")).toHaveText("Tank T-1");
+  await expect(rowOf("pumps").locator(".note .nt")).toHaveText("Pumps");
+  await expect(rowOf("pump").locator(".note .add")).toHaveCount(1);              // no note of its own: "+ note"
+  // the checkbox shows / hides that one (saved)
+  await rowOf("pumps").locator(".note input[type=checkbox]").uncheck();
   await expect.poll(async () => (await model(page, a.id)).annotations.find((x: any) => x.id === "a2").show).toBe(false);
   await expect(page.locator("#annotations .ann", { hasText: "Pumps" })).toBeHidden();
-  await list.locator(".row", { hasText: "Pumps" }).locator("[data-r=show]").check();
+  await rowOf("pumps").locator(".note input[type=checkbox]").check();
   await expect(page.locator("#annotations .ann", { hasText: "Pumps" })).toBeVisible();
   // a hidden part hides its annotation whatever the box says – even selected – and the row says so; the box keeps its state
   await page.evaluate(() => { const s = (window as any).__studio; s.tree.selectId("shapes/pump"); s.tree.toggleHiddenSelected(); s.tree.selectId("shapes/pump"); });
   await expect(page.locator("#annotations .ann", { hasText: "Pumps" })).toBeHidden();
-  await expect(list.locator(".row", { hasText: "Pumps" })).toContainText("part hidden", { timeout: 5_000 });
-  await expect(list.locator(".row", { hasText: "Pumps" }).locator("[data-r=show]")).toBeChecked();
+  await expect(rowOf("pumps").locator(".note")).toContainText("part hidden");
+  await expect(rowOf("pumps").locator(".note input[type=checkbox]")).toBeChecked();
   await page.evaluate(() => { const s = (window as any).__studio; s.tree.selectId("shapes/pump"); s.tree.toggleHiddenSelected(); });
   await expect(page.locator("#annotations .ann", { hasText: "Pumps" })).toBeVisible();
-  // "Show" in the column's header hides them all
-  await list.locator("[data-a=all]").uncheck();
+  // "Show notes in the view" (the bar under the header) hides them all
+  await page.locator("#tree .notesbar input[type=checkbox]").uncheck();
   await expect(page.locator("#annotations .ann").first()).toBeHidden();
-  await list.locator("[data-a=all]").check();
-  await list.locator(".row", { hasText: "Pumps" }).locator("[data-r=show]").uncheck();
-  await expect.poll(async () => (await model(page, a.id)).annotations.find((x: any) => x.id === "a2").show).toBe(false);
-  await list.locator(".row", { hasText: "Pumps" }).locator("[data-r=del]").click();
-  await expect.poll(async () => (await model(page, a.id)).annotations.length).toBe(1);
-  // CSV
+  await page.locator("#tree .notesbar input[type=checkbox]").check();
+  await expect(page.locator("#annotations .ann").first()).toBeVisible();
+  // type in a cell: rename the tank's note, add one on the pump, clear the pumps one (deletes it)
+  await rowOf("tank").locator(".note .nt").click();
+  await page.locator("#tree .noteedit").fill("Tank T-2"); await page.locator("#tree .noteedit").press("Enter");
+  await expect.poll(async () => (await model(page, a.id)).annotations.find((x: any) => x.id === "a1").title).toBe("Tank T-2");
+  await rowOf("pump").locator(".note .add").click();
+  await page.locator("#tree .noteedit").fill("Pump P-0"); await page.locator("#tree .noteedit").press("Enter");
+  await expect.poll(async () => (await model(page, a.id)).annotations.find((x: any) => x.title === "Pump P-0")?.target).toBe("shapes/pump");
+  await expect(page.locator("#annotations .ann", { hasText: "Pump P-0" })).toBeVisible();
+  await rowOf("pumps").locator(".note .nt").click();
+  await page.locator("#tree .noteedit").fill(""); await page.locator("#tree .noteedit").press("Enter");
+  await expect.poll(async () => (await model(page, a.id)).annotations.map((x: any) => x.title).sort()).toEqual(["Pump P-0", "Tank T-2"]);
+  // CSV from the bar
   const dl = page.waitForEvent("download");
-  await list.locator("[data-a=csv]").click();
+  await page.locator("#tree .notesbar [data-a=csv]").click();
   const csv = readFileSync(await (await dl).path()!, "utf8");
   expect(csv.split("\n")[0]).toBe("id,title,note,target,parts,x,y,z");
-  expect(csv).toContain('"a1","Tank T-1","Feed water","shapes/tank","shapes/tank",0.0000,0.5000,0.5000');
+  expect(csv).toContain('"a1","Tank T-2","Feed water","shapes/tank","shapes/tank",0.0000,0.5000,0.5000');
+  // back to what the assistant part below expects (a1 "Tank T-1", nothing else)
+  await rowOf("tank").locator(".note .nt").click();
+  await page.locator("#tree .noteedit").fill("Tank T-1"); await page.locator("#tree .noteedit").press("Enter");
+  await rowOf("pump").locator(".note .nt").click();
+  await page.locator("#tree .noteedit").fill(""); await page.locator("#tree .noteedit").press("Enter");
+  await expect.poll(async () => (await model(page, a.id)).annotations.map((x: any) => x.title)).toEqual(["Tank T-1"]);
   // the assistant: read, then propose
   const tool = (name: string, input: any) => page.evaluate(async ({ name, input }) => {
     const s = (window as any).__studio, t = s.tools.find((x: any) => x.name === name);
@@ -959,11 +965,11 @@ test("annotations list + assistant: filter, click to select and frame, show / de
   await expect.poll(async () => (await model(page, a.id)).annotations.map((x: any) => x.title).sort()).toEqual(["Pump P-1", "Tank T-1 (feed)"]);
   const made = (await model(page, a.id)).annotations.find((x: any) => x.title === "Pump P-1");
   expect(made).toMatchObject({ target: "@pumps", note: "Duty", anchor: { part: "shapes/pump", local: [0, 0.5, 0] } });   // top face of the pump, in its frame
-  await expect(list.locator(".row")).toHaveCount(2);
-  // the column stays open after a reload
+  await expect(page.locator("#tree .note .nt")).toHaveCount(2);
+  // the Notes column stays on after a reload
   await page.reload();
   await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
-  await expect(list).toBeVisible();
+  await expect(page.locator("#tree")).toHaveClass(/notes/);
   const del = await tool("propose_annotations", { summary: "Remove it", changes: [{ action: "delete", id: made.id }] });
   await page.evaluate((p) => (window as any).__studio.assist.host.accept(p), del.p);
   await expect.poll(async () => (await model(page, a.id)).annotations.length).toBe(1);

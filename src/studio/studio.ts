@@ -1245,6 +1245,16 @@ const tree = new TreePanel(built, scene3, {
   removedIds: () => [...removed],
   onRemove: (ids, rem) => setRemoved(ids, rem),
   onAnnotate: () => startAnnotate(),
+  notes: {
+    of: (key) => notesOf(key),
+    title: (key, id, title) => noteTitle(key, id, title),
+    show: (id, on) => { const x = annotations.find((y) => y.id === id); if (x) { x.show = on; saveAnnotations(); } },
+    open: (id) => { const x = annotations.find((y) => y.id === id); if (!x) return; if (!x.show) { x.show = true; saveAnnotations(); } const objs = annotationParts(x.target); if (objs.length) frameObjects(objs); annLayer.select(id); annLayer.edit(id); },
+    visible: () => annLayer?.visible ?? true,
+    setVisible: (on) => { annLayer.visible = ui.annotations = on; },
+    csv: () => exportAnnotationsCsv(),
+    toggled: (on) => host().classList.toggle('notes-open', on),
+  },
   onFolderRename: (from, to) => {
     let n = 0;
     for (const a of annotations) if (a.target.startsWith('folder:')) { const f = a.target.slice(7); if (f === from || f.startsWith(`${from}/`)) { a.target = `folder:${to}${f.slice(from.length)}`; n++; } }
@@ -1493,96 +1503,38 @@ function frameObjects(objs: THREE.Object3D[]) {
   camera.position.copy(c).addScaledVector(dir, r / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.15);
   controls.target.copy(c); controls.update();
 }
-// ---- the Annotations column (right of the assembly tree, shown / hidden by ✎): show all, filter, a checkbox per
-// annotation (its own show / hide – a hidden part hides its annotation whatever the box says), click = select + frame,
-// edit / delete, CSV ----
-const notesEl = document.createElement('div'); notesEl.id = 'notes';
-host().appendChild(notesEl);
-const notesToggle = document.createElement('button'); notesToggle.id = 'notes-toggle'; notesToggle.textContent = '✎';
-notesToggle.title = 'Annotations: show / hide the list beside the tree';
-host().appendChild(notesToggle);
-let notesOpen = false;
-try { notesOpen = localStorage.getItem('refuel.notesOpen') === '1'; } catch { /* private mode */ }
-function setNotesOpen(on: boolean) {
-  notesOpen = on;
-  host().classList.toggle('notes-open', on);
-  notesToggle.classList.toggle('on', on);
-  try { localStorage.setItem('refuel.notesOpen', on ? '1' : '0'); } catch { /* private mode */ }
-  if (on) refreshAnnList();
-}
-notesToggle.onclick = () => setNotesOpen(!notesOpen);
+// ---- the Notes column of the assembly tree (tree.ts `notes` hooks, ✎ Notes in its header): while it's open the tree
+// is wider, so what sits right of the tree moves over ----
 {
   const css = document.createElement('style');
-  const W = 260;
-  css.textContent = `#notes { position: absolute; top: 0; bottom: 0; left: 340px; width: ${W}px; z-index: 8; display: none; flex-direction: column;
-  background: rgba(14,17,21,.95); color: #d7dde4; font: 12px system-ui; border-right: 1px solid #222a33; }
-.studio-root.notes-open #notes { display: flex; } .studio-root.tree-collapsed #notes { left: 0; }
-#notes header { display: flex; align-items: center; gap: 6px; padding: 8px; border-bottom: 1px solid #222a33; } #notes header b { flex: 1; font-size: 13px; }
-#notes header label { display: flex; align-items: center; gap: 4px; color: #9aa6b2; font-size: 11.5px; cursor: pointer; }
-#notes .top { display: flex; gap: 4px; padding: 6px 8px; } #notes .top input { flex: 1; min-width: 0; background: #0a0c0f; color: inherit; border: 1px solid #2b3540; border-radius: 4px; padding: 3px 6px; font: 12px system-ui; }
-#notes button { background: #1b222a; color: #d7dde4; border: 1px solid #2b3540; border-radius: 4px; padding: 1px 6px; cursor: pointer; font: 11.5px system-ui; }
-#notes .list { flex: 1; overflow: auto; padding: 0 4px 8px; }
-#notes .row { display: flex; align-items: flex-start; gap: 5px; padding: 4px; border-radius: 4px; cursor: pointer; }
-#notes .row:hover { background: #1b222a; } #notes .row.sel { background: #3a2a14; } #notes .row.off .tx, #notes .row.gone .tx { opacity: .5; }
-#notes .row input[type=checkbox] { margin: 2px 0 0; flex: none; cursor: pointer; }
-#notes .row .tx { flex: 1; min-width: 0; } #notes .row .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#notes .row .s { color: #7b8794; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } #notes .row .gone-note { color: #c9a45c; }
-#notes .row button { padding: 0 4px; } #notes .none { color: #7b8794; font-size: 11.5px; padding: 6px 8px; }
-#notes-toggle { position: absolute; top: 40px; left: 348px; z-index: 6; background: #222a33; color: #d7dde4; border: 1px solid #2b3540; border-radius: 4px; padding: 3px 8px; cursor: pointer; }
-#notes-toggle.on { border-color: #f2b705; color: #f2b705; }
-.studio-root.tree-collapsed #notes-toggle { left: 8px; }
-.studio-root.notes-open #notes-toggle, .studio-root.notes-open #tree-toggle { left: ${348 + W}px; } .studio-root.notes-open.tree-collapsed #notes-toggle, .studio-root.notes-open.tree-collapsed #tree-toggle { left: ${8 + W}px; }
-.studio-root.notes-open #toolsbar { left: ${352 + W}px; } .studio-root.notes-open.tree-collapsed #toolsbar { left: ${12 + W}px; }
+  const W = 220;
+  css.textContent = `.studio-root.notes-open #tree-toggle { left: ${348 + W}px; } .studio-root.notes-open.tree-collapsed #tree-toggle { left: 8px; }
+.studio-root.notes-open:not(.tree-collapsed) #toolsbar { left: ${352 + W}px; }
 .studio-root.notes-open:not(.tree-collapsed) #chapter, .studio-root.notes-open:not(.tree-collapsed) #sub { left: ${392 + W}px !important; }
 .studio-root.notes-open:not(.tree-collapsed) #clock { left: ${364 + W}px !important; }
-.studio-root.notes-open.tree-collapsed #chapter, .studio-root.notes-open.tree-collapsed #sub { left: ${52 + W}px !important; } .studio-root.notes-open.tree-collapsed #clock { left: ${24 + W}px !important; }
-.studio-root.notes-open #viewbar { max-width: calc(100% - ${396 + W}px - 476px); } .studio-root.notes-open.tree-collapsed #viewbar { max-width: calc(100% - ${56 + W}px - 476px); }
-.studio-root.notes-open.right-collapsed #viewbar { max-width: calc(100% - ${396 + W}px - 56px); } .studio-root.notes-open.right-collapsed.tree-collapsed #viewbar { max-width: calc(100% - ${112 + W}px); }`;
+.studio-root.notes-open:not(.tree-collapsed) #viewbar { max-width: calc(100% - ${396 + W}px - 476px); }
+.studio-root.notes-open.right-collapsed:not(.tree-collapsed) #viewbar { max-width: calc(100% - ${396 + W}px - 56px); }`;
   document.head.appendChild(css);
 }
-/** The left edge of the 3D view's free area (tree + this column) – the axis triad sits there. */
-const leftPanelsW = () => (host().classList.contains('tree-collapsed') ? 12 : 352) + (notesOpen ? 260 : 0);
-let annFilter = '', annSig = '';
-/** Which annotations' parts are hidden now (a change re-renders the list). */
-const annHiddenNow = () => annotations.map((a) => (annLayerAnchor(a)?.visible === false || !annLayerAnchor(a) ? 1 : 0)).join('');
-function refreshAnnList() {
-  if (!notesOpen) return;
-  annSig = annHiddenNow();
-  const f = annFilter.toLowerCase();
-  const list = annotations.filter((a) => !f || [a.title, a.note, a.target].some((x) => x.toLowerCase().includes(f)));
-  const e = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-  const tgt = (t: string) => t.startsWith('folder:') ? `▤ ${t.slice(7)}` : t.split(',').map((x) => x.trim().split('/').pop()).join(', ');
-  notesEl.innerHTML = `<header><b>Annotations</b><label title="Show or hide every annotation in the view"><input type="checkbox" data-a="all" ${annLayer.visible ? 'checked' : ''}> Show</label></header>
-    <div class="top"><input placeholder="Filter" value="${e(annFilter)}"><button data-a="csv" title="Export every annotation with its parts as CSV">⤓ CSV</button></div>
-    <div class="list">${list.length ? list.map((a) => {
-      const anc = annLayerAnchor(a), gone = !anc || !anc.visible;
-      return `<div class="row${annLayer.selected === a.id ? ' sel' : ''}${a.show ? '' : ' off'}${gone ? ' gone' : ''}" data-id="${a.id}">
-        <input type="checkbox" data-r="show" ${a.show ? 'checked' : ''} title="Show this annotation (a hidden part hides it anyway)">
-        <div class="tx"><div class="t">${e(a.title || '(untitled)')}</div>
-        <div class="s">${gone ? '<span class="gone-note">part hidden · </span>' : ''}${e(tgt(a.target))}${a.note ? ' · ' + e(a.note.split('\n')[0]) : ''}</div></div>
-        <button data-r="edit" title="Edit">✎</button><button data-r="del" title="Delete">✕</button></div>`;
-    }).join('') : `<div class="none">${annotations.length ? 'No match.' : 'None yet – select parts and use ✎ Annotate on the tools bar.'}</div>`}</div>`;
-  notesEl.querySelector<HTMLInputElement>('[data-a=all]')!.onchange = (ev) => { annLayer.visible = ui.annotations = (ev.target as HTMLInputElement).checked; };
-  const inp = notesEl.querySelector<HTMLInputElement>('.top input')!;
-  inp.oninput = () => { annFilter = inp.value; const pos = inp.selectionStart; refreshAnnList(); const i2 = notesEl.querySelector<HTMLInputElement>('.top input')!; i2.focus(); i2.setSelectionRange(pos, pos); };
-  notesEl.onkeydown = (ev) => ev.stopPropagation();
-  notesEl.querySelector<HTMLElement>('[data-a=csv]')!.onclick = () => exportAnnotationsCsv();
-  notesEl.querySelectorAll<HTMLElement>('.row').forEach((row) => {
-    const a = annotations.find((x) => x.id === row.dataset.id)!;
-    row.onclick = (ev) => {
-      const btn = (ev.target as HTMLElement).closest<HTMLElement>('[data-r]');
-      if (btn?.dataset.r === 'show') { a.show = (btn as HTMLInputElement).checked; saveAnnotations(); return; }
-      if (btn?.dataset.r === 'del') { annotations = annotations.filter((x) => x !== a); saveAnnotations(); return; }
-      const objs = annotationParts(a.target);
-      if (objs.length) { tree.selectObjects(objs); frameObjects(objs); }
-      annLayer.select(a.id); refreshAnnList();
-      if (btn?.dataset.r === 'edit') { if (!a.show) { a.show = true; saveAnnotations(); } annLayer.edit(a.id); }
-    };
-  });
+/** The left edge of the 3D view's free area (the tree, wider with its Notes column) – the axis triad sits there. */
+const leftPanelsW = () => (host().classList.contains('tree-collapsed') ? 12 : 352 + (tree.notesOn ? 220 : 0));
+/** Annotations changed: the tree's Notes column shows them. */
+function refreshAnnList() { tree.redraw(); }
+/** The annotations made on exactly this row's part / group / folder (the Notes column). */
+function notesOf(key: string) {
+  const norm = (x: string) => x.split(',').map((y) => y.trim()).filter(Boolean).sort().join(',');
+  return annotations.filter((a) => norm(a.target) === key).map((a) => { const anc = annLayerAnchor(a); return { id: a.id, title: a.title, show: a.show, hidden: !anc || !anc.visible }; });
 }
-// parts blanked / removed / cut away change which rows say "part hidden": re-render when that changes
-const notesTimer = setInterval(() => { if (notesOpen && !notesEl.contains(document.activeElement) && annHiddenNow() !== annSig) refreshAnnList(); }, 1000);
-setNotesOpen(notesOpen);
+/** A note typed in the tree: rename one, or add one for the row (its part's centre; drag the card after). */
+function noteTitle(key: string, id: string | undefined, title: string) {
+  if (id) { const a = annotations.find((x) => x.id === id); if (!a) return; if (!title) { annotations = annotations.filter((x) => x !== a); toast('Note deleted (⌘Z brings it back)'); } else a.title = title; saveAnnotations(); return; }
+  const objs = annotationParts(key), b = worldBox(objs);
+  const size = Math.max(0.4, b.isEmpty() ? 1 : b.getSize(new THREE.Vector3()).length() * 0.25);
+  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion), right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+  let n = annotations.length + 1; while (annotations.some((a) => a.id === `a${n}`)) n++;
+  annotations.push({ id: `a${n}`, title, note: '', target: key, offset: up.multiplyScalar(size).add(right.multiplyScalar(size * 0.6)).toArray().map((v) => +v.toFixed(4)), show: true });
+  saveAnnotations();
+}
 /** CSV: id, title, note, target, the part ids it covers now, the leader point (world m). */
 function exportAnnotationsCsv() {
   const q = (v: string) => `"${v.replace(/"/g, '""')}"`;
@@ -3528,7 +3480,6 @@ return {
     disposed = true;
     scriptPanel?.destroy();
     annLayer.dispose();
-    clearInterval(notesTimer); notesEl.remove(); notesToggle.remove();
     clearTimeout(chatTimer); clearTimeout(thumbTimer);
     assist?.dispose();
     renderer.setAnimationLoop(null);

@@ -28,6 +28,7 @@ interface Node {
   depth: number;
 }
 
+const NOTES_W = 220;
 const ROW = 22;
 
 const CSS = `
@@ -60,6 +61,16 @@ const CSS = `
 #tree .info code { display: block; color: #f2b705; word-break: break-all; margin: 3px 0; font: 11px ui-monospace, monospace; }
 #tree .stats { white-space: pre; border-top: 1px solid #222a33; padding: 6px 8px; font: 11px ui-monospace, monospace; color: #7b8794; }
 #tree button { background: #222a33; color: inherit; border: 1px solid #2b3540; border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 11px; }
+#tree.notes { width: ${340 + NOTES_W}px; z-index: 8; }   /* above the view bar, which can spread left in a narrow window */ #tree.notes.collapsed { transform: translateX(-${340 + NOTES_W}px); }
+#tree .notesbar { display: flex; gap: 8px; align-items: center; padding: 4px 8px; border-bottom: 1px solid #222a33; color: #9aa6b2; font-size: 11.5px; }
+#tree .notesbar label { display: flex; gap: 4px; align-items: center; cursor: pointer; flex: 1; }
+#tree.notes .row { padding-right: ${NOTES_W + 6}px; }
+#tree .note { position: absolute; right: 0; top: 0; bottom: 0; width: ${NOTES_W}px; display: flex; align-items: center; gap: 4px; padding: 0 6px; border-left: 1px solid #222a33; color: #d7dde4; box-sizing: border-box; }
+#tree .note input[type=checkbox] { margin: 0; flex: none; cursor: pointer; }
+#tree .note .nt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; cursor: text; }
+#tree .note .nt.off { color: #5b6670; } #tree .note .more { color: #7b8794; flex: none; } #tree .note .gone { color: #c9a45c; font-size: 10.5px; flex: none; }
+#tree .note .add { color: transparent; cursor: text; flex: 1; } #tree .row:hover .note .add { color: #5b6670; }
+#tree .noteedit { position: absolute; z-index: 3; background: #0a0c0f; color: #d7dde4; border: 1px solid #f2b705; border-radius: 3px; padding: 1px 4px; font: 12px system-ui; box-sizing: border-box; }
 #tree-toggle { position: absolute; top: 8px; left: 348px; z-index: 6; background:#222a33; color:#d7dde4; border:1px solid #2b3540; border-radius:4px; padding:3px 8px; cursor:pointer; }
 .studio-root.tree-collapsed #tree-toggle { left: 8px; }
 .studio-root:not(.tree-collapsed) #chapter, .studio-root:not(.tree-collapsed) #sub { left: 392px !important; }
@@ -99,6 +110,19 @@ export interface TreeHooks {
   onFolderRename?: (from: string, to: string) => void;
   /** Annotate… (tree menu): the selection */
   onAnnotate?: () => void;
+  /** the Notes column: annotations made on exactly a row's part / group / folder (key: id, "@group" or "folder:path") */
+  notes?: {
+    of(key: string): { id: string; title: string; show: boolean; hidden: boolean }[];
+    /** rename one (id), or add one for the row (no id) */
+    title(key: string, id: string | undefined, title: string): void;
+    show(id: string, on: boolean): void;
+    /** the card in the view, for the note */
+    open(id: string): void;
+    /** the bar under the header: all on / off in the view, CSV */
+    visible(): boolean; setVisible(on: boolean): void; csv(): void;
+    /** the column was shown / hidden (the studio moves things over) */
+    toggled(on: boolean): void;
+  };
   /** Kept uncut by the animation's list: 'own', 'inh' (through an assembly) or not. */
   keptOf?: (obj: THREE.Object3D | undefined, group?: string) => 'own' | 'inh' | undefined;
   /** Keep parts uncut / cut them again. */
@@ -136,8 +160,8 @@ export class TreePanel {
   constructor(private scene: BuiltScene, three: THREE.Scene, private hooks: TreeHooks = {}) {
     const style = document.createElement('style'); style.textContent = CSS; document.head.appendChild(style);
     this.el = document.createElement('div'); this.el.id = 'tree';
-    this.el.innerHTML = `<header><b>Assembly</b><span title="● visible   🔒 locked (never moves)   locked + hidden CAD = suppressed (freed from memory)" style="cursor:help;color:#7b8794">ⓘ</span><button data-a="collapse">Collapse all</button></header>
-      <div class="snap"></div>
+    this.el.innerHTML = `<header><b>Assembly</b><span title="● visible   🔒 locked (never moves)   locked + hidden CAD = suppressed (freed from memory)" style="cursor:help;color:#7b8794">ⓘ</span><button data-a="collapse">Collapse all</button><button data-a="notes" title="Notes: a column of the annotations on each part, solid, group or folder (click one to edit it, an empty cell to add one)">✎ Notes</button></header>
+      <div class="snap"></div><div class="notesbar" hidden></div>
       <input type="search" placeholder="Search parts… (Enter)" /><div class="scroll"><div class="spacer"></div></div>
       <div class="info">Click a part in the tree or the 3D view.</div><div class="stats"></div>`;
     host().appendChild(this.el);
@@ -146,6 +170,12 @@ export class TreePanel {
     host().appendChild(toggle);
     this.scroll = this.el.querySelector('.scroll')!;
     this.spacer = this.el.querySelector('.spacer')!;
+    const notesBtn = this.el.querySelector<HTMLElement>('[data-a=notes]')!;
+    if (!this.hooks.notes) notesBtn.hidden = true;
+    let on = false;
+    try { on = localStorage.getItem('refuel.notesOpen') === '1'; } catch { /* private mode */ }
+    notesBtn.onclick = () => this.setNotes(!this.notesOn);
+    queueMicrotask(() => { if (on && this.hooks.notes) this.setNotes(true); });
     this.info = this.el.querySelector('.info')!;
     this.statsEl = this.el.querySelector('.stats')!;
     this.search = this.el.querySelector('input')!;
@@ -359,6 +389,51 @@ export class TreePanel {
     this.draw();
   }
 
+  /** The Notes column: shown / hidden (remembered). */
+  notesOn = false;
+  setNotes(on: boolean) {
+    this.notesOn = on;
+    this.el.classList.toggle('notes', on);
+    this.el.querySelector('[data-a=notes]')!.classList.toggle('on', on);
+    const bar = this.el.querySelector<HTMLElement>('.notesbar')!;
+    bar.hidden = !on;
+    if (on) {
+      bar.innerHTML = `<label title="Show or hide every annotation in the 3D view"><input type="checkbox" ${this.hooks.notes!.visible() ? 'checked' : ''}> Show notes in the view</label><button data-a="csv" title="Export every annotation with its parts as CSV">⤓ CSV</button>`;
+      bar.querySelector<HTMLInputElement>('input')!.onchange = (e) => this.hooks.notes!.setVisible((e.target as HTMLInputElement).checked);
+      bar.querySelector<HTMLElement>('[data-a=csv]')!.onclick = () => this.hooks.notes!.csv();
+    }
+    try { localStorage.setItem('refuel.notesOpen', on ? '1' : '0'); } catch { /* private mode */ }
+    this.hooks.notes?.toggled(on);
+    this.draw();
+  }
+  /** A row's annotation key: its part id, "@group" or "folder:path" (none for headings and removed rows). */
+  private noteKey(n: Node): string | undefined {
+    if (n.removedRow) return;
+    if (n.folder !== undefined) return n.folder ? `folder:${n.folder}` : undefined;
+    if (n.group) return `@${n.group}`;
+    return n.obj ? n.id : undefined;
+  }
+  /** Edit a row's note title over its cell (rows are redrawn as the tree scrolls, so the box floats above them). */
+  private editNote(cell: HTMLElement, key: string, id: string | undefined, title: string) {
+    this.el.querySelector('.noteedit')?.remove();
+    const box = document.createElement('input');
+    box.className = 'noteedit'; box.value = title; box.placeholder = 'Note title';
+    const rc = cell.getBoundingClientRect(), rt = this.el.getBoundingClientRect();
+    Object.assign(box.style, { left: `${rc.left - rt.left + 2}px`, top: `${rc.top - rt.top + 1}px`, width: `${rc.width - 4}px`, height: `${rc.height - 2}px` });
+    this.el.appendChild(box);
+    let done = false;
+    const finish = (save: boolean) => {
+      if (done) return; done = true;
+      box.remove();
+      const t = box.value.trim();
+      if (save && t !== title && (t || id)) this.hooks.notes!.title(key, id, t);
+    };
+    box.onkeydown = (e) => { e.stopPropagation(); if (e.key === 'Enter') finish(true); if (e.key === 'Escape') finish(false); };
+    box.onblur = () => finish(true);
+    this.scroll.addEventListener('scroll', () => finish(true), { once: true });
+    box.focus(); box.select();
+  }
+
   private draw() {
     const top = this.scroll.scrollTop, h = this.scroll.clientHeight;
     const from = Math.max(0, Math.floor(top / ROW) - 10), to = Math.min(this.flat.length, Math.ceil((top + h) / ROW) + 10);
@@ -387,6 +462,27 @@ export class TreePanel {
       <span class="tg ${locked ? '' : 'off'} ${explicitL ? '' : 'inh'}" title="lock / unlock">${locked ? '🔒' : '🔓'}</span>
       <span class="lbl" title="${esc(n.id ?? n.folder ?? n.label)}">${n.folder ? '<span class="fold">▤</span>' : ''}${esc(n.label)}</span>${(() => { const c = this.hooks.colorOf?.(n.group ? `@${n.group}` : n.id ?? ''); return c ? `<span style="width:9px;height:9px;border-radius:2px;margin-left:6px;flex:none;background:${c}"></span>` : ''; })()}${(() => { const k = n.folder === undefined && !n.removedRow ? this.hooks.keptOf?.(n.obj, n.group) : undefined; return k ? `<span class="kept ${k}" title="${k === 'own' ? 'Kept uncut: cuts leave it whole' : 'Kept uncut through an assembly it belongs to'}">✂</span>` : ''; })()}${n.badge ? `<span class="badge">${n.badge}</span>` : ''}`;
     const [caret, eye, lock] = r.children as unknown as HTMLElement[];
+    // the Notes column: this row's own annotations – checkbox + title (+N), "part hidden"; click to edit, empty to add
+    const key = this.notesOn ? this.noteKey(n) : undefined;
+    if (this.notesOn) {
+      const cell = document.createElement('span'); cell.className = 'note';
+      const ns = key ? this.hooks.notes!.of(key) : [];
+      const first = ns[0];
+      if (first) {
+        cell.innerHTML = `<input type="checkbox" ${first.show ? 'checked' : ''} title="Show this note in the view (a hidden part hides it anyway)"><span class="nt${first.show ? '' : ' off'}" title="${esc(first.title)} – click to edit, double-click for the note">${esc(first.title || '(untitled)')}</span>${ns.length > 1 ? `<span class="more" title="${esc(ns.slice(1).map((x) => x.title).join(', '))}">+${ns.length - 1}</span>` : ''}${first.hidden ? '<span class="gone" title="Its part is hidden">part hidden</span>' : ''}`;
+        const cb = cell.querySelector<HTMLInputElement>('input')!;
+        cb.onclick = (e) => { e.stopPropagation(); this.hooks.notes!.show(first.id, cb.checked); };
+        const nt = cell.querySelector<HTMLElement>('.nt')!;
+        let clickT: number | undefined;
+        nt.onclick = (e) => { e.stopPropagation(); clearTimeout(clickT); clickT = window.setTimeout(() => this.editNote(cell, key!, first.id, first.title), 220); };
+        nt.ondblclick = (e) => { e.stopPropagation(); clearTimeout(clickT); this.hooks.notes!.open(first.id); };
+      } else if (key) {
+        cell.innerHTML = `<span class="add" title="Add a note for this row">+ note</span>`;
+        cell.querySelector<HTMLElement>('.add')!.onclick = (e) => { e.stopPropagation(); this.editNote(cell, key, undefined, ''); };
+      }
+      cell.ondblclick = (e) => e.stopPropagation();
+      r.appendChild(cell);
+    }
     caret.onclick = (e) => { e.stopPropagation(); this.toggleOpen(n); };
     eye.onclick = (e) => { e.stopPropagation(); this.setFlag(n, 'hidden', !hidden); };
     lock.onclick = (e) => { e.stopPropagation(); this.setFlag(n, 'locked', !locked); };
