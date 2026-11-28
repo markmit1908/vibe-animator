@@ -180,13 +180,13 @@ function registerKinds() {
     queueLabel: () => "Parts",
     render: (p: SkProposal, _v: View, onDecide?: (a: boolean) => void) => (
       <ChangeCard p={p} title="Part state" onDecide={onDecide} lines={(p.changes as {
-        targets: string[]; ids: string[]; lock?: boolean; hide?: boolean; color?: string | null; remove?: boolean; keep_uncut?: boolean;
+        targets: string[]; ids?: string[]; count?: number; lock?: boolean; hide?: boolean; color?: string | null; remove?: boolean; keep_uncut?: boolean;
       }[]).map((c) => <>
         {[c.lock === true && "🔒 lock", c.lock === false && "🔓 unlock", c.hide === true && "hide", c.hide === false && "show",
           c.color === null && "reset colour", c.remove === true && "remove from assembly", c.remove === false && "restore",
           c.keep_uncut === true && "✂ keep uncut", c.keep_uncut === false && "cut again"].filter(Boolean).join(" + ")}
         {c.color && <> colour <span className="inline-block size-2.5 rounded-sm border align-middle" style={{ background: c.color }} /> {c.color}</>}
-        {` – ${c.targets.join(", ")} (${plural(c.ids.length)})`}
+        {` – ${c.targets.join(", ")} (${plural(c.count ?? c.ids?.length ?? 0)})`}
       </>)} />
     ),
   });

@@ -989,7 +989,9 @@ function persistWorking() {
   edit({ snapshots: { active: store.active, items: JSON.parse(JSON.stringify(store.snapshots)) } });
   markDirty(false);
 }
-async function applyStateChanges(changes: { ids: string[]; targets?: string[]; lock?: boolean; hide?: boolean; color?: string | null; remove?: boolean; keep_uncut?: boolean }[]) {
+async function applyStateChanges(changes0: { ids?: string[]; targets?: string[]; lock?: boolean; hide?: boolean; color?: string | null; remove?: boolean; keep_uncut?: boolean }[]) {
+  // a big change's card keeps only its count: the ids again from its targets
+  const changes = changes0.map((c) => ({ ...c, ids: c.ids ?? resolveIds(c.targets ?? []).ids }));
   for (const c of changes) if (c.keep_uncut !== undefined) setKeep(c.targets ?? c.ids, c.ids.map((x) => built.registry.get(x)).filter(Boolean) as THREE.Object3D[], c.keep_uncut);
   for (const c of changes) if (c.color !== undefined) setColors(c.targets ?? c.ids, c.color);
   for (const c of changes) if (c.remove !== undefined) await setRemoved(c.ids, c.remove);

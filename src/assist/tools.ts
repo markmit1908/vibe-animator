@@ -493,6 +493,9 @@ function shapeChanges(input: any[], existing: ShapeDef[]): { changes: ShapeChang
   return { changes, problems };
 }
 
+/** propose_state: parts listed one by one per change, at most; ids kept on the card up to this many. */
+const MAX_LISTED = 200, MAX_IDS_KEPT = 500;
+
 export function modelProposeTools(d: ModelProposeDeps): AssistTool[] {
   return [
     ...(d.planPlacement ? [{
@@ -664,7 +667,7 @@ export function modelProposeTools(d: ModelProposeDeps): AssistTool[] {
     },
     {
       name: 'propose_state',
-      description: 'Propose lock/unlock, hide/show, base-colour and keep-uncut (left whole by every cutaway) changes for parts (ids, globs or @groups). Parts must be unlocked before a script can animate them; hidden + locked CAD parts are unloaded from memory. Changes go into the working snapshot (unsaved until the user saves). The user accepts or rejects.',
+      description: 'Propose lock/unlock, hide/show, base-colour and keep-uncut (left whole by every cutaway) changes for parts (ids, globs or @groups). Target assemblies (a parent id covers everything under it) or @groups rather than long lists of parts – at most 200 parts listed one by one per change; a colour on a group or assembly is one entry. Parts must be unlocked before a script can animate them; hidden + locked CAD parts are unloaded from memory. Changes go into the working snapshot (unsaved until the user saves). The user accepts or rejects.',
       input_schema: {
         type: 'object',
         properties: {
@@ -689,10 +692,14 @@ export function modelProposeTools(d: ModelProposeDeps): AssistTool[] {
           r.unknown.forEach((u) => problems.push(`unknown target "${u}"`));
           if (c.lock === undefined && c.hide === undefined && c.color === undefined && c.remove === undefined && c.keep_uncut === undefined) problems.push('a change needs lock, hide, color, remove and/or keep_uncut');
           if (c.color && !/^#[0-9a-fA-F]{6}$/.test(c.color)) problems.push(`colour must be #rrggbb, not ${c.color}`);
-          return { targets: c.targets, ids: r.ids, lock: c.lock, hide: c.hide, color: c.color, remove: c.remove, keep_uncut: c.keep_uncut };
+          // one entry per part listed: thousands of them make huge cards, files and undo – target their assemblies or a @group
+          const listed = (c.targets ?? []).filter((t: string) => !t.startsWith('@') && !t.includes('*'));
+          if (listed.length > MAX_LISTED) problems.push(`a change lists ${listed.length} parts one by one – target their assemblies (a common parent id) or a @group (propose_groups first) instead, so it's one entry; at most ${MAX_LISTED} listed parts per change`);
+          // a big change keeps its count, not every id (the ids are worked out again from the targets on Accept)
+          return { targets: c.targets, ...(r.ids.length <= MAX_IDS_KEPT ? { ids: r.ids } : {}), count: r.ids.length, lock: c.lock, hide: c.hide, color: c.color, remove: c.remove, keep_uncut: c.keep_uncut };
         });
         const ok = !problems.length;
-        const n = changes.reduce((a: number, c: any) => a + c.ids.length, 0);
+        const n = changes.reduce((a: number, c: any) => a + c.count, 0);
         yield { type: 'proposal', kind: 'state', summary: i.summary, check: { ok, label: ok ? `✓ ${n} part${n === 1 ? '' : 's'}` : `${problems.length} problem(s)` }, changes, problems };
         return { content: ok ? `Proposed (${n} parts); waiting for the user.` : `Problems:\n${problems.join('\n')}` };
       },

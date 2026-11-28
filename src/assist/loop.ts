@@ -186,11 +186,16 @@ export async function* runAssist(o: AssistRun): AsyncGenerator<AssistEvent, void
       log({ ev: 'stall', round, silent_ms: Math.round(performance.now() - lastEv), pings, blocks_open: [...blocks.values()].map((b) => ({ type: b.type, name: b.name, chars: b.text.length })) });
       stream.abort();
     }, Math.min(5000, stallMs / 4));
+    // hand the queue over; wait for a wake-up – or a 250 ms tick, so a missed wake-up can't strand what's queued
+    // (2026-11-27: a round finished with 361 events queued and the loop asleep; now it's logged and recovered)
+    let missed = 0;
     try {
       while (!finished || queue.length) {
         if (queue.length) { yield queue.shift()!; continue; }
-        await new Promise<void>((r) => (wake = r));
+        let woken = false;
+        await Promise.race([new Promise<void>((r) => (wake = () => { woken = true; r(); })), new Promise<void>((r) => setTimeout(r, 250))]);
         wake = undefined;
+        if (!woken && (queue.length || finished) && missed++ < 5) log({ ev: 'missed_wake', round, queued: queue.length, finished: !!finished });
       }
     } finally { clearInterval(watch); }
     log({ ev: 'response', round, round_ms: Math.round(performance.now() - rt0), pings, max_gap_ms: Math.round(maxGap),
@@ -237,7 +242,7 @@ export async function* runAssist(o: AssistRun): AsyncGenerator<AssistEvent, void
             const gen = tool.run(call.input);
             let step = await gen.next();
             while (!step.done) {
-              if (step.value.type === 'proposal') { const { type: _t, ...p } = step.value; log({ ev: 'proposal', round, ...p }); }
+              if (step.value.type === 'proposal') { const { type: _t, ...p } = step.value; log({ ev: 'proposal', round, ...trimForLog(p) as Record<string, unknown> }); }
               yield step.value; step = await gen.next();
             }
             r = step.value;
@@ -252,6 +257,13 @@ export async function* runAssist(o: AssistRun): AsyncGenerator<AssistEvent, void
   }
   log({ ev: 'end', reason: 'max rounds', usage, at_ms: ms() });
   yield { type: 'done', model, usage, stop_reason: 'max_rounds' };
+}
+
+/** Long arrays (thousands of part ids) shortened for the log: the first 50 and a count. */
+function trimForLog(v: unknown, depth = 0): unknown {
+  if (Array.isArray(v)) return v.length > 50 ? [...v.slice(0, 50).map((x) => trimForLog(x, depth + 1)), `… ${v.length - 50} more`] : v.map((x) => trimForLog(x, depth + 1));
+  if (v && typeof v === 'object' && depth < 6) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, trimForLog(x, depth + 1)]));
+  return v;
 }
 
 function apiErrorText(e: InstanceType<typeof Anthropic.APIError>) {

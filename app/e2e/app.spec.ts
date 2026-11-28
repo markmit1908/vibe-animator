@@ -1213,6 +1213,37 @@ test("assistant colours: the palette in its context, a part's shown / set colour
   expect(ctx).toMatch(/Colours in use \(most first\): .*#123456/);
 });
 
+test("propose_state stays compact: over 200 parts listed one by one is a problem (use assemblies / groups); a big change keeps its count, not every id, and still applies", async ({ page }) => {
+  await page.goto("/");
+  const m = { name: "Big state", solver: "refuel-anim", format: 1, scene: { generated: true, cad_models: [] },
+    script: { language: "anim", text: 'label "B"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Big state");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const run = (changes: any[]) => page.evaluate(async (changes) => {
+    const s = (window as any).__studio, t = s.tools.find((x: any) => x.name === "propose_state");
+    let p: any; const g = t.run({ summary: "x", changes }); for (let r = await g.next(); !r.done; r = await g.next()) if (r.value.type === "proposal") { const { type, ...x } = r.value; p = x; }
+    return p;
+  }, changes);
+  const blocks: string[] = await page.evaluate(() => [...(window as any).__studio.built.registry.keys()].filter((id: string) => /^R\d+-\d+\/L\d+$/.test(id)));
+  expect(blocks.length).toBeGreaterThan(600);
+  // 201 parts listed one by one: a problem pointing at assemblies / groups
+  const listed = await run([{ targets: blocks.slice(0, 201), color: "#ff0000" }]);
+  expect(listed.check.ok).toBe(false);
+  expect(listed.problems[0]).toMatch(/lists 201 parts one by one.*assemblies.*@group/);
+  // a glob over all the blocks: fine – the card keeps the count, not the ids
+  const big = await run([{ targets: ["*/L*"], hide: true }]);
+  expect(big.check.ok).toBe(true);
+  expect(big.changes[0].ids).toBeUndefined();
+  expect(big.changes[0].count).toBe(blocks.length);
+  expect(JSON.stringify(big).length).toBeLessThan(2000);
+  await page.evaluate((p) => (window as any).__studio.assist.host.accept(p), big);
+  await expect.poll(async () => Object.keys((await model(page, a.id)).snapshots.items.default.hidden ?? {}).length, { timeout: 10_000 }).toBe(blocks.length);
+  // a small change keeps its ids as before
+  const small = await run([{ targets: blocks.slice(0, 3), color: "#00ff00" }]);
+  expect(small.changes[0].ids).toEqual(blocks.slice(0, 3));
+});
+
 test("the tree keeps its open rows, selection and scroll when it rebuilds (making a group)", async ({ page }) => {
   await page.goto("/");
   const { readFileSync } = await import("node:fs");

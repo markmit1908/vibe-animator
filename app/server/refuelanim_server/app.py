@@ -109,9 +109,12 @@ class AssistProxyLog:
         rec: dict = {"t": datetime.now(timezone.utc).isoformat(), "send": headers.get("x-assist-send"), "method": scope.get("method"),
                      "path": scope.get("path"), "status": None, "first_byte_ms": None, "bytes": 0, "chunks": 0, "outcome": None}
 
+        complete = [False]   # the last body chunk went out
+
         async def receive_logged():
             msg = await receive()
-            if msg.get("type") == "http.disconnect" and rec["outcome"] is None:
+            # a disconnect after the whole response went out is the normal end of a stream, not a drop
+            if msg.get("type") == "http.disconnect" and rec["outcome"] is None and not complete[0]:
                 rec["outcome"] = "client disconnected"
             return msg
 
@@ -124,6 +127,8 @@ class AssistProxyLog:
                     rec["first_byte_ms"] = round((time.monotonic() - t0) * 1000)
                 rec["bytes"] += len(body)
                 rec["chunks"] += 1
+                if not msg.get("more_body", False):
+                    complete[0] = True
             await send(msg)
 
         try:
