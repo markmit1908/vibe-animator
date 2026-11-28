@@ -44,6 +44,8 @@
 - [ ] Teach the assistant the palette and the thumbnail keyframe
 - [ ] Shapes from the assistant: let a script proposal reference shapes proposed in the same turn (today: shape first, script after it's accepted)
 - [ ] Optional faster model (e.g. Sonnet) for routine edits, chosen in the Assist header
+- [ ] Verbose transaction log, one file per send: every request and response of the turn (rounds, timestamps and durations, model / effort, thinking and text deltas, each tool call's input as streamed and its result, proposals, usage, stop reasons, errors, aborts) written to the vault (e.g. `Logs/assist/<animation>/<date-time>.jsonl`) through the app server – never the API key. To debug stuck / slow turns (2026-11-27: a module-copies request sat in round 2 of 8)
+- [ ] Copies + annotations in one turn: let annotations target copies proposed in the same turn (applied after the copies are accepted), and one annotation per array (not per member)
 
 ## SolverKit (propose in the SolverKit repo; see app/docs/SOLVERKIT.md)
 - [ ] Vault.files: resolve the root (and walked paths) – listing a vault reached through a symlink (macOS /var → /private/var) raises ValueError; the app resolves its vault path meanwhile
