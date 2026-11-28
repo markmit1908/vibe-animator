@@ -44,7 +44,7 @@
 - [ ] Teach the assistant the palette and the thumbnail keyframe
 - [ ] Shapes from the assistant: let a script proposal reference shapes proposed in the same turn (today: shape first, script after it's accepted)
 - [ ] Optional faster model (e.g. Sonnet) for routine edits, chosen in the Assist header
-- [ ] Verbose transaction log, one file per send: every request and response of the turn (rounds, timestamps and durations, model / effort, thinking and text deltas, each tool call's input as streamed and its result, proposals, usage, stop reasons, errors, aborts) written to the vault (e.g. `Logs/assist/<animation>/<date-time>.jsonl`) through the app server – never the API key. To debug stuck / slow turns (2026-11-27: a module-copies request sat in round 2 of 8)
+- [ ] Verbose transaction log, one file per send: every request and response of the turn (rounds, timestamps and durations, model / effort, thinking and text deltas, each tool call's input as streamed and its result, proposals, usage, stop reasons, errors, aborts) written to the vault (e.g. `Logs/assist/<animation>/<date-time>.jsonl`) through the app server – never the API key. To debug stuck / slow turns (2026-11-27: a module-copies request sat in round 2 of 8 – the server had no open API connection, so the stream had ended or dropped while the panel kept waiting). Log the proxy side too (request start / end, bytes, upstream status, disconnects), so a dropped stream shows as a last event with nothing after it
 - [ ] Copies + annotations in one turn: let annotations target copies proposed in the same turn (applied after the copies are accepted), and one annotation per array (not per member)
 
 ## SolverKit (propose in the SolverKit repo; see app/docs/SOLVERKIT.md)
@@ -56,4 +56,5 @@
 - [ ] AssistPanel: slots for a header (effort, status) and code-block actions ("Insert into script")
 - [ ] Card thumbnails for non-React views: a documented `putThumb` path (we call the store directly)
 - [ ] AssistPanel: allow Accept / Reject on a proposal card while the turn is still running – today in-progress proposals render without `onDecide` (AssistPanel.tsx, `pendingProposals`), so a finished card can't be accepted until every round ends (seen 2026-11-27: a 28-copy card waited on a slow round 2)
+- [ ] AssistPanel: notice a dead stream – no event for a while, or the proxy connection closed without `done` → say so ("The connection to the assistant dropped"), keep the proposals made so far with their Accept buttons, offer Retry; today it shows "Thinking… round N" forever (2026-11-27)
 - [ ] AssistPanel: Stop keeps the proposals already made – today Stop restores the chat to before the prompt and drops `pendingProposals`, losing finished cards
