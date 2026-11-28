@@ -236,9 +236,9 @@ Cut faces are capped (what's inside a cut part stays hidden), outlined and hatch
 ## AI assist (AI Assist tab)
 
 A chat with Claude (`claude-opus-5-5`). It sees the script (with step times and errors), the current time, selection,
-groups (and their folders), shapes, copies, annotations, lock/hide state and the top of the assembly tree.
+groups (and their folders), shapes, copies, annotations, the palette (named colours + the palette swatches), the base colours set and the colours in use, lock/hide state and the top of the assembly tree.
 
-**What it can look up:** search parts, read bounding boxes and positions, browse the tree, compile a draft script, and take a screenshot.
+**What it can look up:** search parts (also by colour: `#rrggbb`, off-palette, set / unset), read bounding boxes, positions and colours (shown, and the base colour set with where it comes from), browse the tree, compile a draft script, and take a screenshot.
 
 **What it can propose,** always as a card you **Accept** or **Reject**:
 - **script edits:** a diff with a compile check and **▶ Preview**. Accept also unlocks every locked part the new script animates (listed on the card).

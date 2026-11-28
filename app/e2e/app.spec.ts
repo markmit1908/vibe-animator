@@ -1126,6 +1126,52 @@ test("assistant: a log per send in the vault; a dead stream ends the turn (logge
   expect(part).toContain('annotations: a1 "Crate"');
 });
 
+test("assistant colours: the palette in its context, a part's shown / set colour (own, via a group) in get_part, find_parts colour filters", async ({ page }) => {
+  await page.goto("/");
+  const box = (id: string, x: number, color: string) => ({ id, kind: "box", size: [1, 1, 1], position: [x, 0.5, 0], rotation: [0, 0, 0], color });
+  const m = { name: "Palette colours", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] },
+    shapes: [box("a", 0, "#c8d0d9"), box("b", 2, "#c8d0d9"), box("c", 4, "#c8d0d9")],
+    script: { language: "anim", text: 'label "C"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } },
+    groups: { g: ["shapes/a"] }, colors: {} as Record<string, string> };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Palette colours");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const pal: { name: string; hex: string }[] = await page.evaluate(() => (window as any).__studio.assistPalette());
+  expect(pal.length).toBeGreaterThan(3);
+  const p0 = pal.find((p) => p.name.startsWith("palette"))!.hex;
+  // a: a palette colour through @g; b: its own off-palette colour; c: untouched (#c8d0d9)
+  await page.evaluate(({ p0 }) => { const s = (window as any).__studio; s.tree.selectId("shapes/a"); }, { p0 });
+  await page.evaluate(async ({ p0 }) => {
+    const s = (window as any).__studio, t = s.tools.find((x: any) => x.name === "propose_state");
+    let p: any; const g = t.run({ summary: "colours", changes: [{ targets: ["@g"], color: p0 }, { targets: ["shapes/b"], color: "#123456" }] });
+    for (let r = await g.next(); !r.done; r = await g.next()) if (r.value.type === "proposal") { const { type, ...x } = r.value; p = x; }
+    await s.assist.host.accept(p);
+  }, { p0 });
+  const tool = (name: string, input: any) => page.evaluate(async ({ name, input }) => {
+    const t = (window as any).__studio.tools.find((x: any) => x.name === name); const g = t.run(input); let r = await g.next(); while (!r.done) r = await g.next(); return r.value.content as string;
+  }, { name, input });
+  await expect.poll(() => tool("get_part", { id: "shapes/b" }), { timeout: 10_000 }).toContain("set #123456");          // applied in the page…
+  await expect.poll(async () => (await model(page, a.id)).colors, { timeout: 15_000 }).toEqual({ "@g": p0, "shapes/b": "#123456" });   // …and saved
+  await expect.poll(() => tool("get_part", { id: "shapes/a" })).toContain(`colour ${p0} – set ${p0} via @g`);
+  await expect.poll(() => tool("get_part", { id: "shapes/b" })).toContain("colour #123456 (off-palette) – set #123456 via its own");
+  const cPart = await tool("get_part", { id: "shapes/c" });
+  expect(cPart).toMatch(/colour #c8d0d9( \(off-palette\))?$/m);
+  expect(cPart).not.toContain(" – set ");
+  // find_parts colour filters
+  const off = await tool("find_parts", { query: "*", color: "off-palette" });
+  expect(off).toContain("shapes/b |"); expect(off).not.toContain("shapes/a |");
+  expect(await tool("find_parts", { query: "*", color: "#123456" })).toMatch(/^1 match:\nshapes\/b \|/);
+  const set = await tool("find_parts", { query: "*", color: "set" });
+  expect(set).toContain("shapes/a |"); expect(set).toContain("shapes/b |"); expect(set).not.toContain("shapes/c |");
+  expect(await tool("find_parts", { query: "*", color: "unset" })).toContain("shapes/c |");
+  expect(await page.evaluate(() => { const t = (window as any).__studio.tools.find((x: any) => x.name === "find_parts"); return t.validate({ query: "*", color: "reddish" }); })).toContain("off-palette");
+  // the context lists the palette, the colours set and the colours in use
+  const ctx: string = await page.evaluate(() => (window as any).__studio.assistContext());
+  expect(ctx).toContain(`Palette (use these for colours`); expect(ctx).toContain(p0);
+  expect(ctx).toContain(`Base colours set: @g ${p0}, shapes/b #123456`);
+  expect(ctx).toMatch(/Colours in use \(most first\): .*#123456/);
+});
+
 test("the tree keeps its open rows, selection and scroll when it rebuilds (making a group)", async ({ page }) => {
   await page.goto("/");
   const { readFileSync } = await import("node:fs");

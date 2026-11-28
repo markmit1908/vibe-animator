@@ -707,8 +707,41 @@ let drawPanel: DrawPanel | undefined;
   });
 }
 // ---------- assist tools (read-only) ----------
+/** The palette the assistant works with: the scene's named colours, then the generated palette's swatches. */
+function assistPalette(): { name: string; hex: string }[] {
+  const named = Object.entries(built.palette ?? {}).filter(([, v]) => typeof v === 'string' && /^#?[0-9a-f]{6}$/i.test(String(v)))
+    .map(([k, v]) => ({ name: k, hex: (String(v).startsWith('#') ? String(v) : `#${v}`).toLowerCase() }));
+  return [...named, ...palette(paletteKey).map((p) => ({ name: `palette ${p.role}`, hex: p.hex.toLowerCase() }))];
+}
+/** A part's colours: shown (its meshes now, most used first; not the selection highlight) and the base colour set
+ *  for it – its own, a group's holding it (or holding an ancestor), or an ancestor's – and where it comes from. */
+function colourOf(o: THREE.Object3D): { shown: string[]; set?: string; via?: string } {
+  const count = new Map<string, number>();
+  o.traverse((x) => {
+    const m = x as THREE.Mesh;
+    const mat = (m.userData.origMat ?? m.material) as THREE.MeshToonMaterial | undefined;
+    if (!m.isMesh || Array.isArray(mat) || !mat?.color || mat.side === THREE.BackSide) return;
+    const hex = `#${mat.color.getHexString()}`;
+    count.set(hex, (count.get(hex) ?? 0) + 1);
+  });
+  const shown = [...count].sort((a, b) => b[1] - a[1]).map(([h]) => h);
+  // what applyColors does: groups first, then parts (a part's own colour wins), nearest first
+  for (let p: THREE.Object3D | null = o; p; p = p.parent) {
+    const id = p.userData.id as string | undefined;
+    if (id && colors[id]) return { shown, set: colors[id].toLowerCase(), via: p === o ? 'its own' : id };
+  }
+  for (let p: THREE.Object3D | null = o; p; p = p.parent) {
+    const id = p.userData.id as string | undefined;
+    if (!id) continue;
+    const g = Object.keys(colors).find((k) => k.startsWith('@') && (store.groups[k.slice(1)] ?? []).includes(id));
+    if (g) return { shown, set: colors[g].toLowerCase(), via: g };
+  }
+  return { shown };
+}
 const toolDeps: ToolDeps = {
   registry: built.registry,
+  colourOf,
+  palette: assistPalette,
   annotationsOn: (id) => {
     const o = built.registry.get(id); if (!o) return [];
     const chain = new Set<THREE.Object3D>(); for (let p: THREE.Object3D | null = o; p; p = p.parent) chain.add(p);
@@ -1166,6 +1199,9 @@ Selection: ${sel}${selBox && !selBox.isEmpty() ? ` – bbox centre [${selBox.get
 Camera views: ${Object.keys(views).map((v) => `${v} (pos [${views[v].pos.map((x) => x.toFixed(1))}], look [${views[v].look.map((x) => x.toFixed(1))}])`).join(', ') || 'none'}
 Shapes: ${shapes.map((s) => `${s.id} (${s.kind} [${s.size}] at [${s.position}]${s.rotation.some((r) => r) ? ` rot [${s.rotation}]°` : ''}${s.array ? `, ×${s.array.count} ${s.array.type}` : ''})`).join(', ') || 'none'}
 Copies: ${copies.map((c) => `${c.id}${c.array ? ` (×${c.array.count})` : ''}`).join(', ') || 'none'}
+Palette (use these for colours; propose_state colour = #rrggbb): ${assistPalette().map((p) => `${p.name} ${p.hex}`).join(', ')}
+Base colours set: ${Object.entries(colors).slice(0, 30).map(([k, v]) => `${k} ${v}`).join(', ') || 'none'}${Object.keys(colors).length > 30 ? ` … ${Object.keys(colors).length - 30} more` : ''}
+Colours in use (most first): ${modelColors().slice(0, 16).join(', ')}
 Annotations (${annotations.length}${annotations.length > 40 ? ', first 40' : ''}; get_annotations for notes, parts and points): ${annotations.slice(0, 40).map((a) => `${a.id} "${a.title}" on ${a.target}`).join(', ') || 'none'}
 Groups: ${Object.entries(store.groups).map(([g, ids]) => { const f = Object.entries(store.folders).find(([, gs]) => gs.includes(g))?.[0]; return `@${g} (${ids.length} members${f ? `, folder ${f}` : ''})`; }).join(', ') || 'none'}
 Snapshot: ${store.active}. Explicitly hidden: ${hidden.length ? hidden.slice(0, 20).join(', ') + (hidden.length > 20 ? ` … ${hidden.length - 20} more` : '') : 'none'}. Kept uncut by every cut: ${cutKeep.join(', ') || 'none'}. Placed away from their CAD position: ${Object.keys(state.placements).slice(0, 20).join(', ') || 'none'}. Unlocked (animatable) CAD: ${unlocked.length ? unlocked.slice(0, 20).join(', ') + (unlocked.length > 20 ? ' …' : '') : 'none – CAD is locked by default'}.
@@ -3413,7 +3449,7 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 }
 
 // read-only handle for tests and debugging
-(window as any).__studio = { get annotations() { return annotations; }, get annLayer() { return annLayer; }, startAnnotate, finishAnnotate, undoDepth: () => undoStack.length, get shapes() { return shapes; }, openCopyPanel, get downMods() { return downMods; }, slimCad, gizmo, boxSelect, get copies() { return copies; }, duplicateSelection, renderSheetPng, svgToPdf, vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
+(window as any).__studio = { assistPalette, assistContext: () => assistContext(), get annotations() { return annotations; }, get annLayer() { return annLayer; }, startAnnotate, finishAnnotate, undoDepth: () => undoStack.length, get shapes() { return shapes; }, openCopyPanel, get downMods() { return downMods; }, slimCad, gizmo, boxSelect, get copies() { return copies; }, duplicateSelection, renderSheetPng, svgToPdf, vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
   /** tests: a block with many small parts buried behind the cut plane (x < 0), like dowels without holes */
   addTestBuried: (count = 60) => {
     const mk = (col: number) => withCaps(new THREE.MeshToonMaterial({ color: col, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));

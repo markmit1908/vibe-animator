@@ -24,6 +24,7 @@
 - [ ] Drawings, next: perspective sheets; frame a sheet on chosen parts (`frame @x`) and detail views; hatch patterns per material; several views on one sheet; dimensions / labels / leaders; drawing in a Web Worker (the plant takes 5–8 s on the main thread); the assistant proposing `.draw` edits
 - [ ] Better transparency: making a part see-through to show what's inside is messy today, with every surface stacking up. Needs a clearer model: only the outer shell drawn see-through (depth pre-pass / first surface only), sorting or order-independent transparency, optional ghosted edges-only or x-ray styles, and contents drawn solid behind it
 - [ ] Annotations: ~~3D labels + leaders, edit, layer toggle (phase 1)~~, ~~list panel + CSV + assistant (2)~~, ~~script `annotate` steps (3)~~, ~~drawing-sheet callouts (4)~~; later: dimensions, callouts that avoid each other on sheets, copies carrying their sources' annotations
+- [ ] Annotations panel: move the list out of Controls into a column to the right of the assembly tree, shown / hidden by the user (a toggle, remembered). Each row has a checkbox to show / hide that annotation; an annotation whose part (or all its target's parts) is hidden – blanked, removed, cut away – is hidden automatically, whatever its checkbox says (the checkbox keeps its state for when the part shows again)
 - [ ] Tools bar: taller than short windows now – make it scroll or fold into sections
 - [ ] Video export (frame-by-frame render of the timeline)
 - [ ] PNG export: option for a solid background / chosen size
@@ -41,7 +42,8 @@
 
 ## AI assist
 - [ ] Try a live chat after the switch to SolverKit's AssistPanel (tests use injected proposals, no API calls)
-- [ ] Teach the assistant the palette and the thumbnail keyframe
+- [x] Teach the assistant the palette (context; colours in get_part / find_parts, off-palette search)
+- [ ] Teach the assistant the thumbnail keyframe
 - [ ] Shapes from the assistant: let a script proposal reference shapes proposed in the same turn (today: shape first, script after it's accepted)
 - [ ] Optional faster model (e.g. Sonnet) for routine edits, chosen in the Assist header
 - [x] Verbose transaction log, one file per send: every request and response of the turn (rounds, timestamps and durations, model / effort, thinking and text deltas, each tool call's input as streamed and its result, proposals, usage, stop reasons, errors, aborts) written to the vault (e.g. `Logs/assist/<animation>/<date-time>.jsonl`) through the app server – never the API key. To debug stuck / slow turns (2026-11-27: a module-copies request sat in round 2 of 8 – the server had no open API connection, so the stream had ended or dropped while the panel kept waiting). Log the proxy side too (request start / end, bytes, upstream status, disconnects), so a dropped stream shows as a last event with nothing after it

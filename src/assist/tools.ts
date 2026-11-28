@@ -21,6 +21,19 @@ export interface ToolDeps {
   roots: () => THREE.Object3D[];
   /** Annotations about a part (on it, a group or folder holding it, or one of its ancestors): "a1 \"Title\"". */
   annotationsOn?: (id: string) => string[];
+  /** A part's colours: shown (its meshes' colours now, most used first) and the base colour set for it, and where from. */
+  colourOf?: (o: THREE.Object3D) => { shown: string[]; set?: string; via?: string };
+  /** The palette: the scene's named colours and the generated palette's swatches (hex lower-case). */
+  palette?: () => { name: string; hex: string }[];
+}
+/** "#abc123" in the palette? */
+const inPalette = (hex: string, pal: { hex: string }[]) => pal.some((p) => p.hex.toLowerCase() === hex.toLowerCase());
+function colourText(o: THREE.Object3D, d: ToolDeps): string {
+  const c = d.colourOf?.(o);
+  if (!c) return '';
+  const pal = d.palette?.() ?? [];
+  const shown = c.shown.slice(0, 4).map((h) => `${h}${pal.length && !inPalette(h, pal) ? ' (off-palette)' : ''}`).join(', ') + (c.shown.length > 4 ? ` +${c.shown.length - 4}` : '');
+  return `colour ${shown || 'none'}${c.set ? ` – set ${c.set}${c.via ? ` via ${c.via}` : ''}` : ''}`;
 }
 
 const idOf = (o: THREE.Object3D) => (o.userData.id ?? o.name) as string;
@@ -54,11 +67,23 @@ export function readTools(d: ToolDeps): AssistTool[] {
   return [
     {
       name: 'find_parts',
-      description: 'Search the assembly tree for parts/assemblies whose id or name contains the query (case-insensitive; * is a wildcard). Returns ids usable in the script, with child counts, lock/hide state and size. Use it to find ids before writing script lines.',
-      input_schema: { type: 'object', properties: { query: { type: 'string', description: 'Text or glob, e.g. "V-005738" or "F2-17*"' }, limit: { type: 'number', description: 'Max results (default 40)' } }, required: ['query'] },
-      validate: (i) => check(i, { query: 'string', limit: 'number?' }),
+      description: 'Search the assembly tree for parts/assemblies whose id or name contains the query (case-insensitive; * is a wildcard; "*" for everything). Returns ids usable in the script, with child counts, lock/hide state, size and colour (shown, and the base colour set with where it comes from). Optional colour filter: "#rrggbb" (shows that colour), "off-palette" (shows a colour that isn\'t in the palette), "set" / "unset" (has a base colour set, own or inherited). With a colour filter, results are the smallest matching parts (meshes), not their assemblies.',
+      input_schema: { type: 'object', properties: { query: { type: 'string', description: 'Text or glob, e.g. "V-005738" or "F2-17*"' }, limit: { type: 'number', description: 'Max results (default 40)' },
+        color: { type: 'string', description: '"#rrggbb", "off-palette", "set" or "unset"' } }, required: ['query'] },
+      validate: (i) => check(i, { query: 'string', limit: 'number?', color: 'string?' }) ?? (i.color && !/^(#[0-9a-fA-F]{6}|off-palette|set|unset)$/.test(i.color) ? 'color is "#rrggbb", "off-palette", "set" or "unset"' : undefined),
       run(i) {
         const q = String(i.query).toLowerCase();
+        const pal = d.palette?.() ?? [];
+        const cf = i.color ? String(i.color).toLowerCase() : '';
+        const colourOk = (o: THREE.Object3D) => {
+          if (!cf) return true;
+          if (!(o as THREE.Mesh).isMesh) return false;       // colours are per mesh: match the meshes themselves
+          const c = d.colourOf?.(o); if (!c) return false;
+          if (cf === 'set') return !!c.set;
+          if (cf === 'unset') return !c.set;
+          if (cf === 'off-palette') return c.shown.some((h) => !inPalette(h, pal));
+          return c.shown.some((h) => h.toLowerCase() === cf);
+        };
         const re = q.includes('*') ? new RegExp(q.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')) : undefined;
         const lim = Math.min(Math.max(1, i.limit ?? 40), 200);
         const hits: string[] = [];
@@ -66,9 +91,11 @@ export function readTools(d: ToolDeps): AssistTool[] {
         for (const [id, o] of d.registry) {
           if (o.userData.removed) continue; // removed from this animation's assembly
           const name = `${o.name || ''} ${o.userData.label ?? ''}`.toLowerCase(), lid = id.toLowerCase();
-          if (re ? !(re.test(lid) || re.test(name)) : !(lid.includes(q) || name.includes(q))) continue;
+          if (q !== '*' && (re ? !(re.test(lid) || re.test(name)) : !(lid.includes(q) || name.includes(q)))) continue;
+          if (!colourOk(o)) continue;
           total++;
-          if (hits.length < lim) hits.push(`${id} | ${o.userData.label ? `"${o.userData.label}" ` : ''}${o.name || '-'} | ${kids(o).length} children | ${flags(o, d)} | size ${v3(box(o).getSize(new THREE.Vector3()))} m`);
+          const col = colourText(o, d);
+          if (hits.length < lim) hits.push(`${id} | ${o.userData.label ? `"${o.userData.label}" ` : ''}${o.name || '-'} | ${kids(o).length} children | ${flags(o, d)} | size ${v3(box(o).getSize(new THREE.Vector3()))} m${col ? ` | ${col}` : ''}`);
         }
         return done({ content: total ? `${total} match${total > 1 ? 'es' : ''}${total > lim ? ` (first ${lim})` : ''}:\n${hits.join('\n')}` : `No parts match "${i.query}".` });
       },
@@ -89,6 +116,7 @@ export function readTools(d: ToolDeps): AssistTool[] {
           b.isEmpty() ? 'bbox: (no geometry)' : `bbox: min ${v3(b.min)} max ${v3(b.max)} size ${v3(b.getSize(new THREE.Vector3()))} centre ${v3(b.getCenter(new THREE.Vector3()))}`,
           `world position: ${v3(o.getWorldPosition(new THREE.Vector3()))}`,
           `groups: ${groups.join(', ') || 'none'}`,
+          ...(d.colourOf ? [colourText(o, d)] : []),
           ...(d.annotationsOn ? [`annotations: ${d.annotationsOn(i.id).join(', ') || 'none'}`] : []),
           `children (${ch.length}):${ch.slice(0, 60).map((c) => `\n  ${idOf(c)}`).join('')}${ch.length > 60 ? `\n  … ${ch.length - 60} more` : ''}`,
         ].join('\n') });

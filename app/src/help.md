@@ -164,7 +164,7 @@ Sheet commands: `view` (iso, front, back, top, bottom, side, left, right, a save
 # AI assist
 
 Ask about the model or describe animation steps.
-- It looks things up in the tree, checks its scripts compile, and can take screenshots.
+- It looks things up in the tree (including each part's colour, and parts by colour – e.g. everything off-palette), checks its scripts compile, and can take screenshots. It knows the palette (the scene's named colours and the palette swatches) and the colours already used.
 - Every change comes as a card you **Accept** or **Reject**: script edits (with **▶ Preview**), groups, lock/hide/colour/remove changes, positions (where parts start – e.g. “stand the machine on the vessel”), shapes (make, change or delete – e.g. “a 6 m tube, 600 mm OD”), linked copies and annotations. It can propose copies and their annotations in one go: the annotations attach once the copies are accepted.
 - While a reply is still running its cards have **Accept now** / **Reject**: a change accepted then is applied at once (and isn't applied again when the reply ends). **Stop** keeps the cards made so far.
 - If the connection goes quiet (no data for 2 minutes) the reply ends with a message, keeping its cards – send again to retry. If the reply has finished but the panel stops showing it (still "Thinking…" a minute later), the turn is closed for you: your prompt, the reply and its cards stay in the chat.

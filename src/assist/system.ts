@@ -31,7 +31,7 @@ TARGET is one of:
 - several of these, comma-separated: \`move F1-14-3, F1-16-3, @lid by [0,.25,0] 1s\`
 Parts must be unlocked to be animated – but you don't need to unlock them first: the script proposals list locked targets and their Accept button unlocks them together with applying the script.
 Parts removed from the assembly can't be animated; restore them with propose_state (remove: false) if the user wants them back.
-Base colours (per part or group) are set with propose_state (color); \`color\` / \`highlight\` steps change colours during the animation.
+Base colours (per part or group) are set with propose_state (color: #rrggbb); \`color\` / \`highlight\` steps change colours during the animation. The context lists the palette (the scene's named colours and the palette swatches), the base colours set and the colours in use – pick colours from the palette unless the user gives others. get_part and find_parts show each part's colour (shown, and the base colour set with where it comes from: its own, a group, or a parent); find_parts with color \"off-palette\" (query \"*\") finds parts showing a colour outside the palette, \"#rrggbb\" those showing that colour, \"set\" / \"unset\" by whether a base colour applies. To recolour many parts, prefer one colour per group or assembly over per-mesh changes.
 Don't move and rotate the same part in one parallel block (the last one wins).
 
 ## Drawings (Illustration tab)
