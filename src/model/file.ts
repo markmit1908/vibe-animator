@@ -15,6 +15,7 @@
  */
 import type { ShapeDef } from '../scene/shapes';
 import type { CopyDef } from '../scene/copies';
+import type { Annotation } from '../view/annotations';
 import type { Snapshot } from '../scene/state';
 
 export const SOLVER = 'refuel-anim';
@@ -63,6 +64,8 @@ export interface AnimModel {
   shapes?: ShapeDef[];
   /** Linked copies of parts / groups: parts `copies/<id>/<source id>`. */
   copies?: CopyDef[];
+  /** Annotations: a title + note about parts / a @group / a folder, anchored at a picked point. */
+  annotations?: Annotation[];
   /** The moment shown as the card image on Home (a script `thumbnail` step wins). */
   keyframe?: { t: number; camera?: { pos: number[]; look: number[] }; mode?: 'shaded' | 'outline' | 'hidden' };
   view?: { camera?: { pos: number[]; look: number[] }; time?: number; mode?: 'shaded' | 'hidden' | 'outline'; paletteKey?: string };
@@ -76,7 +79,7 @@ export const joinLines = (l: Lines | undefined) => (Array.isArray(l) ? l.join('\
 export const splitLines = (s: string): string[] => s.replace(/\n$/, '').split('\n');
 
 /** Key order for writing (stable diffs); unknown keys follow in their own order. */
-const ORDER = ['name', 'uuid', 'solver', 'format', 'description', 'scene', 'script', 'drawings', 'snapshots', 'groups', 'folders', 'colors', 'removed', 'cutKeep', 'labels', 'views', 'keyframe', 'shapes', 'copies', 'view', 'chat'];
+const ORDER = ['name', 'uuid', 'solver', 'format', 'description', 'scene', 'script', 'drawings', 'snapshots', 'groups', 'folders', 'colors', 'removed', 'cutKeep', 'labels', 'views', 'keyframe', 'shapes', 'copies', 'annotations', 'view', 'chat'];
 
 export function canonical(m: AnimModel): string {
   const out: Record<string, unknown> = {};

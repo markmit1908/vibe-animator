@@ -39,6 +39,7 @@ import { DrawPanel } from '../view/drawPanel';
 import { svgToPdf } from '../drawing/pdf';
 import { ProgressSplash } from '../view/progress';
 import { partsInRect } from '../view/boxSelect';
+import { AnnotationLayer, type Annotation } from '../view/annotations';
 
 /** What the studio needs from its host app (SolverKit's editor). */
 export interface StudioIO {
@@ -87,15 +88,15 @@ function scheduleThumb(delay = 2000) {
 // ---------- undo / redo (⌘/Ctrl+Z, ⇧⌘Z / Ctrl+Y) of the animation's state ----------
 // Every change goes through edit(): before the first change of a burst (400 ms), the state as it was is pushed.
 // Script typing has the editor's own undo; script changes made by code (gizmo write-back, an accepted proposal) undo here.
-type UndoKey = 'colors' | 'snapshots' | 'groups' | 'folders' | 'cutKeep' | 'labels' | 'removed' | 'script' | 'drawings' | 'views' | 'keyframe' | 'shapes' | 'copies';
-const UNDO_KEYS: UndoKey[] = ['colors', 'snapshots', 'groups', 'folders', 'cutKeep', 'labels', 'removed', 'script', 'drawings', 'views', 'keyframe', 'shapes', 'copies'];
+type UndoKey = 'colors' | 'snapshots' | 'groups' | 'folders' | 'cutKeep' | 'labels' | 'removed' | 'script' | 'drawings' | 'views' | 'keyframe' | 'shapes' | 'copies' | 'annotations';
+const UNDO_KEYS: UndoKey[] = ['colors', 'snapshots', 'groups', 'folders', 'cutKeep', 'labels', 'removed', 'script', 'drawings', 'views', 'keyframe', 'shapes', 'copies', 'annotations'];
 type DocState = Partial<Record<UndoKey, any>>;
 const clone = <T,>(x: T): T => (x === undefined ? x : JSON.parse(JSON.stringify(x)));
 // its own copies: the live store (snapshots, groups, folders) shares the model's objects, and a change written into
 // them must not reach the "before" state an undo step saves
 const docNow: DocState = clone({
   colors: model.colors ?? {}, snapshots: model.snapshots ?? { active: 'default', items: {} }, groups: model.groups ?? {}, folders: model.folders ?? {},
-  labels: model.labels ?? {}, removed: model.removed ?? [], cutKeep: model.cutKeep ?? [], views: model.views ?? {}, keyframe: model.keyframe, shapes: model.shapes ?? [], copies: model.copies ?? [], script: model.script ? { language: 'anim', text: joinLines(model.script.text) } : undefined,
+  labels: model.labels ?? {}, removed: model.removed ?? [], cutKeep: model.cutKeep ?? [], views: model.views ?? {}, keyframe: model.keyframe, shapes: model.shapes ?? [], copies: model.copies ?? [], annotations: model.annotations ?? [], script: model.script ? { language: 'anim', text: joinLines(model.script.text) } : undefined,
   drawings: model.drawings ? { language: 'draw', text: joinLines(model.drawings.text) } : undefined,
 });
 const undoStack: DocState[] = [], redoStack: DocState[] = [];
@@ -280,6 +281,16 @@ async function buildCopies() {
   for (const [id, l] of Object.entries(labels)) { const o = built.registry.get(id); if (o) o.userData.label = l; }
 }
 await buildCopies();
+
+// ---------- annotations (model `annotations`): a title + note about parts / a group / a folder, with a leader to a picked point ----------
+let annotations: Annotation[] = clone(model.annotations ?? []);
+/** An annotation's target → parts: ids, @groups, "a, b" lists, or folder:Path (its groups, and its sub-folders', now). */
+function annotationParts(target: string): THREE.Object3D[] {
+  const specs = target.startsWith('folder:')
+    ? Object.entries(store.folders).filter(([p]) => { const f = target.slice(7); return p === f || p.startsWith(`${f}/`); }).flatMap(([, gs]) => gs.map((g) => `@${g}`))
+    : target.split(',').map((x) => x.trim()).filter(Boolean);
+  return resolveIds(specs).ids.map((id) => built.registry.get(id)).filter((o): o is THREE.Object3D => !!o && !isRemoved(o));
+}
 
 // ---------- placements (parts moved with the gizmo; saved in snapshots) ----------
 for (const o of built.registry.values()) { o.userData.homeP = o.position.toArray(); o.userData.homeQ = o.quaternion.toArray(); }
@@ -495,6 +506,7 @@ controls.target.copy(player.tl.camera.look);
 
 // ---------- UI ----------
 const ui = {
+  annotations: true,
   play: () => { if (player.time >= player.duration) player.seek(0); player.playing = !player.playing; },
   restart: () => { player.seek(0); player.playing = true; },
   speed: 1,
@@ -572,6 +584,7 @@ view.add(ui, 'xray').name('X-ray shells').onChange((on: boolean) => built.shellM
   m.transparent = true; m.depthWrite = !on;
 }));
 view.add(ui, 'followCamera').name('Scripted camera');
+view.add(ui, 'annotations').name('Annotations').onChange((on: boolean) => { if (annLayer) annLayer.visible = on; });
 const chapters = gui.addFolder('Chapters').close();
 function rebuildChapters() {
   [...chapters.controllers].forEach((c) => c.destroy());
@@ -1087,7 +1100,15 @@ const tree = new TreePanel(built, scene3, {
   },
   removedIds: () => [...removed],
   onRemove: (ids, rem) => setRemoved(ids, rem),
+  onAnnotate: () => startAnnotate(),
+  onFolderRename: (from, to) => {
+    let n = 0;
+    for (const a of annotations) if (a.target.startsWith('folder:')) { const f = a.target.slice(7); if (f === from || f.startsWith(`${from}/`)) { a.target = `folder:${to}${f.slice(from.length)}`; n++; } }
+    if (n) edit({ annotations: clone(annotations) });
+  },
   onGroupRename: (from, to) => {
+    const re = new RegExp(`@${from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w.-])`, 'g');
+    if (annotations.some((a) => re.test(a.target))) { for (const a of annotations) a.target = a.target.replace(re, `@${to}`); edit({ annotations: clone(annotations) }); }
     // script lines using @from follow the new name (one undoable edit); so does a base colour
     if (scriptPanel) {
       const re = new RegExp(`@${from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w.-])`, 'g');
@@ -1114,12 +1135,13 @@ let down = { x: 0, y: 0 };
 renderer.domElement.addEventListener('pointerdown', (e) => (down = { x: e.clientX, y: e.clientY }));
 renderer.domElement.addEventListener('pointerup', (e) => {
   if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return; // was a drag
-  if ((gizmo as any).axis) return; // clicked the gizmo
+  if ((gizmo as any).axis && !annotPick) return; // clicked the gizmo
   const ndc = new THREE.Vector2(((e.clientX - root.getBoundingClientRect().left) / W()) * 2 - 1, -((e.clientY - root.getBoundingClientRect().top) / H()) * 2 + 1);
   raycaster.setFromCamera(ndc, camera);
   const hits = raycaster.intersectObject(built.root, true).filter((h) =>
     (h.object as THREE.Mesh).isMesh && isShown(h.object) && !clipped(h.point));
   if (originPick) { if (hits[0]) originClick(hits[0]); return; }   // Set origin: the click picks geometry, not parts
+  if (annotPick) { finishAnnotate(hits[0]); return; }              // Annotate: the leader's tip
   tree.pick(hits[0]?.object, e.metaKey || e.ctrlKey || e.shiftKey);
 });
 const isShown = (o: THREE.Object3D | null): boolean => !o || (o.visible && isShown(o.parent));
@@ -1255,6 +1277,64 @@ gizmo.setSize(0.8);
 scene3.add(gizmo.getHelper());
 const proxy = new THREE.Object3D(); proxy.name = '__gizmo_pivot'; scene3.add(proxy);
 gizmoReady = true;
+// annotations in the view
+const annLayer = new AnnotationLayer(renderer.domElement.parentElement!, () => camera, renderer.domElement, {
+  anchor: (a) => {
+    const part = a.anchor ? built.registry.get(a.anchor.part) : undefined;
+    if (part && !isRemoved(part)) {
+      const p = part.localToWorld(new THREE.Vector3(...a.anchor!.local));
+      return { p, visible: isShown(part) && !clipped(p) };
+    }
+    const objs = annotationParts(a.target);
+    if (!objs.length) return null;
+    const b = worldBox(objs);
+    if (b.isEmpty()) return null;
+    const p = b.getCenter(new THREE.Vector3());
+    return { p, visible: objs.some((o) => isShown(o)) && !clipped(p) };
+  },
+  moved: (a, offset) => { const x = annotations.find((y) => y.id === a.id); if (x) { x.offset = offset; edit({ annotations: clone(annotations) }); } },
+  edited: (a, title, note) => { const x = annotations.find((y) => y.id === a.id); if (x) { x.title = title; x.note = note; edit({ annotations: clone(annotations) }); annLayer.set(annotations); } },
+  remove: (a) => { annotations = annotations.filter((y) => y.id !== a.id); edit({ annotations: clone(annotations) }); annLayer.set(annotations); toast('Annotation deleted (⌘Z brings it back)'); },
+  picked: (a) => { const objs = annotationParts(a.target); if (objs.length) tree.selectObjects(objs); },
+});
+annLayer.set(annotations);
+// Annotate: the selection's target, then a click on the geometry for the leader's tip (Esc: none – the box centre)
+let annotPick: { target: string } | null = null;
+function startAnnotate() {
+  const folder = tree.selectedFolder();
+  const specs = tree.selectedSpecs().filter((x) => x !== COPIES_ROOT && x !== SHAPES_ROOT);
+  const target = folder ? `folder:${folder}` : specs.join(', ');
+  if (!target) { toast('Select parts, a group or a folder to annotate'); return; }
+  annotPick = { target };
+  gizmo.detach();                                    // its handles would sit over the point to pick
+  renderer.domElement.style.cursor = 'crosshair';
+  toast('Click the point the annotation points at (Esc: its centre)', 4000);
+}
+function finishAnnotate(hit?: THREE.Intersection) {
+  const pick = annotPick; annotPick = null;
+  renderer.domElement.style.cursor = '';
+  if (!pick) return;
+  let anchor: Annotation['anchor'];
+  if (hit) {
+    let o: THREE.Object3D | null = hit.object;
+    while (o && !(o.userData.id && built.registry.get(o.userData.id) === o)) o = o.parent;
+    if (o) anchor = { part: o.userData.id, local: o.worldToLocal(hit.point.clone()).toArray().map((v) => +v.toFixed(5)) };
+  }
+  // the label: up and to the right of the point, about a quarter of the target's size (at least 0.4 m)
+  const objs = annotationParts(pick.target), b = worldBox(objs);
+  const size = Math.max(0.4, b.isEmpty() ? 1 : b.getSize(new THREE.Vector3()).length() * 0.25);
+  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion), right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+  const offset = up.multiplyScalar(size).add(right.multiplyScalar(size * 0.6)).toArray().map((v) => +v.toFixed(4));
+  let n = annotations.length + 1; while (annotations.some((a) => a.id === `a${n}`)) n++;
+  const folder = pick.target.startsWith('folder:') ? pick.target.slice(7).split('/').pop() : undefined;
+  const title = folder ?? (pick.target.startsWith('@') && !pick.target.includes(',') ? pick.target.slice(1) : objs.length === 1 ? String(objs[0].userData.label ?? objs[0].name ?? '') : '');
+  const a: Annotation = { id: `a${n}`, title, note: '', target: pick.target, ...(anchor ? { anchor } : {}), offset, show: true };
+  annotations.push(a);
+  edit({ annotations: clone(annotations) });
+  annLayer.set(annotations);
+  annLayer.edit(a.id);
+}
+
 // snap steps for the gizmo (remembered per browser)
 const snap = { move: 'off', rotate: '15°' };
 try { Object.assign(snap, JSON.parse(localStorage.getItem('refuel.snap') ?? '{}')); } catch { /* defaults */ }
@@ -1442,6 +1522,7 @@ on('keydown', (e: any) => {
   if (e.key === 'k' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); toggleKeep(); }
   if (e.key === 'e') setGizmoMode('rotate');
   if (e.key === 'Escape' && originPick) { endOrigin(); return; }
+  if (e.key === 'Escape' && annotPick) { finishAnnotate(); return; }
   if (e.key === 'Escape' && !cppop.hidden) { closeCopyPanel(); return; }
   if (e.key === 'Escape') { gizmo.detach(); tree.select(undefined, false); }
   if (e.key === 'r' && gizmo.object && player.time === 0) { // reset selection to its original placement
@@ -1948,7 +2029,7 @@ const undoToast = document.createElement('div');
 undoToast.style.cssText = 'position:absolute;left:50%;bottom:16px;transform:translateX(-50%);z-index:8;background:rgba(14,17,21,.95);color:#d7dde4;border:1px solid #2b3540;border-radius:6px;padding:5px 12px;font:12px system-ui;display:none;pointer-events:none';
 host().appendChild(undoToast);
 let toastTimer: number | undefined;
-const WHAT: Record<UndoKey, string> = { colors: 'colour', snapshots: 'move / lock / hide', groups: 'groups', folders: 'folders', cutKeep: 'keep uncut', labels: 'rename', removed: 'remove / restore', script: 'script edit', drawings: 'drawing script edit', views: 'views', keyframe: 'thumbnail', shapes: 'shapes', copies: 'copies' };
+const WHAT: Record<UndoKey, string> = { colors: 'colour', snapshots: 'move / lock / hide', groups: 'groups', folders: 'folders', cutKeep: 'keep uncut', labels: 'rename', removed: 'remove / restore', script: 'script edit', drawings: 'drawing script edit', views: 'views', keyframe: 'thumbnail', shapes: 'shapes', copies: 'copies', annotations: 'annotations' };
 async function restoreDoc(d: DocState, verb: string) {
   const what = UNDO_KEYS.filter((k) => d[k] !== undefined && JSON.stringify(d[k]) !== JSON.stringify(docNow[k])).map((k) => WHAT[k]);
   undoing = true;
@@ -1976,6 +2057,7 @@ async function restoreDoc(d: DocState, verb: string) {
     if ('keyframe' in d) keyframe = clone(d.keyframe);
     if (d.shapes) { shapes = clone(d.shapes); buildShapes(); applyPlacements(); applyColors(); tree.rebuild(); }
     // copies follow their sources: rebuild when they or what they copy (removed parts, groups) changed
+    if (d.annotations) { annotations = clone(d.annotations); annLayer.set(annotations); }
     if (d.copies || (copies.length && (d.removed || d.groups))) { if (d.copies) copies = clone(d.copies); await buildCopies(); applyPlacements(); applyColors(); await reconcile(copiesRoot); tree.rebuild(); }
     for (const o of built.root.children) await reconcile(o);
     if (d.script && scriptPanel && d.script.text !== scriptPanel.text) {
@@ -1985,7 +2067,7 @@ async function restoreDoc(d: DocState, verb: string) {
     if (d.drawings && drawPanel && d.drawings.text !== drawPanel.text) { docNow.drawings = clone(d.drawings); drawPanel.setText(d.drawings.text); }
     buildTimeline({ atStart: true });
     player.seek(Math.min(t, player.duration));
-    edit({ colors: { ...colors }, snapshots: { active: store.active, items: clone(store.snapshots) }, groups: clone(store.groups), folders: clone(store.folders), cutKeep: [...cutKeep], labels: { ...labels }, removed: [...removed], views: clone(views), shapes: clone(shapes), copies: clone(copies) });
+    edit({ colors: { ...colors }, snapshots: { active: store.active, items: clone(store.snapshots) }, groups: clone(store.groups), folders: clone(store.folders), cutKeep: [...cutKeep], labels: { ...labels }, removed: [...removed], views: clone(views), shapes: clone(shapes), copies: clone(copies), annotations: clone(annotations) });
     tree.rebuild();
     gizmoFor(gSel.objs.length === 1 ? gSel.objs[0] : undefined, gSel.spec, gSel.objs);
     updateTools(); renderSnapBar(); markDirty(false);
@@ -2034,6 +2116,7 @@ toolbar.innerHTML = `<button data-t="blank" title="Blank / unblank the selected 
   <div class="cppop" hidden></div>
   <button data-t="align" title="Align the selection to another part's box: sit on top, centre on, line up faces (sets the start pose)"><span class="i">⊟</span><span class="l">Align</span></button>
   <div class="alpop" hidden></div>
+  <button data-t="annot" title="Annotate: a title and note about the selected parts, group or folder – then click the point its leader points at"><span class="i">✎</span><span class="l">Annotate</span></button>
   <button data-t="thumb" title="Thumbnail: this moment (time, camera, view style) becomes the card image on Home. A thumbnail step in the script takes priority."><span class="i">📌</span><span class="l">Thumbnail</span></button>
   <button data-t="views" title="Camera views: save the current view (position and target), go to one, or put it in the script (camera <name> 2s)"><span class="i">📷</span><span class="l">Views</span></button>
   <div class="vpop" hidden></div>
@@ -2709,6 +2792,7 @@ toolbar.querySelector<HTMLElement>('[data-t=align]')!.onclick = () => {
   toolbar.querySelector('[data-t=align]')!.classList.toggle('on', !alpop.hidden);
   refreshAlignPanel();
 };
+toolbar.querySelector<HTMLElement>('[data-t=annot]')!.onclick = () => startAnnotate();
 toolbar.querySelector<HTMLElement>('[data-t=gmove]')!.onclick = () => setGizmoMode('translate');
 toolbar.querySelector<HTMLElement>('[data-t=grot]')!.onclick = () => setGizmoMode('rotate');
 toolbar.querySelector<HTMLElement>('[data-t=remove]')!.onclick = () => void removeSelection();
@@ -2973,6 +3057,7 @@ renderer.setAnimationLoop(() => {
   tree.update();
   scriptPanel?.setTiming(player.tl.lines, player.time);
   drawFrame();
+  annLayer.update();
   triad.render(renderer, camera, host().classList.contains('tree-collapsed') ? 12 : 352);
 });
 
@@ -3047,7 +3132,7 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 }
 
 // read-only handle for tests and debugging
-(window as any).__studio = { undoDepth: () => undoStack.length, get shapes() { return shapes; }, openCopyPanel, get downMods() { return downMods; }, slimCad, gizmo, boxSelect, get copies() { return copies; }, duplicateSelection, renderSheetPng, svgToPdf, vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
+(window as any).__studio = { get annotations() { return annotations; }, get annLayer() { return annLayer; }, startAnnotate, finishAnnotate, undoDepth: () => undoStack.length, get shapes() { return shapes; }, openCopyPanel, get downMods() { return downMods; }, slimCad, gizmo, boxSelect, get copies() { return copies; }, duplicateSelection, renderSheetPng, svgToPdf, vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
   /** tests: a block with many small parts buried behind the cut plane (x < 0), like dowels without holes */
   addTestBuried: (count = 60) => {
     const mk = (col: number) => withCaps(new THREE.MeshToonMaterial({ color: col, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));
@@ -3081,6 +3166,7 @@ return {
   dispose() {
     disposed = true;
     scriptPanel?.destroy();
+    annLayer.dispose();
     clearTimeout(chatTimer); clearTimeout(thumbTimer);
     assist?.dispose();
     renderer.setAnimationLoop(null);

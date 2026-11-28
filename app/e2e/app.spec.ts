@@ -815,6 +815,73 @@ test("undo: the first changes after opening undo (a folder with a CAD part and a
   await expect.poll(() => page.evaluate(() => Object.keys((window as any).__studio.store.groups).sort())).toEqual(groups0);
 });
 
+test("annotations: annotate a shape at a picked point (title + note), drag, edit, delete + undo, layer toggle, follows the part, folder / group renames, saved", async ({ page }) => {
+  await page.goto("/");
+  const box = (id: string, x: number) => ({ id, kind: "box", size: [1, 1, 1], position: [x, 0.5, 0], rotation: [0, 0, 0], color: "#c8d0d9" });
+  const m = { name: "Notes", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] }, shapes: [box("tank", 0), box("pump", 3)],
+    script: { language: "anim", text: 'label "N"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } },
+    groups: { pumps: ["shapes/pump"] }, folders: { Area1: ["pumps"] } };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Notes");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  await page.evaluate(() => { const s = (window as any).__studio; s.ui.followCamera = false; s.camera.position.set(0.5, 1.5, 9); s.controls.target.set(0.5, 0.5, 0); s.controls.update(); });
+  const scr = (p: number[]) => page.evaluate((p) => { const s = (window as any).__studio, T = s.THREE, c = s.renderer.domElement.getBoundingClientRect();
+    s.camera.updateMatrixWorld(); const v = new T.Vector3(...p).project(s.camera); return { x: c.left + (v.x + 1) / 2 * c.width, y: c.top + (1 - v.y) / 2 * c.height }; }, p);
+  await page.waitForTimeout(300);
+  // select the tank, Annotate, click its front face
+  await page.evaluate(() => (window as any).__studio.tree.selectId("shapes/tank"));
+  await page.evaluate(() => (document.querySelector("#toolsbar [data-t=annot]") as HTMLElement).click());   // (a click would scroll the page to reach it in this short window)
+  const front = await scr([0, 0.5, 0.5]);
+  await page.mouse.click(front.x, front.y);
+  const card = page.locator("#annotations .ann").first();
+  await expect(card.locator("input[data-f=t]")).toBeFocused();
+  await card.locator("input[data-f=t]").fill("Tank T-1");
+  await card.locator("textarea[data-f=n]").fill("Feed water, 2 m³");
+  await card.locator("[data-a=ok]").click();
+  await expect(card).toContainText("Tank T-1");
+  await expect.poll(async () => (await model(page, a.id)).annotations?.[0]).toMatchObject({ title: "Tank T-1", note: "Feed water, 2 m³", target: "shapes/tank", anchor: { part: "shapes/tank" }, show: true });
+  const an = (await model(page, a.id)).annotations[0];
+  expect(an.anchor.local[2]).toBeCloseTo(0.5, 2);                                  // on the front face, in the part's frame
+  await expect(page.locator("#annotations svg line")).toHaveCount(1);              // the leader
+  // drag the card: the offset changes and is saved
+  const b0 = (await card.boundingBox())!;
+  await page.mouse.move(b0.x + b0.width / 2, b0.y + b0.height / 2); await page.mouse.down(); await page.mouse.move(b0.x + b0.width / 2 + 80, b0.y + b0.height / 2 + 10, { steps: 4 }); await page.mouse.up();
+  await expect.poll(async () => (await model(page, a.id)).annotations[0].offset[0]).toBeGreaterThan(an.offset[0] + 0.2);
+  // the leader follows the part: move it (a shape's own numbers) – the anchor's screen point moves with it
+  const tip0 = await page.locator("#annotations svg circle").first().getAttribute("cx");
+  await page.evaluate(() => { const s = (window as any).__studio; s.tree.selectId("shapes/tank"); const g = s.gizmo; g.setMode("translate");
+    g.dispatchEvent({ type: "dragging-changed", value: true }); g.object.position.x -= 1; g.object.updateMatrixWorld(true); g.dispatchEvent({ type: "objectChange" }); g.dispatchEvent({ type: "dragging-changed", value: false }); });
+  await expect.poll(async () => Number(await page.locator("#annotations svg circle").first().getAttribute("cx"))).toBeLessThan(Number(tip0) - 20);
+  // layer toggle
+  await page.evaluate(() => { (window as any).__studio.annLayer.visible = false; });
+  await expect(card).toBeHidden();
+  await page.evaluate(() => { (window as any).__studio.annLayer.visible = true; });
+  await expect(card).toBeVisible();
+  // a folder annotation (no point picked: Esc → the folder's centre), then renaming the folder and its group keeps it attached
+  await page.locator("#tree .row .lbl", { hasText: /^▤?\s*Area1$/ }).first().click();
+  await page.evaluate(() => (window as any).__studio.startAnnotate());
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.keyboard.press("Escape");
+  await page.locator("#annotations .ann.edit input[data-f=t]").press("Enter");   // Enter saves (its card may sit under the right panel here)
+  await expect.poll(async () => (await model(page, a.id)).annotations?.[1]).toMatchObject({ title: "Area1", target: "folder:Area1" });
+  expect((await model(page, a.id)).annotations[1].anchor).toBeUndefined();
+  await page.evaluate(() => { (window as any).prompt = () => "Area-North"; (window as any).__studio.tree.renameSelected(); });
+  await expect.poll(async () => (await model(page, a.id)).annotations[1].target).toBe("folder:Area-North");
+  // delete the first one (Delete on the card), then undo brings it back
+  await card.click();
+  await card.press("Delete");
+  await expect.poll(async () => (await model(page, a.id)).annotations.length).toBe(1);
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.keyboard.press("Meta+z");
+  await expect.poll(() => page.evaluate(() => (window as any).__studio.annotations.length)).toBe(2);
+  await expect(page.locator("#annotations .ann", { hasText: "Tank T-1" })).toBeVisible();
+  // saved: after a reload both are back
+  await page.waitForTimeout(1200);
+  await page.reload();
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  await expect(page.locator("#annotations .ann")).toHaveCount(2);
+});
+
 test("the tree keeps its open rows, selection and scroll when it rebuilds (making a group)", async ({ page }) => {
   await page.goto("/");
   const { readFileSync } = await import("node:fs");

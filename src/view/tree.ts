@@ -95,6 +95,10 @@ export interface TreeHooks {
   removedIds?: () => string[];
   /** A group was renamed (rewrite @old → @new in the script) – called before the groups change is applied. */
   onGroupRename?: (from: string, to: string) => void;
+  /** a folder (and its sub-folders) renamed: path from → to */
+  onFolderRename?: (from: string, to: string) => void;
+  /** Annotate… (tree menu): the selection */
+  onAnnotate?: () => void;
   /** Kept uncut by the animation's list: 'own', 'inh' (through an assembly) or not. */
   keptOf?: (obj: THREE.Object3D | undefined, group?: string) => 'own' | 'inh' | undefined;
   /** Keep parts uncut / cut them again. */
@@ -602,6 +606,8 @@ export class TreePanel {
   /** Specs of the selection: "@group" for group rows, ids for parts (virtual folders: their parts). */
   /** Script specs of the selection ("@group", ids; folders: their groups). */
   selectedSpecs() { return this.selSpecs(); }
+  /** The folder path when the selection is one folder row. */
+  selectedFolder(): string | undefined { return this.sel.length === 1 && this.sel[0].folder ? this.sel[0].folder : undefined; }
   private selSpecs(): string[] {
     return [...new Set(this.sel.flatMap((n) => (n.group ? [`@${n.group}`] : n.folder !== undefined ? this.groupsIn(n).map((g) => `@${g}`) : n.id ? [n.id] : this.objsOf(n).map((o) => (o.userData.id ?? o.name) as string))))];
   }
@@ -696,6 +702,7 @@ export class TreePanel {
       this.materialize();
       const parent = parentPath(n.folder), to = parent ? `${parent}/${leaf}` : leaf;
       if (Object.keys(store.folders).some((p) => p === to || p.startsWith(`${to}/`))) return alert(`A folder "${leaf}" already exists here.`);
+      this.hooks.onFolderRename?.(n.folder, to);
       store.folders = Object.fromEntries(Object.entries(store.folders).map(([p, gs]) => [p === n.folder || p.startsWith(`${n.folder}/`) ? to + p.slice(n.folder!.length) : p, gs]));
       for (const p of [...this.openFolders]) if (p === n.folder || p.startsWith(`${n.folder}/`)) { this.openFolders.delete(p); this.openFolders.add(to + p.slice(n.folder.length)); }
       this.sel = []; this.groupsChanged();
@@ -787,6 +794,7 @@ export class TreePanel {
     }
     if (!many && n.obj && this.hooks.isCopy?.(n.obj)) items.push(['Edit copy…', () => this.hooks.onEditCopy!(n.obj!)]);
     if (!n.removedRow && n.folder === undefined && this.hooks.onDuplicate) items.push(['Duplicate (linked copy)  ⌘D', () => this.hooks.onDuplicate!()]);
+    if (!n.removedRow && this.hooks.onAnnotate && (n.folder || n.group || n.id)) items.push(['Annotate…', () => this.hooks.onAnnotate!()]);
     if (!many && n.id) items.push(['Copy id', () => navigator.clipboard?.writeText(n.id!)]);
     const m = document.createElement('div');
     m.className = 'treemenu';
