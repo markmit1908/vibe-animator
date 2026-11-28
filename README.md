@@ -110,7 +110,7 @@ save into the active snapshot automatically. **Save** also records the camera; *
 | **Show all** | Unblanks every part |
 | **Select by name** (**F**) | Selects every part whose name contains the text you type (or matches a `*` glob) – then blank, group or colour them |
 | **Set origin** (⊕) | Click a cylindrical face (its vertical axis, fitted from the mesh), then a flat face (its height); after you confirm, the CAD moves so that point is (0, 0, 0). Saved views and snapshot cameras move with it; absolute numbers in the script don't |
-| **Duplicate** (⧉, ⌘D) | A linked copy of the selected parts / assemblies / group (model `copies`), made in place and selected in Move mode – drag it away: shares and follows the source geometry, own position (its centre, m) and rotation (°), mirror (x/y/z) and a linear or circular array (members `pump-1-0`…) in the Copy panel, or moved with the gizmo; listed under **Copies**. Scripts: the copy's name (`pump-1`); parts inside it by full id (`copies/pump-1/<source id>`). Removing a source part removes it from its copies |
+| **Duplicate** (⧉, ⌘D) | A linked copy of the selected parts / assemblies / group (model `copies`), made in place and selected in Move mode – drag it away: shares and follows the source geometry, own position (its centre, m) and rotation (°), mirror (x/y/z) and a linear or circular array (members `pump-1-0`…) in the Copy panel (right-click the copy in the tree → **Edit copy…**; ✕ / Esc closes it), or moved with the gizmo; listed under **Copies**. Scripts: the copy's name (`pump-1`); parts inside it by full id (`copies/pump-1/<source id>`). Removing a source part removes it from its copies |
 | **Move** / **Rotate** (W / E) | The gizmo's mode for the selection (a part, several, a group – on their centre); works on locked CAD at t = 0. Alt/Option held: rotate in 15° steps. ⌘-drag (Ctrl-drag off the Mac) drags out a linked copy |
 | **Annotate** (✎) | A title + note about the selection (parts, a group or a folder – model `annotations`), with a leader to a picked point that follows its part; drag / double-click / Delete on the card; Controls → View → Annotations toggles them; folder and group renames keep them attached. **Controls → Annotations** lists them (filter, click to select + frame, show / edit / delete, ⤓ CSV); the assistant reads them (`get_annotations`) and proposes changes (`propose_annotations`) |
 | **Remove** / **Keep only** | Remove the selected parts from the animation, or keep only them (everything else removed: the fewest top-level pieces); Restore under **Removed**, one ⌘Z |
@@ -193,13 +193,13 @@ each @layer3 stagger 0.2s order ring {   # $ = the item, $i = its index (0, 1, 2
 
 The **Illustration** tab makes print-quality vector line drawings (SVG) from the geometry, not from screen pixels.
 Hidden lines are removed exactly, line weights are in mm at a chosen paper size and scale, and each line type is
-its own layer (`outline` 0.5, `crease` 0.25, `hidden` 0.18 dashed, `hatch` 0.18, `border`, `titleblock`; weights as in ISO 128). Views are orthographic.
+its own layer (`outline` 0.5, `crease` 0.25, `hidden` 0.18 dashed, `hatch` 0.18, `annotations`, `border`, `titleblock`; weights as in ISO 128). Views are orthographic.
 
 - **Controls:** paper, scale, hidden lines and crease angle for **⤓ Export SVG**, which draws the current view.
 - **Drawing script** (`.draw`, saved with the animation): each `sheet` is one drawing. Settings before the first sheet
-  are defaults. **▶ Preview sheet** draws the sheet the cursor is in and shows it over the view (download it as SVG
-  or PDF from there). **⤓ Save all** draws every sheet into the vault as `Drawings/<animation>/<sheet>.svg` and `.pdf`
-  (vector PDF at the paper size). Drawing a sheet never changes the studio's
+  are defaults. **▶ Preview** renders every sheet fast as a PNG and shows them (below; SVG / PDF of a sheet from there).
+  **⤓ Save all** draws every sheet into the vault as `Drawings/<animation>/<file>.svg`, `.pdf` (vector, at the paper
+  size) and `.png`. Long jobs show a progress card at the bottom left. Drawing a sheet never changes the studio's
   own view, pose or cut.
 
 ```

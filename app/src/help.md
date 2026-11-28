@@ -143,10 +143,11 @@ each @layer3 stagger 0.2s order ring {
 
 # Illustration
 
-Print-quality vector drawings (SVG) made from the geometry: exact hidden lines, line weights in mm, a layer per line type (outline, crease, hidden, border). Views are orthographic.
+Print-quality vector drawings (SVG) made from the geometry: exact hidden lines, line weights in mm, a layer per line type (outline, crease, hidden, hatch, annotations, border, title box). Views are orthographic.
 
 - **⤓ Export SVG** (Controls) draws the current view with the paper, scale and line settings above it.
-- The **drawing script** lists sheets. Lines before the first `sheet` are defaults. **▶ Preview sheet** draws the sheet at the cursor; **⤓ Save all** writes every sheet to `Drawings/<animation>/<sheet>.svg` and `.pdf` in the vault. The preview can download either. For batches outside the app: `npm run drawings -- "<animation>"` (with the app running).
+- The **drawing script** lists sheets. Lines before the first `sheet` are defaults. **▶ Preview** renders every sheet fast as a PNG (the cursor's sheet first) and shows them – see below. **⤓ Save all** writes every sheet to `Drawings/<animation>/` in the vault as `<file>.svg`, `.pdf` and `.png` (`file` sets the name; default: the sheet name). For batches outside the app: `npm run drawings -- "<animation>"` (with the app running).
+- Long jobs (Save all, exact drawings, PDF) show a progress card at the bottom left of the view.
 
 ```
 paper A1 landscape
