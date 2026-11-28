@@ -1244,6 +1244,33 @@ test("propose_state stays compact: over 200 parts listed one by one is a problem
   expect(small.changes[0].ids).toEqual(blocks.slice(0, 3));
 });
 
+test("tools bar: icon-only when the window is too short for it, two a row when even that doesn't fit; every button stays in view", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1400 });
+  await page.goto("/");
+  const m = { name: "Short window", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] },
+    shapes: [{ id: "b", kind: "box", size: [1, 1, 1], position: [0, 0.5, 0], rotation: [0, 0, 0], color: "#c8d0d9" }],
+    script: { language: "anim", text: 'label "S"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } }, groups: {} };
+  await api(page).post("/api/projects", { data: { name: m.name, problem: m } });
+  await open(page, "Short window");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const bar = page.locator("#toolsbar");
+  const fits = () => page.evaluate(() => { const b = document.getElementById("toolsbar")!, host = b.parentElement!.getBoundingClientRect();
+    return [...b.querySelectorAll(":scope > button")].every((x) => { const r = x.getBoundingClientRect(); return r.bottom <= host.bottom + 1 && r.right <= host.right; }); });
+  await expect(bar).not.toHaveClass(/compact/);                                       // tall: names under the icons
+  await expect(bar.locator("[data-t=dup] .l")).toBeVisible();
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await expect(bar).toHaveClass(/compact/);
+  await expect(bar).not.toHaveClass(/two/);
+  await expect(bar.locator("[data-t=dup] .l")).toBeHidden();
+  await expect(bar.locator("[data-t=dup]")).toHaveAttribute("title", /Duplicate/);   // the name is in the tooltip
+  expect(await fits()).toBe(true);
+  await page.setViewportSize({ width: 1600, height: 600 });
+  await expect(bar).toHaveClass(/two/);
+  expect(await fits()).toBe(true);
+  await page.setViewportSize({ width: 1600, height: 1400 });
+  await expect(bar).not.toHaveClass(/compact/);                                       // back when there's room
+});
+
 test("the tree keeps its open rows, selection and scroll when it rebuilds (making a group)", async ({ page }) => {
   await page.goto("/");
   const { readFileSync } = await import("node:fs");

@@ -25,7 +25,7 @@
 - [ ] Better transparency: making a part see-through to show what's inside is messy today, with every surface stacking up. Needs a clearer model: only the outer shell drawn see-through (depth pre-pass / first surface only), sorting or order-independent transparency, optional ghosted edges-only or x-ray styles, and contents drawn solid behind it
 - [ ] Annotations: ~~3D labels + leaders, edit, layer toggle (phase 1)~~, ~~list panel + CSV + assistant (2)~~, ~~script `annotate` steps (3)~~, ~~drawing-sheet callouts (4)~~; later: dimensions, callouts that avoid each other on sheets, copies carrying their sources' annotations
 - [x] Annotations panel: move the list out of Controls into a column to the right of the assembly tree, shown / hidden by the user (a toggle, remembered). Each row has a checkbox to show / hide that annotation; an annotation whose part (or all its target's parts) is hidden – blanked, removed, cut away – is hidden automatically, whatever its checkbox says (the checkbox keeps its state for when the part shows again)
-- [ ] Tools bar: taller than short windows now – make it scroll or fold into sections
+- [x] Tools bar: taller than short windows – icon-only, then two a row
 - [ ] Video export (frame-by-frame render of the timeline)
 - [ ] PNG export: option for a solid background / chosen size
 

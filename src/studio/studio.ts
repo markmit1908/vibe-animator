@@ -2452,7 +2452,15 @@ function layoutToolbar() {
   const vb = host().querySelector<HTMLElement>('#viewbar');
   const h = host().getBoundingClientRect();
   const below = vb ? vb.getBoundingClientRect().bottom - h.top + 8 : 64;
-  toolbar.style.top = `${Math.max(64, Math.round(below))}px`;
+  const top = Math.max(64, Math.round(below));
+  toolbar.style.top = `${top}px`;
+  // too tall for the window: icon-only buttons (the tooltips keep the names); still too tall: wrap into columns
+  const room = h.height - top - 8;
+  toolbar.classList.remove('compact', 'two');
+  if (toolbar.offsetHeight > room) {
+    toolbar.classList.add('compact');
+    if (toolbar.offsetHeight > room) toolbar.classList.add('two');   // two buttons a row
+  }
 }
 { const tro = new ResizeObserver(layoutToolbar); tro.observe(root); const vb = host().querySelector('#viewbar'); if (vb) tro.observe(vb); }
 layoutToolbar();
@@ -2463,6 +2471,10 @@ layoutToolbar();
     .studio-root.tree-collapsed #toolsbar { left: 12px; }
     #toolsbar button { width: 60px; text-align: center; line-height: 1.15; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 5px 2px; background: #1b222a; color: #d7dde4; border: 1px solid #2b3540; border-radius: 4px; cursor: pointer; font: inherit; }
     #toolsbar button .i { font-size: 16px; line-height: 1; }
+    #toolsbar.compact { gap: 3px; padding: 3px; }
+    #toolsbar.compact.two { display: grid; grid-template-columns: repeat(2, 32px); }
+    #toolsbar.compact > button { width: 32px; height: 30px; padding: 0; justify-content: center; }
+    #toolsbar.compact > button .l { display: none; }
     #toolsbar button:hover:not(:disabled) { background: #26303a; } #toolsbar button:disabled { opacity: .4; cursor: default; }
     #toolsbar button.on { border-color: #f2b705; color: #f2b705; }
     #toolsbar .vpop { position: absolute; left: calc(100% + 6px); top: 0; width: 250px; background: rgba(14,17,21,.97); border: 1px solid #2b3540; border-radius: 6px; padding: 8px; color: #d7dde4; display: flex; flex-direction: column; gap: 4px; }
