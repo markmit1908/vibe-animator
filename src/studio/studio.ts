@@ -91,11 +91,13 @@ type UndoKey = 'colors' | 'snapshots' | 'groups' | 'folders' | 'cutKeep' | 'labe
 const UNDO_KEYS: UndoKey[] = ['colors', 'snapshots', 'groups', 'folders', 'cutKeep', 'labels', 'removed', 'script', 'drawings', 'views', 'keyframe', 'shapes', 'copies'];
 type DocState = Partial<Record<UndoKey, any>>;
 const clone = <T,>(x: T): T => (x === undefined ? x : JSON.parse(JSON.stringify(x)));
-const docNow: DocState = {
+// its own copies: the live store (snapshots, groups, folders) shares the model's objects, and a change written into
+// them must not reach the "before" state an undo step saves
+const docNow: DocState = clone({
   colors: model.colors ?? {}, snapshots: model.snapshots ?? { active: 'default', items: {} }, groups: model.groups ?? {}, folders: model.folders ?? {},
   labels: model.labels ?? {}, removed: model.removed ?? [], cutKeep: model.cutKeep ?? [], views: model.views ?? {}, keyframe: model.keyframe, shapes: model.shapes ?? [], copies: model.copies ?? [], script: model.script ? { language: 'anim', text: joinLines(model.script.text) } : undefined,
   drawings: model.drawings ? { language: 'draw', text: joinLines(model.drawings.text) } : undefined,
-};
+});
 const undoStack: DocState[] = [], redoStack: DocState[] = [];
 let undoing = false, typing = false, burst = false, burstTimer: number | undefined;
 function recordUndo(patch: Partial<AnimModel>) {
@@ -289,6 +291,17 @@ function applyPlacements() {
     o.quaternion.fromArray(pl?.q ?? o.userData.homeQ);
     o.updateMatrix();
   }
+  refreshWorld(built.root);
+}
+/** World matrices from the local ones, down the whole tree – locked CAD skips this in three's own update. */
+function refreshWorld(root: THREE.Object3D) {
+  const walk = (o: THREE.Object3D) => {
+    if (o.matrixAutoUpdate) o.updateMatrix();
+    if (o.parent) o.matrixWorld.multiplyMatrices(o.parent.matrixWorld, o.matrix); else o.matrixWorld.copy(o.matrix);
+    for (const c of o.children) walk(c);
+  };
+  root.updateMatrix();
+  walk(root);
 }
 // ---------- base colours (model.colors: part id or @group → #hex; a part's own colour wins) ----------
 let colors: Record<string, string> = { ...(model.colors ?? {}) };
@@ -3034,7 +3047,7 @@ if (new URLSearchParams(location.search).get('debug') === 'model-proposals') {
 }
 
 // read-only handle for tests and debugging
-(window as any).__studio = { openCopyPanel, get downMods() { return downMods; }, slimCad, gizmo, boxSelect, get copies() { return copies; }, duplicateSelection, renderSheetPng, svgToPdf, vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
+(window as any).__studio = { undoDepth: () => undoStack.length, get shapes() { return shapes; }, openCopyPanel, get downMods() { return downMods; }, slimCad, gizmo, boxSelect, get copies() { return copies; }, duplicateSelection, renderSheetPng, svgToPdf, vectorDrawing, exportSvg, runSheet, previewSheet, saveAllSheets, get drawPanel() { return drawPanel; }, built, state, store, cad, tree, tools, camera, controls, ui, setOrigin, renderThumb, thumbFrame, capUniforms, withCaps, caps, drawing, renderer, scene3, drawFrame, THREE,
   /** tests: a block with many small parts buried behind the cut plane (x < 0), like dowels without holes */
   addTestBuried: (count = 60) => {
     const mk = (col: number) => withCaps(new THREE.MeshToonMaterial({ color: col, side: THREE.DoubleSide, clippingPlanes: built.clipPlanes, clipIntersection: true }));

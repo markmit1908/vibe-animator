@@ -778,6 +778,43 @@ test("copies of placed parts inside a copy land in place (Duplicate rebuilds cop
   expect(await off()).toEqual([0, 0]);
 });
 
+test("undo: the first changes after opening undo (a folder with a CAD part and a shape rotated; a new group)", async ({ page }) => {
+  await page.goto("/");
+  const { readFileSync } = await import("node:fs");
+  await api(page).put("/api/files/CAD/small.glb?overwrite=true", { data: readFileSync(new URL("./fixtures/small.glb", import.meta.url)) });
+  const box = { id: "bar", kind: "box", size: [2, 0.2, 0.2], position: [0, 1, 0], rotation: [0, 0, 0], color: "#c8d0d9" };
+  const pre = { name: "First undo", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [{ id: "plant", file: "CAD/small.glb", up: "y", position: [0, 0, 0] }] }, shapes: [box],
+    script: { language: "anim", text: 'label "U"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } },
+    // the folder and its group are in the file, so the rotation below is the first change after opening
+    groups: { g: ["plant/model/Plant/Pin_1", "shapes/bar"] }, folders: { F: ["g"] } };
+  await api(page).post("/api/projects", { data: { name: pre.name, problem: pre } });
+  const pin = "plant/model/Plant/Pin_1";
+  await open(page, "First undo");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const quat = (id: string) => page.evaluate((id) => { const s = (window as any).__studio, T = s.THREE, o = s.built.registry.get(id); o.updateWorldMatrix(true, false);
+    const q = new T.Quaternion(); o.matrixWorld.decompose(new T.Vector3(), q, new T.Vector3()); return q.toArray().map((v: number) => +v.toFixed(3)); }, id);
+  const pin0 = await quat(pin), bar0 = await quat("shapes/bar");
+  await page.locator("#tree .row .lbl", { hasText: /^▤?\s*F$/ }).first().click();
+  await page.evaluate(() => { const g = (window as any).__studio.gizmo; g.setMode("rotate"); g.dispatchEvent({ type: "dragging-changed", value: true }); g.object.rotateY(Math.PI / 2); g.object.updateMatrixWorld(true); g.dispatchEvent({ type: "objectChange" }); g.dispatchEvent({ type: "dragging-changed", value: false }); });
+  await expect.poll(() => quat(pin)).not.toEqual(pin0);
+  await page.waitForTimeout(600);
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.keyboard.press("Meta+z");
+  await expect.poll(() => quat(pin)).toEqual(pin0);                                // the CAD part goes back…
+  expect(await quat("shapes/bar")).toEqual(bar0);                                   // …and the shape
+  expect(await page.evaluate((pin) => (window as any).__studio.state.placements[pin] ?? null, pin)).toBeNull();
+  // a fresh page: the first group change undoes too
+  await page.reload();
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const groups0 = await page.evaluate(() => Object.keys((window as any).__studio.store.groups).sort());
+  await page.evaluate((pin) => { const s = (window as any).__studio; (window as any).prompt = () => "newgrp"; s.tree.selectId(pin); s.tree.groupSelected(); }, pin);
+  await expect.poll(() => page.evaluate(() => !!(window as any).__studio.store.groups.newgrp)).toBe(true);
+  await page.waitForTimeout(600);
+  await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+  await page.keyboard.press("Meta+z");
+  await expect.poll(() => page.evaluate(() => Object.keys((window as any).__studio.store.groups).sort())).toEqual(groups0);
+});
+
 test("the tree keeps its open rows, selection and scroll when it rebuilds (making a group)", async ({ page }) => {
   await page.goto("/");
   const { readFileSync } = await import("node:fs");
