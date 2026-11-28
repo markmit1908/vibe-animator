@@ -9,7 +9,7 @@ import { Button } from "@solverkit/ui";
 import { Pause, Play } from "lucide-react";
 import type { AssistHost, AssistMount, Effort } from "../../src/assist/host";
 import type { ChatMessage, Proposal } from "../../src/assist/loop";
-import { sizeKeys, type CopyChange, type PlacementPlan, type ShapeChange } from "../../src/assist/tools";
+import { sizeKeys, type AnnotationChange, type CopyChange, type PlacementPlan, type ShapeChange } from "../../src/assist/tools";
 
 interface View { host: AssistHost; script: string; previewing?: string }
 
@@ -109,6 +109,20 @@ function registerKinds() {
           {c.action} <b>{c.rename ? `${c.name} → ${c.rename}` : c.name}</b> of {short(d.of)}: centre [{d.position.join(", ")}]
           {d.rotation.some((r) => r) ? `, rotated [${d.rotation.join(", ")}]°` : ""}{d.mirror ? `, mirrored ${d.mirror}` : ""}{arr}
           <span className="text-muted-foreground">{` – sources at [${c.centre?.join(", ")}]`}</span>
+        </>;
+      })} />
+    ),
+  });
+  proposalKinds.register({
+    id: "annotations",
+    queueLabel: () => "Annotations",
+    render: (p: SkProposal, _v: View, onDecide?: (a: boolean) => void) => (
+      <ChangeCard p={p} title="Annotations" onDecide={onDecide} lines={(p.changes as AnnotationChange[]).map((c) => {
+        if (c.action === "delete") return <>delete <b>{c.id}</b></>;
+        const pt = c.point ? ` at [${c.point.map((n) => +n.toFixed(2)).join(", ")}]` : "";
+        return <>
+          {c.action} <b>{c.title ?? c.id}</b>{c.target ? <> on {c.target} ({plural(c.parts ?? 0)})</> : null}{pt}{c.show === false ? ", hidden" : ""}
+          {c.note ? <span className="text-muted-foreground">{` – ${c.note.length > 90 ? c.note.slice(0, 90) + "…" : c.note}`}</span> : null}
         </>;
       })} />
     ),

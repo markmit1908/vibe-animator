@@ -257,6 +257,43 @@ export interface ModelProposeDeps {
   /** The studio's linked copies, and the box centre of what a copy would copy (null when nothing matches). */
   copies?: () => CopyDef[];
   sourcesCentre?: (of: string[]) => { centre: number[] | null; unknown: string[] };
+  /** Annotations as the assistant sees them (parts resolved now, the anchor's world point). */
+  annotations?: () => AnnotationInfo[];
+  /** An annotation target → how many parts it covers now, and what didn't resolve. */
+  annotationTarget?: (target: string) => { parts: number; unknown: string[] };
+}
+export interface AnnotationInfo { id: string; title: string; note: string; target: string; parts: string[]; point: number[] | null; show: boolean }
+/** One annotation change, checked (create: a new id is given at accept time). */
+export interface AnnotationChange { action: 'create' | 'update' | 'delete'; id?: string; title?: string; note?: string; target?: string; point?: number[]; show?: boolean; parts?: number }
+
+function annotationChanges(input: any[], d: ModelProposeDeps): { changes: AnnotationChange[]; problems: string[] } {
+  const problems: string[] = [], changes: AnnotationChange[] = [];
+  const have = new Set(d.annotations!().map((a) => a.id));
+  for (const c of input) {
+    const action = c.action;
+    if (!['create', 'update', 'delete'].includes(action)) { problems.push(`unknown action "${action}"`); continue; }
+    if (action !== 'create' && !have.has(String(c.id ?? ''))) { problems.push(`no annotation "${c.id}" (get_annotations lists them)`); continue; }
+    if (action === 'delete') { changes.push({ action, id: String(c.id) }); continue; }
+    const ch: AnnotationChange = { action, ...(action === 'update' ? { id: String(c.id) } : {}) };
+    if (c.title !== undefined) ch.title = String(c.title).trim();
+    if (c.note !== undefined) ch.note = String(c.note);
+    if (c.show !== undefined) ch.show = !!c.show;
+    if (action === 'create' && !ch.title) problems.push('create: a title');
+    if (c.target !== undefined || action === 'create') {
+      const t = String(c.target ?? '').trim();
+      if (!t) { problems.push(`${ch.title || ch.id}: target – part ids / names, @group or folder:Path`); continue; }
+      const res = d.annotationTarget!(t);
+      if (res.unknown.length) problems.push(`${ch.title || ch.id}: unknown ${res.unknown.join(', ')}`);
+      else if (!res.parts) problems.push(`${ch.title || ch.id}: "${t}" covers no parts`);
+      ch.target = t; ch.parts = res.parts;
+    }
+    if (c.point !== undefined && c.point !== null) {
+      if (!Array.isArray(c.point) || c.point.length !== 3 || c.point.some((x: unknown) => !Number.isFinite(Number(x)))) problems.push(`${ch.title || ch.id}: point must be [x, y, z]`);
+      else ch.point = c.point.map(Number);
+    }
+    changes.push(ch);
+  }
+  return { changes, problems };
 }
 
 /** One linked-copy change, checked: the full new definition (create/update) or the name (delete). */
@@ -508,6 +545,41 @@ export function modelProposeTools(d: ModelProposeDeps): AssistTool[] {
         const label = ok ? `✓ ${changes.length} cop${changes.length > 1 ? 'ies' : 'y'}` : `${problems.length} problem${problems.length > 1 ? 's' : ''}`;
         yield { type: 'proposal', kind: 'copies', summary: i.summary, check: { ok, label }, changes, problems } as AssistEvent;
         return { content: ok ? `Proposed (${label}); waiting for the user.\n${changes.filter((c) => c.def).map((c) => `${c.def!.id}: sources' centre [${c.centre}] → [${c.def!.position}]`).join('\n')}` : `Problems:\n${problems.join('\n')}\nFix them and propose again.` };
+      },
+    } satisfies AssistTool] : []),
+    ...(d.annotations && d.annotationTarget ? [{
+      name: 'get_annotations',
+      description: 'List the annotations (title + note about parts, a @group or a folder, with a leader to a point): id, title, note, target, the part ids it covers now, the leader point [x,y,z] and whether it is shown. Optional filter: text matched against title / note / target / part ids.',
+      input_schema: { type: 'object', properties: { filter: { type: 'string' } } },
+      async *run(i: any) {
+        const f = String(i.filter ?? '').toLowerCase();
+        const list = d.annotations!().filter((a) => !f || [a.title, a.note, a.target, ...a.parts].some((x) => x.toLowerCase().includes(f)));
+        const r2a = (v: number[] | null) => (v ? `[${v.map((x) => +x.toFixed(2)).join(', ')}]` : 'centre');
+        return { content: list.length ? list.map((a) => `${a.id}: "${a.title}"${a.show ? '' : ' (hidden)'} – ${a.target} (${a.parts.length} part${a.parts.length === 1 ? '' : 's'}${a.parts.length <= 5 ? `: ${a.parts.join(', ')}` : ''}) at ${r2a(a.point)}${a.note ? `\n  ${a.note.replace(/\n/g, '\n  ')}` : ''}`).join('\n') : (f ? `No annotations match "${i.filter}".` : 'No annotations yet.') };
+      },
+    } satisfies AssistTool, {
+      name: 'propose_annotations',
+      description: 'Propose annotations: a title and a note about parts (ids, names, globs), a @group, a list, or a folder ("folder:Path/Sub"), shown in the view as a card with a leader. create {title, note, target, point?} – point [x,y,z] is where the leader points (on the target; default its centre; read boxes with get_part); update {id, title?, note?, target?, point?, show?}; delete {id}. Ids come from get_annotations. Each becomes a card the user accepts.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          summary: { type: 'string' },
+          changes: { type: 'array', items: { type: 'object', properties: {
+            action: { type: 'string', enum: ['create', 'update', 'delete'] },
+            id: { type: 'string' }, title: { type: 'string' }, note: { type: 'string' }, target: { type: 'string' },
+            point: { ...vec3, description: 'World [x, y, z] m for the leader tip' }, show: { type: 'boolean' },
+          }, required: ['action'] } },
+        },
+        required: ['summary', 'changes'],
+      },
+      writing: 'annotations',
+      validate: (i: any) => check(i, { summary: 'string' }) ?? (Array.isArray(i.changes) && i.changes.length ? undefined : '"changes" must be a non-empty array'),
+      async *run(i: any) {
+        const { changes, problems } = annotationChanges(i.changes, d);
+        const ok = !problems.length;
+        const label = ok ? `✓ ${changes.length} annotation${changes.length > 1 ? 's' : ''}` : `${problems.length} problem${problems.length > 1 ? 's' : ''}`;
+        yield { type: 'proposal', kind: 'annotations', summary: i.summary, check: { ok, label }, changes, problems } as AssistEvent;
+        return { content: ok ? `Proposed (${label}); waiting for the user.` : `Problems:\n${problems.join('\n')}\nFix them and propose again.` };
       },
     } satisfies AssistTool] : []),
     {

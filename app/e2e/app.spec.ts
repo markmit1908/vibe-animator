@@ -882,6 +882,68 @@ test("annotations: annotate a shape at a picked point (title + note), drag, edit
   await expect(page.locator("#annotations .ann")).toHaveCount(2);
 });
 
+test("annotations list + assistant: filter, click to select and frame, show / delete, CSV; get_annotations, propose_annotations (create at a point, update, delete)", async ({ page }) => {
+  await page.goto("/");
+  const box = (id: string, x: number) => ({ id, kind: "box", size: [1, 1, 1], position: [x, 0.5, 0], rotation: [0, 0, 0], color: "#c8d0d9" });
+  const anns = [
+    { id: "a1", title: "Tank T-1", note: "Feed water", target: "shapes/tank", anchor: { part: "shapes/tank", local: [0, 0, 0.5] }, offset: [0.5, 0.8, 0], show: true },
+    { id: "a2", title: "Pumps", note: "Two duty pumps\nOne spare", target: "@pumps", offset: [0.5, 0.8, 0], show: true },
+  ];
+  const m = { name: "Notes list", solver: "refuel-anim", format: 1, scene: { generated: false, cad_models: [] }, shapes: [box("tank", 0), box("pump", 6)],
+    script: { language: "anim", text: 'label "N"' }, snapshots: { active: "default", items: { default: { locked: {}, hidden: {} } } },
+    groups: { pumps: ["shapes/pump"] }, annotations: anns };
+  const a = await (await api(page).post("/api/projects", { data: { name: m.name, problem: m } })).json();
+  await open(page, "Notes list");
+  await expect(page.locator("#script .status")).toHaveText("✓", { timeout: 15_000 });
+  const list = page.locator(".annlist");
+  await expect(list.locator(".row")).toHaveCount(2);
+  // filter
+  await list.locator("input").fill("spare");
+  await expect(list.locator(".row")).toHaveCount(1);
+  await expect(list.locator(".row")).toContainText("Pumps");
+  await list.locator("input").fill("");
+  // click a row: selects its parts and frames them
+  const tgt0 = await page.evaluate(() => (window as any).__studio.controls.target.toArray());
+  await list.locator(".row", { hasText: "Pumps" }).locator(".tx").click();
+  await expect.poll(() => page.evaluate(() => (window as any).__studio.tree.selectedSpecs())).toEqual(["shapes/pump"]);
+  await expect.poll(() => page.evaluate(() => +(window as any).__studio.controls.target.x.toFixed(2))).toBe(6);
+  expect(tgt0[0]).not.toBe(6);
+  // hide one from the list, then delete it
+  await list.locator(".row", { hasText: "Pumps" }).locator("[data-r=show]").click();
+  await expect.poll(async () => (await model(page, a.id)).annotations.find((x: any) => x.id === "a2").show).toBe(false);
+  await expect(page.locator("#annotations .ann", { hasText: "Pumps" })).toBeHidden();
+  await list.locator(".row", { hasText: "Pumps" }).locator("[data-r=del]").click();
+  await expect.poll(async () => (await model(page, a.id)).annotations.length).toBe(1);
+  // CSV
+  const dl = page.waitForEvent("download");
+  await list.locator("[data-a=csv]").click();
+  const csv = readFileSync(await (await dl).path()!, "utf8");
+  expect(csv.split("\n")[0]).toBe("id,title,note,target,parts,x,y,z");
+  expect(csv).toContain('"a1","Tank T-1","Feed water","shapes/tank","shapes/tank",0.0000,0.5000,0.5000');
+  // the assistant: read, then propose
+  const tool = (name: string, input: any) => page.evaluate(async ({ name, input }) => {
+    const s = (window as any).__studio, t = s.tools.find((x: any) => x.name === name);
+    let p: any, out: any; const g = t.run(input); for (let r = await g.next(); ; r = await g.next()) { if (r.done) { out = r.value; break; } if (r.value.type === "proposal") { const { type, ...x } = r.value; p = x; } }
+    return { p, content: out?.content };
+  }, { name, input });
+  const read = await tool("get_annotations", {});
+  expect(read.content).toContain('a1: "Tank T-1" – shapes/tank (1 part: shapes/tank) at [0, 0.5, 0.5]');
+  const bad = await tool("propose_annotations", { summary: "x", changes: [{ action: "create", title: "X", target: "@nope" }, { action: "update", id: "zz" }, { action: "create", target: "shapes/tank" }] });
+  expect(bad.p.check.ok).toBe(false);
+  expect(bad.p.problems.join(" | ")).toMatch(/unknown @nope.*no annotation "zz".*create: a title/);
+  const good = await tool("propose_annotations", { summary: "Label the pump, retitle the tank", changes: [
+    { action: "create", title: "Pump P-1", note: "Duty", target: "@pumps", point: [6, 1, 0] }, { action: "update", id: "a1", title: "Tank T-1 (feed)" }] });
+  expect(good.p.check.ok).toBe(true);
+  await page.evaluate((p) => (window as any).__studio.assist.host.accept(p), good.p);
+  await expect.poll(async () => (await model(page, a.id)).annotations.map((x: any) => x.title).sort()).toEqual(["Pump P-1", "Tank T-1 (feed)"]);
+  const made = (await model(page, a.id)).annotations.find((x: any) => x.title === "Pump P-1");
+  expect(made).toMatchObject({ target: "@pumps", note: "Duty", anchor: { part: "shapes/pump", local: [0, 0.5, 0] } });   // top face of the pump, in its frame
+  await expect(list.locator(".row")).toHaveCount(2);
+  const del = await tool("propose_annotations", { summary: "Remove it", changes: [{ action: "delete", id: made.id }] });
+  await page.evaluate((p) => (window as any).__studio.assist.host.accept(p), del.p);
+  await expect.poll(async () => (await model(page, a.id)).annotations.length).toBe(1);
+});
+
 test("the tree keeps its open rows, selection and scroll when it rebuilds (making a group)", async ({ page }) => {
   await page.goto("/");
   const { readFileSync } = await import("node:fs");

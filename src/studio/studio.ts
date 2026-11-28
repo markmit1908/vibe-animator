@@ -28,7 +28,7 @@ import type { AssistHost, AssistMount } from '../assist/host';
 import { assistClient, migrateChat, runAssist, type ChatMessage } from '../assist/loop';
 import type Anthropic from '@anthropic-ai/sdk';
 import { ASSIST_SYSTEM } from '../assist/system';
-import { readTools, proposeTools, modelProposeTools, type ToolDeps, type ShapeChange, type CopyChange, type PlacementInput, type PlacementPlan } from '../assist/tools';
+import { readTools, proposeTools, modelProposeTools, type ToolDeps, type ShapeChange, type CopyChange, type AnnotationChange, type PlacementInput, type PlacementPlan } from '../assist/tools';
 import type { Proposal } from '../assist/loop';
 import { parseAnim, toActions, type ParseError } from '../script/anim';
 import { ScriptError } from '../timeline/compile';
@@ -772,6 +772,8 @@ const tools = [
   ...readTools(toolDeps),
   ...proposeTools({ checkScript: toolDeps.checkScript, currentScript: () => scriptPanel?.text ?? '' }),
   ...modelProposeTools({ resolve: resolveIds, groups: () => store.groups, shapes: () => shapes, planPlacement, copies: () => copies,
+    annotations: () => annotations.map((a) => ({ id: a.id, title: a.title, note: a.note, target: a.target, parts: annotationParts(a.target).map(idOfObj), point: annLayerAnchor(a)?.p.toArray() ?? null, show: a.show })),
+    annotationTarget: (target) => { const unknown = target.startsWith('folder:') ? (Object.keys(store.folders).some((p) => p === target.slice(7) || p.startsWith(`${target.slice(7)}/`)) ? [] : [target]) : resolveIds(target.split(',').map((x) => x.trim()).filter(Boolean)).unknown; return { parts: annotationParts(target).length, unknown }; },
     sourcesCentre: (of) => { const r = copySources({ id: '', of, position: [0, 0, 0], rotation: [0, 0, 0] }); const b = atStart(() => sourcesBox(r.objs)); return { centre: b.isEmpty() ? null : b.getCenter(new THREE.Vector3()).toArray(), unknown: r.unknown }; } }),
 ];
 
@@ -1014,6 +1016,7 @@ const assistHost: AssistHost = {
     if (p.kind === 'state') { await applyStateChanges(p.changes as any); return; }
     if (p.kind === 'shapes') { await applyShapeChanges(p.changes as ShapeChange[]); return; }
     if (p.kind === 'copies') { await applyCopyChanges(p.changes as CopyChange[]); return; }
+    if (p.kind === 'annotations') { applyAnnotationChanges(p.changes as AnnotationChange[]); return; }
     if (p.kind === 'placement') { await applyPlacementChanges(p.changes as PlacementPlan[]); return; }
     if (p.kind !== 'script edit' || !scriptPanel) return;
     if (previewing) previewProposal(undefined);
@@ -1104,11 +1107,11 @@ const tree = new TreePanel(built, scene3, {
   onFolderRename: (from, to) => {
     let n = 0;
     for (const a of annotations) if (a.target.startsWith('folder:')) { const f = a.target.slice(7); if (f === from || f.startsWith(`${from}/`)) { a.target = `folder:${to}${f.slice(from.length)}`; n++; } }
-    if (n) edit({ annotations: clone(annotations) });
+    if (n) saveAnnotations();
   },
   onGroupRename: (from, to) => {
     const re = new RegExp(`@${from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w.-])`, 'g');
-    if (annotations.some((a) => re.test(a.target))) { for (const a of annotations) a.target = a.target.replace(re, `@${to}`); edit({ annotations: clone(annotations) }); }
+    if (annotations.some((a) => re.test(a.target))) { for (const a of annotations) a.target = a.target.replace(re, `@${to}`); saveAnnotations(); }
     // script lines using @from follow the new name (one undoable edit); so does a base colour
     if (scriptPanel) {
       const re = new RegExp(`@${from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w.-])`, 'g');
@@ -1278,26 +1281,133 @@ scene3.add(gizmo.getHelper());
 const proxy = new THREE.Object3D(); proxy.name = '__gizmo_pivot'; scene3.add(proxy);
 gizmoReady = true;
 // annotations in the view
+/** An annotation's leader point now (its part's picked point, else the target's box centre) and whether it can be seen. */
+function annLayerAnchor(a: Annotation): { p: THREE.Vector3; visible: boolean } | null {
+  const part = a.anchor ? built.registry.get(a.anchor.part) : undefined;
+  if (part && !isRemoved(part)) {
+    const p = part.localToWorld(new THREE.Vector3(...a.anchor!.local));
+    return { p, visible: isShown(part) && !clipped(p) };
+  }
+  const objs = annotationParts(a.target);
+  if (!objs.length) return null;
+  const b = worldBox(objs);
+  if (b.isEmpty()) return null;
+  const p = b.getCenter(new THREE.Vector3());
+  return { p, visible: objs.some((o) => isShown(o)) && !clipped(p) };
+}
 const annLayer = new AnnotationLayer(renderer.domElement.parentElement!, () => camera, renderer.domElement, {
-  anchor: (a) => {
-    const part = a.anchor ? built.registry.get(a.anchor.part) : undefined;
-    if (part && !isRemoved(part)) {
-      const p = part.localToWorld(new THREE.Vector3(...a.anchor!.local));
-      return { p, visible: isShown(part) && !clipped(p) };
-    }
-    const objs = annotationParts(a.target);
-    if (!objs.length) return null;
-    const b = worldBox(objs);
-    if (b.isEmpty()) return null;
-    const p = b.getCenter(new THREE.Vector3());
-    return { p, visible: objs.some((o) => isShown(o)) && !clipped(p) };
-  },
-  moved: (a, offset) => { const x = annotations.find((y) => y.id === a.id); if (x) { x.offset = offset; edit({ annotations: clone(annotations) }); } },
-  edited: (a, title, note) => { const x = annotations.find((y) => y.id === a.id); if (x) { x.title = title; x.note = note; edit({ annotations: clone(annotations) }); annLayer.set(annotations); } },
-  remove: (a) => { annotations = annotations.filter((y) => y.id !== a.id); edit({ annotations: clone(annotations) }); annLayer.set(annotations); toast('Annotation deleted (⌘Z brings it back)'); },
-  picked: (a) => { const objs = annotationParts(a.target); if (objs.length) tree.selectObjects(objs); },
+  anchor: (a) => annLayerAnchor(a),
+  moved: (a, offset) => { const x = annotations.find((y) => y.id === a.id); if (x) { x.offset = offset; saveAnnotations(); } },
+  edited: (a, title, note) => { const x = annotations.find((y) => y.id === a.id); if (x) { x.title = title; x.note = note; saveAnnotations(); } },
+  remove: (a) => { annotations = annotations.filter((y) => y.id !== a.id); saveAnnotations(); toast('Annotation deleted (⌘Z brings it back)'); },
+  picked: (a) => { const objs = annotationParts(a.target); if (objs.length) tree.selectObjects(objs); refreshAnnList(); },
 });
 annLayer.set(annotations);
+/** Annotations changed: save (undoable), cards, list. */
+function saveAnnotations() {
+  edit({ annotations: clone(annotations) });
+  annLayer.set(annotations);
+  refreshAnnList();
+}
+/** Point the camera at objects from the current direction (fit their box). */
+function frameObjects(objs: THREE.Object3D[]) {
+  const b = worldBox(objs);
+  if (b.isEmpty()) return;
+  const c = b.getCenter(new THREE.Vector3()), r = Math.max(b.getSize(new THREE.Vector3()).length() / 2, 0.25);
+  const dir = camera.position.clone().sub(controls.target).normalize();
+  ui.followCamera = false; gui.controllersRecursive().forEach((x) => x.updateDisplay());
+  camera.position.copy(c).addScaledVector(dir, r / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.15);
+  controls.target.copy(c); controls.update();
+}
+// ---- the Annotations list (Controls): filter, click = select + frame, edit / show / delete, CSV ----
+const annF = gui.addFolder('Annotations');
+const annBox = document.createElement('div'); annBox.className = 'annlist';
+annF.$children.appendChild(annBox);
+pb.domElement.after(annF.domElement);                // near the top of Controls, under Playback
+{
+  const css = document.createElement('style');
+  css.textContent = `.annlist { padding: 4px 6px 8px; font: 12px system-ui; color: #d7dde4; }
+.annlist .top { display: flex; gap: 4px; margin-bottom: 4px; } .annlist input { flex: 1; min-width: 0; background: #0a0c0f; color: inherit; border: 1px solid #2b3540; border-radius: 4px; padding: 2px 6px; font: 12px system-ui; }
+.annlist button { width: auto; flex: none; background: #1b222a; color: #d7dde4; border: 1px solid #2b3540; border-radius: 4px; padding: 1px 6px; cursor: pointer; font: 11.5px system-ui; }
+.annlist .row { display: flex; align-items: flex-start; gap: 4px; padding: 3px 4px; border-radius: 4px; cursor: pointer; }
+.annlist .row:hover { background: #1b222a; } .annlist .row.sel { background: #3a2a14; } .annlist .row.off { opacity: .5; }
+.annlist .row .tx { flex: 1; min-width: 0; } .annlist .row .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.annlist .row .s { color: #7b8794; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.annlist .row button { padding: 0 4px; } .annlist .none { color: #7b8794; font-size: 11.5px; padding: 2px 4px; }`;
+  document.head.appendChild(css);
+}
+let annFilter = '';
+function refreshAnnList() {
+  const f = annFilter.toLowerCase();
+  const list = annotations.filter((a) => !f || [a.title, a.note, a.target].some((x) => x.toLowerCase().includes(f)));
+  const e = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const tgt = (t: string) => t.startsWith('folder:') ? `▤ ${t.slice(7)}` : t.split(',').map((x) => x.trim().split('/').pop()).join(', ');
+  annBox.innerHTML = `<div class="top"><input placeholder="Filter annotations" value="${e(annFilter)}"><button data-a="csv" title="Export every annotation with its parts as CSV">⤓ CSV</button></div>
+    ${list.length ? list.map((a) => `<div class="row${annLayer.selected === a.id ? ' sel' : ''}${a.show ? '' : ' off'}" data-id="${a.id}"><div class="tx"><div class="t">${e(a.title || '(untitled)')}</div>
+      <div class="s">${e(tgt(a.target))}${a.note ? ' · ' + e(a.note.split('\n')[0]) : ''}</div></div>
+      <button data-r="show" title="${a.show ? 'Hide' : 'Show'} in the view">${a.show ? '◉' : '○'}</button><button data-r="edit" title="Edit">✎</button><button data-r="del" title="Delete">✕</button></div>`).join('')
+      : `<div class="none">${annotations.length ? 'No match.' : 'None yet – select parts and use ✎ Annotate.'}</div>`}`;
+  const inp = annBox.querySelector<HTMLInputElement>('input')!;
+  inp.oninput = () => { annFilter = inp.value; const pos = inp.selectionStart; refreshAnnList(); const i2 = annBox.querySelector<HTMLInputElement>('input')!; i2.focus(); i2.setSelectionRange(pos, pos); };
+  inp.onkeydown = (ev) => ev.stopPropagation();
+  annBox.querySelector<HTMLElement>('[data-a=csv]')!.onclick = () => exportAnnotationsCsv();
+  annBox.querySelectorAll<HTMLElement>('.row').forEach((row) => {
+    const a = annotations.find((x) => x.id === row.dataset.id)!;
+    row.onclick = (ev) => {
+      const btn = (ev.target as HTMLElement).closest<HTMLElement>('[data-r]');
+      if (btn?.dataset.r === 'show') { a.show = !a.show; saveAnnotations(); return; }
+      if (btn?.dataset.r === 'del') { annotations = annotations.filter((x) => x !== a); saveAnnotations(); return; }
+      const objs = annotationParts(a.target);
+      if (objs.length) { tree.selectObjects(objs); frameObjects(objs); }
+      annLayer.select(a.id); refreshAnnList();
+      if (btn?.dataset.r === 'edit') { if (!a.show) { a.show = true; saveAnnotations(); } annLayer.edit(a.id); }
+    };
+  });
+}
+/** CSV: id, title, note, target, the part ids it covers now, the leader point (world m). */
+function exportAnnotationsCsv() {
+  const q = (v: string) => `"${v.replace(/"/g, '""')}"`;
+  const rows = [['id', 'title', 'note', 'target', 'parts', 'x', 'y', 'z'].join(',')];
+  for (const a of annotations) {
+    const parts = annotationParts(a.target).map(idOfObj), p = annLayerAnchor(a)?.p;
+    rows.push([a.id, a.title, a.note, a.target, parts.join(' ')].map(q).concat(p ? p.toArray().map((v) => v.toFixed(4)) : ['', '', '']).join(','));
+  }
+  const url = URL.createObjectURL(new Blob([rows.join('\n') + '\n'], { type: 'text/csv' }));
+  const link = document.createElement('a'); link.href = url; link.download = `${(model.name ?? 'animation').replace(/[\\/:*?"<>|]+/g, '-')}-annotations.csv`; link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+refreshAnnList();
+/** Accepted assistant changes: create (anchored at the given point on the target's nearest part, or its centre) / update / delete. */
+function applyAnnotationChanges(changes: AnnotationChange[]) {
+  const anchorAt = (target: string, point?: number[]): Annotation['anchor'] => {
+    if (!point) return undefined;
+    const p = new THREE.Vector3(...point), objs = annotationParts(target);
+    // the part whose box is nearest the point (meshes, so the anchor sits on real geometry)
+    let best: THREE.Object3D | undefined, bd = Infinity;
+    for (const o of objs) o.traverse((x) => { if (!(x as THREE.Mesh).isMesh || !(x.userData.id && built.registry.get(x.userData.id) === x)) return; const d = new THREE.Box3().setFromObject(x).distanceToPoint(p); if (d < bd) { bd = d; best = x; } });
+    best ??= objs[0];
+    return best ? { part: idOfObj(best), local: best.worldToLocal(p.clone()).toArray().map((v) => +v.toFixed(5)) } : undefined;
+  };
+  for (const c of changes) {
+    if (c.action === 'delete') { annotations = annotations.filter((a) => a.id !== c.id); continue; }
+    if (c.action === 'create') {
+      let n = annotations.length + 1; while (annotations.some((a) => a.id === `a${n}`)) n++;
+      const objs = annotationParts(c.target!), b = worldBox(objs);
+      const size = Math.max(0.4, b.isEmpty() ? 1 : b.getSize(new THREE.Vector3()).length() * 0.25);
+      const anchor = anchorAt(c.target!, c.point);
+      annotations.push({ id: `a${n}`, title: c.title ?? '', note: c.note ?? '', target: c.target!, ...(anchor ? { anchor } : {}), offset: [+(size * 0.6).toFixed(3), +size.toFixed(3), 0], show: c.show ?? true });
+      continue;
+    }
+    const a = annotations.find((x) => x.id === c.id);
+    if (!a) continue;
+    if (c.title !== undefined) a.title = c.title;
+    if (c.note !== undefined) a.note = c.note;
+    if (c.show !== undefined) a.show = c.show;
+    if (c.target !== undefined) { a.target = c.target; if (!c.point) delete a.anchor; }
+    if (c.point) { const anc = anchorAt(a.target, c.point); if (anc) a.anchor = anc; }
+  }
+  saveAnnotations();
+}
 // Annotate: the selection's target, then a click on the geometry for the leader's tip (Esc: none – the box centre)
 let annotPick: { target: string } | null = null;
 function startAnnotate() {
@@ -1330,7 +1440,7 @@ function finishAnnotate(hit?: THREE.Intersection) {
   const title = folder ?? (pick.target.startsWith('@') && !pick.target.includes(',') ? pick.target.slice(1) : objs.length === 1 ? String(objs[0].userData.label ?? objs[0].name ?? '') : '');
   const a: Annotation = { id: `a${n}`, title, note: '', target: pick.target, ...(anchor ? { anchor } : {}), offset, show: true };
   annotations.push(a);
-  edit({ annotations: clone(annotations) });
+  saveAnnotations();
   annLayer.set(annotations);
   annLayer.edit(a.id);
 }
@@ -2057,7 +2167,7 @@ async function restoreDoc(d: DocState, verb: string) {
     if ('keyframe' in d) keyframe = clone(d.keyframe);
     if (d.shapes) { shapes = clone(d.shapes); buildShapes(); applyPlacements(); applyColors(); tree.rebuild(); }
     // copies follow their sources: rebuild when they or what they copy (removed parts, groups) changed
-    if (d.annotations) { annotations = clone(d.annotations); annLayer.set(annotations); }
+    if (d.annotations) { annotations = clone(d.annotations); annLayer.set(annotations); refreshAnnList(); }
     if (d.copies || (copies.length && (d.removed || d.groups))) { if (d.copies) copies = clone(d.copies); await buildCopies(); applyPlacements(); applyColors(); await reconcile(copiesRoot); tree.rebuild(); }
     for (const o of built.root.children) await reconcile(o);
     if (d.script && scriptPanel && d.script.text !== scriptPanel.text) {
